@@ -1,0 +1,11 @@
+{
+  "baseUrl": "填入",
+  "apiKey": "填入",
+  "reasoningEffort": "medium",
+  "model": "填入",
+  "pool": {
+    "baseUrl": "填入",
+    "apiKey": "填入",
+    "mode": "all"
+  }
+}

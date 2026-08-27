@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>申报书智能修改系统</title>
+<link rel="stylesheet" href="/public/style.css?v=py12">
+<style>
+#errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
+font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+</style></head>
+<body>
+<div id="errbar"></div>
+<script>
+window.addEventListener("error",function(e){var b=document.getElementById("errbar");b.style.display="block";b.textContent+="[脚本异常] "+(e.message||e.type)+" @"+(e.filename||"").split("/").pop()+":"+e.lineno+"\n";});
+window.addEventListener("unhandledrejection",function(e){var b=document.getElementById("errbar");b.style.display="block";b.textContent+="[未处理Promise] "+(e.reason&&e.reason.message||e.reason)+"\n";});
+</script>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="logo">📄</div>
+    <div class="titles">
+      <h1>申报书智能修改系统</h1>
+      <p>上传申报书与修改意见 → 大模型出计划 · 内置执行器改文档 → 成品与逐条对照表</p>
+    </div>
+    <div class="live"><span class="dot"></span>服务运行中</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section class="grid2">
+
+  <div class="card" id="newTaskCard">
+    <h2><span class="ic">✨</span>新建任务</h2>
+
+    <div class="field">
+      <label class="flabel">Agent 引擎</label>
+      <div id="engineRow"><select id="engine"></select></div>
+    </div>
+
+    <div class="field">
+      <label class="flabel">① 申报书（.docx）</label>
+      <label class="drop" for="appFile">
+        <input type="file" id="appFile" accept=".docx" multiple>
+        <span class="dz-ic">📑</span>
+        <span class="dz-main">点击选择申报书文件（可多选）</span>
+        <span class="dz-sub">多本时自动按编号/姓名匹配意见，提交后可确认配对</span>
+      </label>
+      <div class="chips" id="appName"></div>
+    </div>
+
+    <div class="field">
+      <label class="flabel">② 修改意见文档（可多选）</label>
+      <label class="drop" for="opFiles">
+        <input type="file" id="opFiles" accept=".docx,.wps,.txt,.md" multiple>
+        <span class="dz-ic">💬</span>
+        <span class="dz-main">点击选择意见文档</span>
+        <span class="dz-sub">支持 docx / wps / txt / md，可一次选多份</span>
+      </label>
+      <div class="chips" id="opNames"></div>
+    </div>
+
+    <div class="actions">
+      <button id="submitBtn" class="primary">🚀 提交任务</button>
+      <span id="formErr" class="err"></span>
+    </div>
+  </div>
+
+  <div class="card" id="listCard">
+    <h2><span class="ic">📋</span>任务列表</h2>
+    <div id="taskScroll" class="tsroll">
+      <table id="taskTable">
+        <thead><tr><th>时间</th><th>申报书</th><th>状态</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="emptyHint" class="empty">暂无任务，先在左侧提交一个吧</div>
+    </div>
+    <button id="toggleAll" class="linklike hidden"></button>
+  </div>
+
+</section>
+
+<section class="card hidden" id="matchCard">
+    <div class="dhead">
+      <h2><span class="ic">🧩</span>配对确认 <span id="batchId" class="mono tag"></span></h2>
+    </div>
+    <div id="matchStats" class="meta"></div>
+    <div id="matchBooks"></div>
+    <h3 id="sharedHead" class="hidden"><span class="ic">🔗</span>共享意见（命中多本，勾选要写入的申报书）</h3>
+    <div id="sharedList"></div>
+    <div class="field" style="margin-top:12px">
+      <label class="switch">
+        <input type="checkbox" id="genericToggle" checked>
+        <span class="slider"></span>
+        <span class="stext">附加通用条款池 <small>无归属的通用规范类意见块，附加给每一本书</small></span>
+      </label>
+    </div>
+    <h3><span class="ic">❓</span>未配对（有编号/姓名但找不到书，不会执行）</h3>
+    <ul id="unmatchedList" class="unl"></ul>
+    <div class="actions">
+      <button id="startBatchBtn" class="primary">🚀 开始执行</button>
+      <span id="matchErr" class="err"></span>
+    </div>
+  </section>
+
+  <section class="card hidden" id="detailCard">
+  <div class="dhead">
+    <h2><span class="ic">🔍</span>任务详情 <span id="detailId" class="mono tag"></span></h2>
+    <button id="closeDetail" class="ghost">收起</button>
+  </div>
+
+  <div id="bookPager" class="book-pager hidden">
+    <button type="button" class="ghost" id="pagePrev">‹ 上一本</button>
+    <div class="page-mid">
+      <div id="pageTitle" class="page-title"></div>
+      <div id="pageInfo" class="page-sub"></div>
+    </div>
+    <button type="button" class="ghost" id="pageNext">下一本 ›</button>
+  </div>
+
+  <div id="stepper" class="stepper"></div>
+  <div id="detailMeta" class="meta"></div>
+
+  <h3><span class="ic">🖥️</span>实时日志</h3>
+  <pre id="logBox" class="log"><div class="ln">等待事件…</div></pre>
+
+  <h3><span class="ic">📦</span>成果下载</h3>
+  <ul id="outList" class="outs"></ul>
+
+  <h3 id="reportHead" class="hidden"><span class="ic">📊</span>修改对照表预览</h3>
+  <div id="reportBox" class="report-md hidden"></div>
+</section>
+
+</main>
+
+<footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据</footer>
+
+<script src="/public/app.js?v=py12"></script>
+</body>
+</html>

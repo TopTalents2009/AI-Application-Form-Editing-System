@@ -1,0 +1,28 @@
+# secrets
+config.json
+.env
+.env.*
+
+# runtime data (申报书原文、意见、计划、库快照)
+tasks/
+batches/
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# local one-off tests
+_test_*.py
+_test_*.json
+.t_*.py
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
