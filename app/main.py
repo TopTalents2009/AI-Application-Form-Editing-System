@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from .config import STATIC_DIR, engine_label, DATA_DIR
+from .config import STATIC_DIR, DATA_DIR
 from .runner import TaskStore
 from .batch import BatchStore
 from .routes import tasks as tasks_routes
@@ -30,13 +30,8 @@ app.include_router(batches_router)
 
 @app.get("/api/config")
 def api_config():
-    from .config import load_config
-    cfg = load_config()
-    return {
-        "engines": [{"id": "api", "label": engine_label()}],
-        "version": "0.3.0-py",
-        "pool": {"configured": bool(cfg.get("poolConfigured"))},
-    }
+    from .config import public_config
+    return public_config()
 
 @app.get("/api/pool/health")
 async def api_pool_health():

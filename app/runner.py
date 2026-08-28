@@ -2,10 +2,11 @@
 from __future__ import annotations
 import asyncio, json, os, re, secrets, shutil, time
 from pathlib import Path
-from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE
+from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_llm
 from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
 from .pool import lookup_for_app, format_pool_prompt, save_snapshot
+from .report_docx import write_compare_docx
 
 SECTION_FILES = {"基本信息": "basic-info.md", "教育": "education.md", "工作": "work.md", "论文": "papers.md", "项目": "projects.md"}
 SECTION_ORDER = ["基本信息", "教育", "工作", "论文", "项目", "其他"]
@@ -38,8 +39,16 @@ def stem_of(name: str) -> str:
     return name[:i] if i > 0 else name
 
 def app_no_of(name: str) -> str:
-    nums = M.extract_book_profile(str(name or ""), "").get("nums") or []
-    return "/".join(nums)
+    nums = M.extract_book_nums(str(name or ""))
+    return str(nums[0]) if nums else ""
+
+def compare_docx_stem(t) -> str:
+    no = str((t.get("app") or {}).get("no") or "").strip()
+    if not no:
+        no = app_no_of((t.get("app") or {}).get("name") or "")
+    no = no.split("/")[0].strip()
+    no = re.sub(r'[<>:"/\\|?*\s]+', "", no)
+    return (no + "-修改对照表") if no else "修改对照表"
 
 ITEM_HEAD = re.compile(
     r"^(?:"
@@ -115,7 +124,7 @@ def unique_cid(base: str, used: set) -> str:
     return cid
 
 class TaskStore:
-    def __init__(self, root=None, concurrency: int = 2):
+    def __init__(self, root=None, concurrency: int = PLAN_CONCURRENCY):
         self.root = Path(root or TASKS_DIR)
         self.root.mkdir(parents=True, exist_ok=True)
         self.tasks = {}
@@ -145,7 +154,7 @@ class TaskStore:
         clone = {k: v for k, v in t.items() if k != "dir"}
         tmp = str(self.mpath(t["id"])) + ".tmp"
         Path(tmp).write_text(json.dumps(clone, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, self.mpath(t["id"]))
+        atomic_replace(tmp, self.mpath(t["id"]))
 
     def log(self, t, msg):
         t.setdefault("log", []).append({"t": now_str(), "msg": str(msg)})
@@ -154,13 +163,19 @@ class TaskStore:
 
     def list_meta(self):
         arr = sorted(self.tasks.values(), key=lambda x: created_key(x.get("createdAt")), reverse=True)
-        return [{"id": t["id"], "status": t["status"], "engine": t["engine"], "createdAt": t["createdAt"], "app": t["app"], "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId")} for t in arr]
+        return [{"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": t["app"], "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId")} for t in arr]
 
     def get(self, tid): return self.tasks.get(tid) or None
 
     def create(self, body) -> dict:
         engine = str(body.get("engine") or "api")
-        if engine != "api": raise ValueError("未知引擎: " + engine)
+        model_id = body.get("model")
+        if engine and engine != "api" and not model_id:
+            model_id = engine
+            engine = "api"
+        if engine != "api":
+            raise ValueError("未知引擎: " + engine)
+        prof = resolve_llm(model_id)
         apps = body.get("app"); ops = body.get("opinions") or []
         if not isinstance(apps, dict) or ext_of(sanitize(apps.get("name", ""))) != ".docx":
             raise ValueError("申报书必须为 .docx")
@@ -177,7 +192,8 @@ class TaskStore:
             n = sanitize(o["name"])
             (d / "input" / n).write_bytes(__import__("base64").b64decode(o.get("dataB64") or ""))
             op_names.append(n)
-        t = {"id": tid, "dir": str(d), "engine": engine, "status": "queued", "createdAt": now_str(),
+        t = {"id": tid, "dir": str(d), "engine": engine, "model": prof["id"], "modelLabel": prof["label"],
+             "status": "queued", "createdAt": now_str(),
              "app": {"name": aname, "no": app_no_of(aname)}, "opinions": [{"name": n} for n in op_names],
              "log": [], "outputs": [], "deliverables": [], "hasReport": False, "error": None, "finishedAt": None}
         if body.get("batchId"):
@@ -314,15 +330,15 @@ class TaskStore:
                 if not fp.is_file() or fp.stat().st_size == 0: continue
                 is_docx = ext_of(f) == ".docx"
                 intact, detail = True, ""
-                if is_docx:
+                if is_docx and f.endswith("_修改后.docx"):
                     v = await self.verify_docx(fp)
                     intact = v["ok"]; detail = v["info"]
-                    if intact and f.endswith("_修改后.docx"):
+                    if intact:
                         docx_count += 1
                 outputs.append({"name": f, "size": fp.stat().st_size, "dir": "output", "docxIntact": (not is_docx) or intact, "verify": detail})
                 if "对照表" in f: t["hasReport"] = True
         t["outputs"] = outputs
-        t["deliverables"] = [o for o in outputs if o["name"].endswith("_修改后.docx") or o["name"].endswith("_备份.docx") or o["name"] == "修改对照表.md" or "遗留事项" in o["name"]]
+        t["deliverables"] = [o for o in outputs if o["name"].endswith("_修改后.docx") or o["name"].endswith("_备份.docx") or "对照表" in o["name"] or "遗留事项" in o["name"]]
         return docx_count > 0
 
     # ---------- ① 生成编辑计划（不写文件） ----------
@@ -330,6 +346,7 @@ class TaskStore:
         texts = self.read_prepared_texts(t)
         if not M.is_app_content(texts["appText"]):
             raise ValueError("所选文件不像一份已填写的申报书（正文过短/未填写模板/缺封面关键字段），请检查是否选错文件")
+        self.log(t, "🤖 使用模型 " + str(t.get("modelLabel") or t.get("model") or "默认"))
         self.log(t, "🧭 意见按章节分类中…")
         blocks = self.collect_opinion_blocks(texts)
         if not blocks:
@@ -339,7 +356,7 @@ class TaskStore:
         allowed_sec = set(SECTION_ORDER)
         clauses = []
         try:
-            c_resp = await chat(self.build_classify_messages(blocks), json_mode=True, timeout_s=180)
+            c_resp = await chat(self.build_classify_messages(blocks), json_mode=True, timeout_s=LLM_TIMEOUT_CLASSIFY, model=t.get("model"))
             cj = extract_json(c_resp["content"])
             used = set()
             for i, c in enumerate(cj.get("clauses") or []):
@@ -392,15 +409,15 @@ class TaskStore:
         self.persist(t)
         self.log(t, "📚 " + (snap.get("summary") or "无库内匹配") + (("（" + "；".join(snap.get("notes") or []) + "）") if snap.get("notes") else ""))
         pool_text = format_pool_prompt(snap)
-        self.log(t, "📝 开始按章生成计划（申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章，最多 2 路过模型）…")
-        plan_sem = asyncio.Semaphore(2)
+        self.log(t, "📝 开始按章生成计划（模型 " + str(t.get("modelLabel") or t.get("model") or "") + "，申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章，最多 " + str(PLAN_CONCURRENCY) + " 路过模型）…")
+        plan_sem = asyncio.Semaphore(PLAN_CONCURRENCY)
         async def plan_one(sec):
             n = len(by_sec[sec])
             self.log(t, "📝 【" + sec + "】排队出计划（" + str(n) + " 条意见）…")
             async with plan_sem:
                 self.log(t, "⏳ 【" + sec + "】正在调用大模型…")
                 try:
-                    r = await chat(self.build_section_plan_messages(sec, by_sec[sec], texts["appText"], pool_text), json_mode=True, timeout_s=360)
+                    r = await chat(self.build_section_plan_messages(sec, by_sec[sec], texts["appText"], pool_text), json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=t.get("model"))
                     plan = extract_json(r["content"])
                     n_e = len(plan.get("edits") or []) if isinstance(plan, dict) else 0
                     n_l = len(plan.get("leftovers") or []) if isinstance(plan, dict) else 0
@@ -495,8 +512,9 @@ class TaskStore:
 
             applied = json.loads(so).get("results") or []
             misses = sum(1 for a2 in applied if a2.get("status") == "miss")
+            hits = sum(1 for a2 in applied if str(a2.get("status") or "").startswith("hit"))
             note = ("（" + str(misses) + " 处未命中，转人工）") if misses else ""
-            self.log(t, "🎯 落盘 " + str(len(applied) - misses) + "/" + str(len(applied)) + " 处" + note)
+            self.log(t, "🎯 落盘 " + str(hits) + "/" + str(len(applied)) + " 处" + note)
 
             check_txt = tmp_dir / "_final.txt"
             await self._py([SCRIPTS_DIR / "sb_extract.py", out_docx, check_txt])
@@ -504,23 +522,47 @@ class TaskStore:
             nrm = lambda x: re.sub(r"\s+", "", str(x or ""))
 
             rows = []
+            row_dicts = []
             for i2, a2 in enumerate(applied):
                 e2 = edits[i2] if i2 < len(edits) else {}
                 st = "✅ 已改"
                 if a2.get("status") == "miss": st = "⚠️ 未命中·需人工定位"
+                elif a2.get("status") == "skip": st = "⚠️ 空锚点·已跳过"
                 else:
                     rep_n = nrm(e2.get("replace"))[:50]
                     if rep_n and rep_n not in nrm(final_text): st = "⚠️ 已改·终检未检出"
-                rows.append("| " + str(i2 + 1) + " | " + str(e2.get("_sec", e2.get("section", "-"))) + " | " + esc_md(e2.get("clause"))[:70] + " | " + esc_md(e2.get("find"))[:40] + "… | " + esc_md(e2.get("opinion") or e2.get("clause"))[:70] + " | " + esc_md(e2.get("replace"))[:40] + "… | " + st + " |")
+                sec = str(e2.get("_sec", e2.get("section", "-")))
+                clause = str(e2.get("clause") or "")
+                find = str(e2.get("find") or "")
+                opinion = str(e2.get("opinion") or e2.get("clause") or "")
+                replace = str(e2.get("replace") or "")
+                row_dicts.append({"n": i2 + 1, "section": sec, "clause": clause, "find": find, "opinion": opinion, "replace": replace, "status": st})
+                rows.append("| " + str(i2 + 1) + " | " + sec + " | " + esc_md(clause)[:70] + " | " + esc_md(find)[:40] + "… | " + esc_md(opinion)[:70] + " | " + esc_md(replace)[:40] + "… | " + st + " |")
             report_lines = ["# 修改对照表", "", "> 管线：大模型出计划 → 人工修订 → 内置执行器落盘　生成时间：" + now_str(), "", "| # | 章节 | 意见条款 | 改前摘录 | 修改意见 | 改后摘录 | 结果 |", "|---|---|---|---|---|---|---|"] + rows
             (out_dir / "修改对照表.md").write_text("\n".join(report_lines), encoding="utf-8")
+            try:
+                for old in out_dir.glob("*修改对照表.docx"):
+                    try: old.unlink()
+                    except Exception: pass
+                docx_stem = compare_docx_stem(t)
+                write_compare_docx(
+                    out_dir / (docx_stem + ".docx"),
+                    app_name=t["app"]["name"],
+                    app_no=app_no_of(t["app"]["name"]) or str((t.get("app") or {}).get("no") or ""),
+                    created=now_str(),
+                    rows=row_dicts,
+                    leftovers=leftovers,
+                )
+                self.log(t, "📄 已生成修改对照表（Markdown + Word " + docx_stem + ".docx）")
+            except Exception as e:
+                self.log(t, "⚠️ 对照表 Word 生成失败，已保留 Markdown：" + str(e)[:120])
             lo_txt = "\n".join(str(i2 + 1) + ". " + s for i2, s in enumerate(leftovers)) if leftovers else "（无）"
             (out_dir / "遗留事项.md").write_text("# 遗留事项（需人工补充真实数据）\n\n" + lo_txt, encoding="utf-8")
 
             if not await self.verify_outputs(t):
                 t["status"] = "failed"; t["error"] = "成品校验未通过（详见产出校验信息）"; return
             t["status"] = "done"
-            self.log(t, "✅ 完成：编辑 " + str(len(applied) - misses) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件")
+            self.log(t, "✅ 完成：编辑 " + str(hits) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件")
         except Exception as e:
             import traceback; t["status"] = "failed"
             t["error"] = traceback.format_exc()[-900:]

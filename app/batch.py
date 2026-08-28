@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio, base64, json, os, re, secrets, shutil, time
 from pathlib import Path
-from .config import BATCHES_DIR, SCRIPTS_DIR, PYEXE, load_config
+from .config import BATCHES_DIR, SCRIPTS_DIR, PYEXE, load_config, LLM_TIMEOUT_MATCH, atomic_replace, resolve_llm
 from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
 
@@ -15,14 +15,11 @@ def _sanitize(name):
     return re.sub(r'[<>:"|?*\x00-\x1f]', "_", base).strip() or "f"
 def _ext(n): i = n.rfind("."); return n[i:].lower() if i >= 0 else ""
 
-def _atomic_replace(tmp, dst):
-    last = None
-    for _ in range(5):
-        try:
-            os.replace(tmp, dst); return
-        except PermissionError as e:
-            last = e; __import__("time").sleep(0.08)
-    raise last
+def _as_int(v):
+    try:
+        return int(v)
+    except Exception:
+        return None
 
 class BatchStore:
     def __init__(self, root=None, runner=None):
@@ -38,7 +35,7 @@ class BatchStore:
         clone = {k: v for k, v in b.items() if k != "dir"}
         tmp = str(self.bdir(b["id"]) / "meta.json") + ".tmp"
         Path(tmp).write_text(json.dumps(clone, ensure_ascii=False, indent=2), encoding="utf-8")
-        _atomic_replace(tmp, self.bdir(b["id"]) / "meta.json")
+        atomic_replace(tmp, self.bdir(b["id"]) / "meta.json")
 
     def log(self, b, msg):
         b.setdefault("log", []).append({"t": now_str(), "msg": str(msg)})
@@ -87,7 +84,16 @@ class BatchStore:
             n = _sanitize(o["name"])
             (d / "input" / n).write_bytes(base64.b64decode(o.get("dataB64") or ""))
             op_names.append(n)
+        model_id = body.get("model")
+        eng = str(body.get("engine") or "")
+        if eng and eng != "api" and not model_id:
+            model_id = eng
+        try:
+            prof = resolve_llm(model_id)
+        except ValueError:
+            prof = {"id": "", "label": ""}
         b = {"id": bid, "dir": str(d), "status": "extracting", "createdAt": now_str(),
+             "model": prof.get("id") or "", "modelLabel": prof.get("label") or "",
              "apps": app_names, "opinions": op_names, "log": [], "match": None, "error": None, "taskIds": []}
         self.batches[bid] = b; self.persist(b)
         asyncio.get_event_loop().create_task(self._process(b))
@@ -132,18 +138,24 @@ class BatchStore:
                     prompt = ("你是申报书意见分派员。下面列出候选申报书与待归属的意见块，请判断每个块属于哪本申报书；无法确定或属多人共享则 bookFile 填 null。" + nl + nl
                               + "【候选申报书】" + nl + book_list + nl + nl + "【待归属意见块】" + nl + blk_list + nl + nl
                               + '仅输出 JSON：{"assignments":[{"index":0,"bookFile":"xxx.docx"或null,"reason":"简短依据"}]}')
-                    resp = await chat([{"role": "user", "content": prompt}], json_mode=True, timeout_s=240)
+                    resp = await chat([{"role": "user", "content": prompt}], json_mode=True, timeout_s=LLM_TIMEOUT_MATCH, model=b.get("model"))
                     aj = extract_json(resp["content"])
-                    moved_idx = set(); moved = 0
+                    moved_idx = set(); moved = 0; bad_idx = 0
                     for asg in (aj.get("assignments") or []):
-                        idx = asg.get("index"); bf2 = asg.get("bookFile")
-                        u = result["unmatched"][idx] if isinstance(idx, int) and isinstance(idx, int) and 0 <= idx < len(result["unmatched"]) else None
+                        if not isinstance(asg, dict):
+                            continue
+                        idx = _as_int(asg.get("index")); bf2 = asg.get("bookFile")
+                        if idx is None or not (0 <= idx < len(result["unmatched"])):
+                            bad_idx += 1
+                            continue
+                        u = result["unmatched"][idx]
                         book = next((x for x in result["books"] if x["file"] == bf2), None) if (u and bf2) else None
                         if u and book:
                             book["matched"].append({"opName": u["opName"], "blockIdx": u["blockIdx"], "head": u["head"], "excerpt": u["excerpt"], "text": u.get("text") or u.get("excerpt") or "", "score": 75, "evidence": "llm仲裁:" + str(asg.get("reason") or "")[:40]})
                             moved += 1; moved_idx.add(idx)
                     result["unmatched"] = [u for i2, u in enumerate(result["unmatched"]) if i2 not in moved_idx]
-                    self.log(b, "⚖️ 仲裁移入 " + str(moved) + " 块，余 " + str(len(result["unmatched"])) + " 块未配对")
+                    extra = ("，跳过无效 index " + str(bad_idx)) if bad_idx else ""
+                    self.log(b, "⚖️ 仲裁移入 " + str(moved) + " 块，余 " + str(len(result["unmatched"])) + " 块未配对" + extra)
                 except Exception as e2:
                     self.log(b, "⚠️ 仲裁跳过：" + str(e2)[:120])
             b["match"] = result
@@ -167,10 +179,8 @@ class BatchStore:
         by_file = {bk["file"]: list(bk.get("matched") or []) for bk in books}
 
         def _idx(v):
-            try:
-                return int(v)
-            except Exception:
-                return -1
+            n = _as_int(v)
+            return n if n is not None else -1
 
         def _key(op_name, block_idx):
             return (str(op_name or ""), _idx(block_idx))
@@ -213,7 +223,7 @@ class BatchStore:
                 for g in (match.get("genericPool") or []):
                     segs.append({"name": _sanitize(Path(g["opName"]).stem) + "__g" + str(g["blockIdx"]) + ".txt",
                                  "content": "【通用规范条款 | 来源: " + g["opName"] + "】" + chr(10) + _seg_body(g)})
-            payload = {"engine": "api", "batchId": bid,
+            payload = {"engine": "api", "model": b.get("model") or "", "batchId": bid,
                        "app": {"name": book["file"], "dataB64": base64.b64encode((Path(b["dir"]) / "input" / book["file"]).read_bytes()).decode()},
                        "opinions": [{"name": s["name"], "dataB64": base64.b64encode(s["content"].encode("utf-8")).decode()} for s in segs]}
             t = self.runner.create(payload)

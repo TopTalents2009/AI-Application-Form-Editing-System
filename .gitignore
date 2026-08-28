@@ -18,6 +18,7 @@ venv/
 # local one-off tests
 _test_*.py
 _test_*.json
+_write_*.py
 .t_*.py
 
 # editors / os

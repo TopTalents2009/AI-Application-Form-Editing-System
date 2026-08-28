@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py12">
+<link rel="stylesheet" href="/public/style.css?v=py26">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -23,7 +23,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
       <h1>申报书智能修改系统</h1>
       <p>上传申报书与修改意见 → 大模型出计划 · 内置执行器改文档 → 成品与逐条对照表</p>
     </div>
-    <div class="live"><span class="dot"></span>服务运行中</div>
+    <div class="live"><span class="dot"></span><span id="liveStatus">服务运行中</span></div>
   </div>
 </header>
 
@@ -35,8 +35,9 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     <h2><span class="ic">✨</span>新建任务</h2>
 
     <div class="field">
-      <label class="flabel">Agent 引擎</label>
+      <label class="flabel">选择模型</label>
       <div id="engineRow"><select id="engine"></select></div>
+      <div id="modelPanel" class="model-panel">正在读取配置…</div>
     </div>
 
     <div class="field">
@@ -67,16 +68,22 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     </div>
   </div>
 
+  <div class="list-slot">
   <div class="card" id="listCard">
-    <h2><span class="ic">📋</span>任务列表</h2>
+    <h2><span class="ic">📋</span>任务列表 <span id="listCount" class="count-pill hidden"></span></h2>
     <div id="taskScroll" class="tsroll">
       <table id="taskTable">
-        <thead><tr><th>时间</th><th>申报书</th><th>状态</th><th></th></tr></thead>
+        <thead><tr>
+          <th class="col-time">时间</th>
+          <th class="col-name">申报书</th>
+          <th class="col-st">状态</th>
+          <th class="col-act"></th>
+        </tr></thead>
         <tbody></tbody>
       </table>
       <div id="emptyHint" class="empty">暂无任务，先在左侧提交一个吧</div>
     </div>
-    <button id="toggleAll" class="linklike hidden"></button>
+  </div>
   </div>
 
 </section>
@@ -128,14 +135,14 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
   <h3><span class="ic">📦</span>成果下载</h3>
   <ul id="outList" class="outs"></ul>
 
-  <h3 id="reportHead" class="hidden"><span class="ic">📊</span>修改对照表预览</h3>
+  <h3 id="reportHead" class="hidden"><span class="ic">📊</span>修改对照表预览 <a id="reportDocx" class="report-dl hidden" href="#">下载 Word</a></h3>
   <div id="reportBox" class="report-md hidden"></div>
 </section>
 
 </main>
 
-<footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据</footer>
+<footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据 · v2.0</footer>
 
-<script src="/public/app.js?v=py12"></script>
+<script src="/public/app.js?v=py26"></script>
 </body>
 </html>

@@ -142,9 +142,10 @@ def extract_pool_keys(fname: str, app_text: str) -> dict:
     nf = _clean_person_name(str(prof.get("nameFull") or ""))
     if nf:
         names.append(nf)
-    company = str(prof.get("ent") or "").strip()
-    if not company:
-        company = _field_after(lines, ("申报企业", "企业名称"))
+    company = M.pick_company(
+        prof.get("ent"),
+        _field_after(lines, ("申报企业", "企业名称")),
+    )
     company = re.sub(r"^[|｜\s]+", "", company or "").strip()[:80]
     codes = []
     blob = re.sub(r"[\s|｜]", "", str(app_text or "")).upper()

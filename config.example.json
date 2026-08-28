@@ -1,8 +1,20 @@
 {
-  "baseUrl": "填入",
-  "apiKey": "填入",
+  "baseUrl": "填入 Grok 网关 /v1",
+  "apiKey": "填入 Grok 密钥",
   "reasoningEffort": "medium",
-  "model": "填入",
+  "model": "grok-4.6",
+  "models": [
+    {"id": "grok-4.6", "label": "Grok"},
+    {
+      "id": "gemini-3.7-flash",
+      "label": "Gemini",
+      "baseUrl": "https://cdn.12ai.org/v1",
+      "apiKey": "填入",
+      "stream": true,
+      "timeoutSec": 300,
+      "reasoningEffort": ""
+    }
+  ],
   "pool": {
     "baseUrl": "填入",
     "apiKey": "填入",

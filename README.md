@@ -8,7 +8,10 @@
 
 1. Python 3.10+
 2. `pip install -r requirements.txt`
-3. 复制 `config.example.json` 为 `config.json`，填入大模型 `baseUrl` / `apiKey` / `model`；人才/企业库可选（`pool`）
+3. 复制 `config.example.json` 为 `config.json`，填入密钥；人才/企业库可选（`pool`）
+   - **Grok**：沿用顶层 `baseUrl` / `apiKey` / `grok-4.6`（非流式，原超时）
+   - **Gemini**：`https://cdn.12ai.org/v1`，`gemini-3.7-flash`，流式，单次超时 300 秒；在 `models` 里填 12ai 的 `apiKey`
+   - 前端「选择模型」只列出这两项
 4. 双击 `start.cmd`，或 `python run.py`
 5. 浏览器打开 http://127.0.0.1:3777
 
