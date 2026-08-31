@@ -7,6 +7,7 @@ from .runner import TaskStore
 from .batch import BatchStore
 from .routes import tasks as tasks_routes
 from .routes import batches as batches_routes
+from .routes import client_extract as client_extract_routes
 
 runner = TaskStore()
 batches = BatchStore(runner=runner)
@@ -17,7 +18,7 @@ class NoCacheStatic(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
         p = request.url.path
-        if p == "/" or p.startswith("/public"):
+        if p == "/" or p.startswith("/public") or p.startswith("/client-extract"):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
@@ -25,8 +26,10 @@ app.add_middleware(NoCacheStatic)
 
 tasks_router = tasks_routes.create_router(runner)
 batches_router = batches_routes.create_router(runner, batches)
+client_extract_router = client_extract_routes.create_router()
 app.include_router(tasks_router)
 app.include_router(batches_router)
+app.include_router(client_extract_router)
 
 @app.get("/api/config")
 def api_config():

@@ -69,8 +69,16 @@ function renderModelPanel(cfg) {
     ? ('已配置' + (pool.endpoint ? ' · ' + pool.endpoint : '') + (pool.mode ? ' · ' + pool.mode : ''))
     : '未配置';
   panel.className = 'model-panel' + (ok ? '' : ' warn');
+  var hint = '';
+  if (cfg.configError) hint = kv('配置文件', '读取失败：' + cfg.configError);
+  else if (!ok && /gemini/i.test(String(m.id || shown || ''))) {
+    hint = kv('密钥', '未生效。请改 config.json 里 models 中 Gemini 那一条的 apiKey，不要只改最上面的 apiKey（那是 Grok 的）');
+  } else if (!ok) {
+    hint = kv('密钥', '未生效。请保存 config.json 后刷新页面');
+  }
   panel.innerHTML =
     '<div class="model-grid">' +
+      hint +
       kv('模型', shown || '未配置') +
       kv('接口', m.endpoint || llm.endpoint || '—') +
       kv('响应模式', (m.stream != null ? m.stream : llm.stream) ? '流式' : '非流式') +

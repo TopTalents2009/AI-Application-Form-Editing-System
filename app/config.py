@@ -29,39 +29,61 @@ def llm_api_base(url: str) -> str:
         u = u + "/v1"
     return u
 
+def _usable_secret(val) -> str:
+    s = str(val or "").strip().strip('"').strip("'")
+    if not s or FILL_MARK in s:
+        return ""
+    return s
+
+def _read_config_file() -> tuple[dict, str]:
+    if not CONFIG_PATH.exists():
+        return {}, "找不到 config.json"
+    data = CONFIG_PATH.read_bytes()
+    last = "无法解析 config.json"
+    for enc in ("utf-8-sig", "utf-8", "utf-16", "gbk"):
+        try:
+            obj = json.loads(data.decode(enc))
+            if isinstance(obj, dict):
+                return obj, ""
+            return {}, "config.json 根节点必须是对象"
+        except Exception as e:
+            last = str(e) or last
+    return {}, last
+
 def load_config() -> dict:
-    c: dict = {}
-    try:
-        c = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        c = {}
+    c, err = _read_config_file()
     base = llm_api_base(str(c.get("baseUrl") or ""))
-    key = str(c.get("apiKey") or "")
+    key = _usable_secret(c.get("apiKey") or c.get("api_key"))
     model = str(c.get("model") or "")
     effort = str(c.get("reasoningEffort") or "medium").lower()
-    configured = bool(base and key and model) and not any(FILL_MARK in x for x in (base, key, model))
+    configured = bool(base and key and model) and FILL_MARK not in model
     pool = c.get("pool") if isinstance(c.get("pool"), dict) else {}
     pool_base = str(pool.get("baseUrl") or c.get("poolBaseUrl") or "").rstrip("/")
-    pool_key = str(pool.get("apiKey") or c.get("poolApiKey") or "")
+    pool_key = _usable_secret(pool.get("apiKey") or pool.get("api_key") or c.get("poolApiKey"))
     pool_mode = str(pool.get("mode") or "all").strip() or "all"
-    pool_ok = bool(pool_base and pool_key) and not any(FILL_MARK in x for x in (pool_base, pool_key))
+    pool_ok = bool(pool_base and pool_key)
     raw_models = c.get("models") if isinstance(c.get("models"), list) else []
+    client_inbox = str(c.get("clientInbox") or "").strip()
     return {
         "baseUrl": base.rstrip("/"),
         "apiKey": key,
+        "geminiApiKey": _usable_secret(c.get("geminiApiKey") or c.get("gemini_api_key")),
         "model": model,
         "reasoningEffort": effort if effort in ("low", "medium", "high") else "",
         "configured": configured,
+        "configError": err,
         "modelsRaw": raw_models,
         "poolBaseUrl": pool_base,
         "poolApiKey": pool_key,
         "poolMode": pool_mode,
         "poolConfigured": pool_ok,
+        "clientInbox": client_inbox,
     }
 
 DATA_DIR = Path(__file__).resolve().parent.parent
 TASKS_DIR = DATA_DIR / "tasks"
 BATCHES_DIR = DATA_DIR / "batches"
+CLIENT_INBOX_DIR = DATA_DIR / "client_inbox"
 STATIC_DIR = DATA_DIR / "static"
 SCRIPTS_DIR = DATA_DIR / "scripts"
 RULES_DIR = DATA_DIR / "rules"
@@ -144,14 +166,20 @@ def catalog_entries() -> list:
         if not mid or FILL_MARK in mid or mid in seen:
             return
         seen.add(mid)
-        if str(raw.get("baseUrl") or "").strip():
-            base = llm_api_base(str(raw.get("baseUrl")))
+        own_base = str(raw.get("baseUrl") or "").strip()
+        if own_base:
+            base = llm_api_base(own_base)
         else:
             base = llm_api_base(cfg.get("baseUrl") or "")
-        if "apiKey" in raw:
-            key = str(raw.get("apiKey") or "")
-        else:
-            key = str(cfg.get("apiKey") or "")
+        key = ""
+        if isinstance(raw, dict):
+            key = _usable_secret(raw.get("apiKey") or raw.get("api_key"))
+        # 独立网关（如 Gemini/12ai）禁止误用顶层 Grok 密钥
+        if not key and own_base:
+            if re.search(r"12ai|gemini", own_base + " " + mid, re.I):
+                key = _usable_secret(cfg.get("geminiApiKey"))
+        elif not key:
+            key = _usable_secret(cfg.get("apiKey"))
         effort = raw.get("reasoningEffort") if "reasoningEffort" in raw else None
         if "stream" in raw:
             stream = bool(raw.get("stream"))
@@ -163,7 +191,7 @@ def catalog_entries() -> list:
                 timeout = float(raw.get("timeoutSec"))
             except (TypeError, ValueError):
                 timeout = 0.0
-        ready = bool(base and key) and FILL_MARK not in base and FILL_MARK not in key
+        ready = bool(base and key) and FILL_MARK not in base
         rows.append({
             "id": mid,
             "model": mid,
@@ -236,6 +264,7 @@ def public_config() -> dict:
     return {
         "version": APP_VERSION,
         "configured": any(m.get("ready") for m in models) or bool(cfg.get("configured")),
+        "configError": cfg.get("configError") or "",
         "models": models,
         "engines": [{"id": m["id"], "label": m["label"]} for m in models] or [{"id": "api", "label": engine_label()}],
         "llm": {

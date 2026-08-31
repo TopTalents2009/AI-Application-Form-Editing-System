@@ -1,6 +1,7 @@
 {
   "baseUrl": "填入 Grok 网关 /v1",
   "apiKey": "填入 Grok 密钥",
+  "geminiApiKey": "填入 12ai 密钥",
   "reasoningEffort": "medium",
   "model": "grok-4.6",
   "models": [

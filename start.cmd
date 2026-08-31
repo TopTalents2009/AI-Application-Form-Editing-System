@@ -34,7 +34,7 @@ echo   shenbaoshu editor  FastAPI
 echo   http://127.0.0.1:%SHENBAOSHU_PORT%    Ctrl+C to stop
 echo ============================================
 
-start "" /min powershell -NoProfile -Command "for($i=0;$i -lt 60;$i++){try{$null=Get-NetTCPConnection -LocalPort %SHENBAOSHU_PORT% -State Listen -EA Stop;break}catch{Start-Sleep -Milliseconds 500}}; Start-Process 'http://127.0.0.1:%SHENBAOSHU_PORT%'"
+start "" /min powershell -NoProfile -Command "for($i=0;$i -lt 60;$i++){try{$null=Get-NetTCPConnection -LocalPort %SHENBAOSHU_PORT% -State Listen -EA Stop;break}catch{Start-Sleep -Milliseconds 500}}; Start-Process 'http://127.0.0.1:%SHENBAOSHU_PORT%'; Start-Process 'http://127.0.0.1:%SHENBAOSHU_PORT%/client-extract'"
 :loop
 "%PYEXE%" "%~dp0run.py"
 echo [%date% %time%] server exited, restart in 3s

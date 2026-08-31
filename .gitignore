@@ -6,6 +6,7 @@ config.json
 # runtime data (申报书原文、意见、计划、库快照)
 tasks/
 batches/
+client_inbox/
 
 # python
 __pycache__/

@@ -40,6 +40,12 @@ body {
 .titles { flex: 1; min-width: 260px; }
 .titles h1 { margin: 0; font-size: 24px; letter-spacing: 1px; }
 .titles p { margin: 6px 0 0; opacity: .82; font-size: 13px; }
+.nav-extra {
+  color: #fff; text-decoration: none; font-size: 13px;
+  background: rgba(255,255,255,.14); padding: 7px 14px; border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.22);
+}
+.nav-extra:hover { background: rgba(255,255,255,.22); }
 .live {
   display: flex; align-items: center; gap: 8px;
   background: rgba(255,255,255,.12); padding: 7px 14px; border-radius: 999px;
