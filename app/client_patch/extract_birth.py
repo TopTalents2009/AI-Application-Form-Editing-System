@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
+from .apply_docx import find_application_forms
 from .patch_titles import build_client_plan
 from .tms_sqlcipher import open_package_db
 
@@ -181,6 +182,7 @@ def attach_age(row: dict[str, Any]) -> dict[str, Any]:
 def extract_folder(folder: Path, workspace: Optional[Path] = None) -> list[dict[str, Any]]:
     root = workspace or workspace_root()
     pkgs = find_client_pkgs(folder)
+    source_docs = [str(p) for p in find_application_forms(folder)]
     rows: list[dict[str, Any]] = []
     if not pkgs:
         return [
@@ -191,6 +193,7 @@ def extract_folder(folder: Path, workspace: Optional[Path] = None) -> list[dict[
                     "name": None,
                     "birth": None,
                     "mode": None,
+                    "sourceDocs": source_docs,
                     "error": "未找到客户端",
                 }
             )
@@ -220,6 +223,7 @@ def extract_folder(folder: Path, workspace: Optional[Path] = None) -> list[dict[
                 "edits": patch.get("edits") or [],
                 "patch_changes": patch.get("patch_changes") or [],
                 "patch_skip": patch.get("patch_skip"),
+                "sourceDocs": source_docs,
                 "error": None if data.get("birth") else "客户端无出生日期",
             }
         except Exception as exc:
@@ -230,6 +234,7 @@ def extract_folder(folder: Path, workspace: Optional[Path] = None) -> list[dict[
                 "birth": None,
                 "mode": None,
                 "company": "",
+                "sourceDocs": source_docs,
                 "error": str(exc),
             }
         rows.append(attach_age(row))

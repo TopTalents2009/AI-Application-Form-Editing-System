@@ -31,106 +31,158 @@ function ensurePoll() {
   pollTimer = setInterval(pollDetail, 1500);
 }
 
-/* ---------- config & engine ---------- */
-function fmtSec(s) {
-  s = Number(s);
-  if (!s && s !== 0) return '—';
-  if (s >= 60 && s % 60 === 0) return (s / 60) + ' 分钟';
-  if (s >= 60) return Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒';
-  return s + ' 秒';
-}
+/* ---------- model config ---------- */
 var currentCfg = null;
-function kv(k, v) {
-  return '<div class="model-item"><span class="model-k">' + esc(k) + '</span><span class="model-v">' + esc(v) + '</span></div>';
-}
+var cfgDraft = { grok: {}, gemini: {}, doubao: {}, classifyModel: '' };
+var cfgEditId = '';
+var OP_EMPTY = '（该模型未给出对应修改）';
+var OP_LEGACY = '（该任务生成时尚未做多模型对照）';
 function modelList(cfg) {
+  var e = cfg && cfg.edit;
+  var rows = [];
+  if (e && e.grok) rows.push(e.grok);
+  if (e && e.gemini) rows.push(e.gemini);
+  if (e && e.doubao) rows.push(e.doubao);
+  if (rows.length) return rows;
   if (cfg && cfg.models && cfg.models.length) return cfg.models;
   return (cfg && cfg.engines) || [];
 }
-function selectedModelInfo(cfg) {
-  var list = modelList(cfg);
-  var sel = $('engine');
-  var id = sel ? sel.value : '';
-  var hit = list.filter(function (m) { return m.id === id; })[0];
-  return hit || list.filter(function (m) { return m.default; })[0] || list[0] || {};
-}
-function renderModelPanel(cfg) {
-  var panel = $('modelPanel');
-  if (!panel) return;
-  var llm = cfg.llm || {};
-  var to = llm.timeouts || {};
-  var pool = cfg.pool || {};
-  var m = selectedModelInfo(cfg);
-  var ok = m.ready !== undefined ? !!m.ready : !!cfg.configured;
-  var live = $('liveStatus');
-  var shown = m.label || m.id || llm.model || '';
-  if (live) live.textContent = ok ? ('服务运行中 · ' + (shown || '已配置')) : ('服务运行中 · ' + (shown ? shown + ' 未配置密钥' : '模型未配置'));
-  var poolTxt = pool.configured
-    ? ('已配置' + (pool.endpoint ? ' · ' + pool.endpoint : '') + (pool.mode ? ' · ' + pool.mode : ''))
-    : '未配置';
-  panel.className = 'model-panel' + (ok ? '' : ' warn');
-  var hint = '';
-  if (cfg.configError) hint = kv('配置文件', '读取失败：' + cfg.configError);
-  else if (!ok && /gemini/i.test(String(m.id || shown || ''))) {
-    hint = kv('密钥', '未生效。请改 config.json 里 models 中 Gemini 那一条的 apiKey，不要只改最上面的 apiKey（那是 Grok 的）');
-  } else if (!ok) {
-    hint = kv('密钥', '未生效。请保存 config.json 后刷新页面');
-  }
-  panel.innerHTML =
-    '<div class="model-grid">' +
-      hint +
-      kv('模型', shown || '未配置') +
-      kv('接口', m.endpoint || llm.endpoint || '—') +
-      kv('响应模式', (m.stream != null ? m.stream : llm.stream) ? '流式' : '非流式') +
-      kv('单次调用超时', m.timeoutSec ? fmtSec(m.timeoutSec) : fmtSec(to.defaultSec)) +
-      kv('思考长度', m.reasoningLabel || llm.reasoningLabel || '关闭') +
-      kv('温度', (llm.temperature == null ? '—' : String(llm.temperature))) +
-      kv('章节计划超时', fmtSec(to.sectionPlanSec)) +
-      kv('意见分类超时', fmtSec(to.classifySec)) +
-      kv('匹配仲裁超时', fmtSec(to.matchSec)) +
-      kv('连接超时', fmtSec(llm.connectTimeoutSec)) +
-      kv('失败重试', (llm.retries == null ? '—' : String(llm.retries)) + ' 次') +
-      kv('章节并行', llm.planConcurrency == null ? '—' : String(llm.planConcurrency)) +
-      kv('人才/企业库', poolTxt) +
-      kv('系统版本', cfg.version || '—') +
-    '</div>';
+function modelFamily(id) {
+  var s = String(id || '');
+  if (/gemini/i.test(s)) return 'gemini';
+  if (/doubao|volc|arkcn|seed-2-0/i.test(s)) return 'doubao';
+  return 'grok';
 }
 function modelLabel(m) {
   if (!m || !(m.label || m.id)) return '请选择模型';
-  return m.label || m.id;
+  var name = m.label || m.id;
+  if (m.ready === false) return name + '（未配置）';
+  return name;
 }
-function closeEngineMenu() {
-  var menu = $('engineMenu');
-  if (menu) menu.hidden = true;
+function setCfgMsg(ok, text) {
+  var el = $('cfgMsg');
+  if (!el) return;
+  el.className = ok ? 'err ok' : 'err';
+  el.textContent = text || '';
 }
-function renderEngineSelect(cfg) {
-  var row = $('engineRow');
-  if (!row) return;
-  var models = modelList(cfg);
-  var saved = '';
-  try { saved = localStorage.getItem('shenbaoshu.model') || ''; } catch (e0) {}
-  var def = models.filter(function (m) { return m.default; })[0] || models[0] || {};
-  var pick = (saved && models.some(function (m) { return m.id === saved; })) ? saved : (def.id || '');
-  var cur = models.filter(function (m) { return m.id === pick; })[0] || def;
-  var html = '<div class="model-dd" id="engineWrap">';
-  html += '<button type="button" class="model-dd-btn" id="engineBtn">' + esc(modelLabel(cur)) + '</button>';
-  html += '<input type="hidden" id="engine" value="' + escAttr(pick) + '">';
-  html += '<div class="model-dd-menu" id="engineMenu" hidden>';
-  if (!models.length) {
-    html += '<div class="model-dd-empty">暂无模型，请检查 config.json</div>';
-  } else {
-    models.forEach(function (m) {
-      html += '<button type="button" class="model-dd-item' + (m.id === pick ? ' active' : '') + '" data-id="' + escAttr(m.id) + '">' + esc(modelLabel(m)) + '</button>';
-    });
+function closeAllMenus() {
+  ['engineMenu', 'defaultMenu'].forEach(function (id) {
+    var el = $(id);
+    if (el) el.hidden = true;
+  });
+}
+function updateLive() {
+  var live = $('liveStatus');
+  if (!live) return;
+  var g = cfgDraft.grok || {};
+  var m = cfgDraft.gemini || {};
+  var d = cfgDraft.doubao || {};
+  var bits = [];
+  if (g.ready) bits.push(g.label || 'Grok');
+  if (m.ready) bits.push(m.label || 'Gemini');
+  if (d.ready) bits.push(d.label || '火山');
+  var def = modelList(currentCfg).filter(function (x) { return x.id === cfgDraft.classifyModel; })[0];
+  var edit = modelList(currentCfg).filter(function (x) { return x.id === cfgEditId; })[0];
+  var t = bits.length ? ('服务运行中 · 已接入 ' + bits.join(' / ')) : '服务运行中 · 模型未配置';
+  if (def && (def.label || def.id)) t += '　默认 ' + (def.label || def.id);
+  if (edit && (edit.label || edit.id)) t += '　编辑 ' + (edit.label || edit.id);
+  live.textContent = t;
+}
+function cfgField(id, label, value, extra) {
+  extra = extra || {};
+  var cls = 'cfg-field' + (extra.span2 ? ' span2' : '');
+  if (extra.type === 'select') {
+    var opts = (extra.options || []).map(function (o) {
+      return '<option value="' + escAttr(o[0]) + '"' + (String(value) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+    }).join('');
+    return '<div class="' + cls + '"><label>' + esc(label) + '</label><select id="' + id + '">' + opts + '</select></div>';
   }
+  if (extra.type === 'checkbox') {
+    return '<label class="cfg-check"><input type="checkbox" id="' + id + '"' + (value ? ' checked' : '') + '> ' + esc(label) + '</label>';
+  }
+  var ph = extra.placeholder ? ' placeholder="' + escAttr(extra.placeholder) + '"' : '';
+  return '<div class="' + cls + '"><label>' + esc(label) + '</label><input id="' + id + '" type="' + (extra.type || 'text') + '" autocomplete="off" spellcheck="false"' + ph + ' value="' + escAttr(value == null ? '' : value) + '"></div>';
+}
+function hydrateDraft(cfg) {
+  var e = (cfg && cfg.edit) || {};
+  cfgDraft.grok = Object.assign({ id: 'grok-4.6', label: 'Grok', timeoutSec: 900, stream: false }, e.grok || {});
+  cfgDraft.gemini = Object.assign({ id: 'gemini-3.7-flash', label: 'Gemini', timeoutSec: 300, stream: true }, e.gemini || {});
+  cfgDraft.doubao = Object.assign({
+    id: 'doubao-seed-2-0-mini-260428',
+    label: '火山',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    timeoutSec: 300,
+    stream: true
+  }, e.doubao || {});
+  cfgDraft.classifyModel = e.classifyModel || (e.grok && e.grok.id) || 'grok-4.6';
+  if (!cfgEditId) cfgEditId = cfgDraft.classifyModel || cfgDraft.grok.id;
+}
+function readFormIntoDraft() {
+  if (!$('cfgId')) return;
+  var fam = modelFamily(cfgEditId);
+  var d = Object.assign({}, cfgDraft[fam] || {});
+  d.id = ($('cfgId').value || '').trim();
+  d.baseUrl = ($('cfgBase').value || '').trim();
+  var key = ($('cfgKey') && $('cfgKey').value || '').trim();
+  if (key) d.apiKey = key;
+  else delete d.apiKey;
+  d.timeoutSec = Number($('cfgTimeout') && $('cfgTimeout').value) || d.timeoutSec || 0;
+  d.stream = !!( $('cfgStream') && $('cfgStream').checked );
+  if ($('cfgEffort')) d.reasoningEffort = $('cfgEffort').value;
+  cfgDraft[fam] = d;
+  cfgEditId = d.id || cfgEditId;
+}
+function renderCfgForm() {
+  var form = $('cfgForm');
+  if (!form) return;
+  var fam = modelFamily(cfgEditId);
+  var d = cfgDraft[fam] || {};
+  var title = d.label || (fam === 'gemini' ? 'Gemini' : (fam === 'doubao' ? '火山' : 'Grok'));
+  var html = '<div class="cfg-block' + (d.ready ? '' : ' warn') + '"><h3>' + esc(title) + ' 接入参数</h3><div class="cfg-grid">';
+  html += cfgField('cfgId', '模型 id', d.id || '');
+  if (fam === 'grok') {
+    html += cfgField('cfgEffort', '思考长度', d.reasoningEffort || 'medium', {
+      type: 'select',
+      options: [['low', '短（low）'], ['medium', '中（medium）'], ['high', '长（high）']]
+    });
+  } else {
+    html += cfgField('cfgTimeout', '超时（秒）', d.timeoutSec || 300, { type: 'number' });
+  }
+  html += cfgField('cfgBase', '请求地址', d.baseUrl || '', { span2: true });
+  html += cfgField('cfgKey', '密钥', '', {
+    span2: true,
+    type: 'password',
+    placeholder: d.hasKey ? '已配置，留空则保持不变' : '未配置，请填写密钥'
+  });
+  if (fam === 'grok') html += cfgField('cfgTimeout', '超时（秒）', d.timeoutSec || 900, { type: 'number' });
+  html += cfgField('cfgStream', '流式', !!d.stream, { type: 'checkbox' });
+  html += '</div><div class="cfg-status ' + (d.ready ? 'ok' : 'bad') + '">' +
+    (d.ready ? '已就绪' : '未配置：保存前请填写请求地址和密钥') + '</div></div>';
+  form.innerHTML = html;
+}
+function bindDropdown(rowId, wrapId, btnId, menuId, hidId, pickId, onPick) {
+  var row = $(rowId);
+  if (!row) return;
+  var models = modelList(currentCfg);
+  var cur = models.filter(function (m) { return m.id === pickId; })[0] || models[0] || {};
+  var html = '<div class="model-dd" id="' + wrapId + '">';
+  html += '<button type="button" class="model-dd-btn" id="' + btnId + '">' + esc(modelLabel(cur)) + '</button>';
+  html += '<input type="hidden" id="' + hidId + '" value="' + escAttr(cur.id || '') + '">';
+  html += '<div class="model-dd-menu" id="' + menuId + '" hidden>';
+  if (!models.length) html += '<div class="model-dd-empty">暂无模型，请检查 config.json</div>';
+  else models.forEach(function (m) {
+    html += '<button type="button" class="model-dd-item' + (m.id === (cur.id || '') ? ' active' : '') + '" data-id="' + escAttr(m.id) + '">' + esc(modelLabel(m)) + '</button>';
+  });
   html += '</div></div>';
   row.innerHTML = html;
-  var btn = $('engineBtn'), menu = $('engineMenu'), hid = $('engine');
+  var btn = $(btnId), menu = $(menuId), hid = $(hidId);
   if (btn && menu) {
     btn.onclick = function (ev) {
       ev.preventDefault();
       ev.stopPropagation();
-      menu.hidden = !menu.hidden;
+      var open = menu.hidden;
+      closeAllMenus();
+      menu.hidden = !open;
     };
     menu.onclick = function (ev) {
       ev.stopPropagation();
@@ -140,30 +192,110 @@ function renderEngineSelect(cfg) {
       btn.textContent = it.textContent;
       var items = menu.querySelectorAll('.model-dd-item');
       for (var i = 0; i < items.length; i++) items[i].classList.toggle('active', items[i] === it);
-      try { localStorage.setItem('shenbaoshu.model', hid.value); } catch (e1) {}
       menu.hidden = true;
-      renderModelPanel(currentCfg || cfg);
+      onPick(hid.value);
     };
   }
+}
+function renderConfigUi(cfg) {
+  currentCfg = cfg;
+  hydrateDraft(cfg);
+  bindDropdown('engineRow', 'engineWrap', 'engineBtn', 'engineMenu', 'cfgTarget', cfgEditId, function (id) {
+    readFormIntoDraft();
+    cfgEditId = id;
+    renderCfgForm();
+    updateLive();
+  });
+  bindDropdown('defaultRow', 'defaultWrap', 'defaultBtn', 'defaultMenu', 'engine', cfgDraft.classifyModel, function (id) {
+    cfgDraft.classifyModel = id;
+    persistClassify(id);
+    updateLive();
+  });
+  renderCfgForm();
+  updateLive();
+  if (cfg && cfg.configError) setCfgMsg(false, cfg.configError);
+}
+function persistClassify(id) {
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ classifyModel: id })
+  }).then(readJson).then(function (cfg) {
+    currentCfg = cfg;
+    if (cfg && cfg.edit) cfgDraft.classifyModel = cfg.edit.classifyModel || id;
+    setCfgMsg(true, '已保存默认采用模型');
+    updateLive();
+  }).catch(function (err) {
+    setCfgMsg(false, '保存默认失败：' + (err && err.message || err));
+  });
+}
+function collectSaveBody() {
+  readFormIntoDraft();
+  var fam = modelFamily(cfgEditId);
+  var body = { classifyModel: cfgDraft.classifyModel || ($('engine') && $('engine').value) || '' };
+  var row = Object.assign({}, cfgDraft[fam]);
+  delete row.hasKey;
+  if (!row.apiKey) delete row.apiKey;
+  body[fam] = row;
+  return body;
+}
+function postCfg(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : '{}'
+  }).then(readJson);
+}
+function saveCfg(asDefault) {
+  setCfgMsg(false, '');
+  var body = collectSaveBody();
+  var keepEdit = cfgEditId;
+  body.saveAsDefault = !!asDefault;
+  postCfg('/api/config', body).then(function (cfg) {
+    cfgEditId = keepEdit;
+    renderConfigUi(cfg);
+    setCfgMsg(true, asDefault ? '已保存，并更新默认配置' : '已保存当前模型配置');
+  }).catch(function (err) {
+    setCfgMsg(false, '保存失败：' + (err && err.message || err));
+  });
+}
+function restoreCfg() {
+  if (!confirm('用默认配置覆盖当前 config.json？')) return;
+  setCfgMsg(false, '');
+  postCfg('/api/config/restore-default').then(function (cfg) {
+    cfgEditId = '';
+    renderConfigUi(cfg);
+    setCfgMsg(true, '已恢复默认配置');
+  }).catch(function (err) {
+    setCfgMsg(false, '恢复失败：' + (err && err.message || err));
+  });
+}
+function bindCfgButtons() {
+  if (window._cfgBound) return;
+  window._cfgBound = true;
+  var s = $('cfgSaveBtn'), d = $('cfgDefaultBtn'), r = $('cfgRestoreBtn');
+  if (s) s.onclick = function () { saveCfg(false); };
+  if (d) d.onclick = function () { saveCfg(true); };
+  if (r) r.onclick = function () { restoreCfg(); };
 }
 if (!window._engineMenuBound) {
   window._engineMenuBound = true;
   document.addEventListener('click', function (ev) {
-    var wrap = $('engineWrap');
-    if (!wrap || wrap.contains(ev.target)) return;
-    closeEngineMenu();
+    var wraps = ['engineWrap', 'defaultWrap'];
+    var hit = wraps.some(function (id) {
+      var el = $(id);
+      return el && el.contains(ev.target);
+    });
+    if (!hit) closeAllMenus();
   });
 }
 function loadConfig() {
+  bindCfgButtons();
   fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
-  try {
-    currentCfg = cfg;
-    renderEngineSelect(cfg);
-    renderModelPanel(cfg);
-  } catch (err) { console.error(err); }
+    renderConfigUi(cfg);
   }).catch(function (err) {
-    var panel = $('modelPanel');
-    if (panel) { panel.className = 'model-panel warn'; panel.textContent = '读取配置失败：' + (err && err.message || err); }
+    var form = $('cfgForm');
+    if (form) form.innerHTML = '<div class="cfg-block warn">读取配置失败：' + esc(err && err.message || err) + '</div>';
   });
 }
 
@@ -658,13 +790,12 @@ $('submitBtn').onclick = function () {
   if (!appFs.length) { errEl.textContent = '请选择申报书 .docx'; return; }
   if (!opFs.length) { errEl.textContent = '请至少选择一份修改意见文档'; return; }
   var multi = appFs.length > 1;
-  var model = ($('engine') && $('engine').value) || '';
   $('submitBtn').disabled = true; $('submitBtn').textContent = '上传中…';
   var reads = appFs.map(fileToB64).concat(opFs.map(fileToB64));
   Promise.all(reads).then(function (all) {
     var apps = appFs.map(function (f, i) { return { name: f.name, dataB64: all[i] }; });
     var opinions = opFs.map(function (f, i) { return { name: f.name, dataB64: all[appFs.length + i] }; });
-    var body = { engine: 'api', model: model };
+    var body = { engine: 'api', model: ($('engine') && $('engine').value) || '' };
     if (!multi) {
       body.app = apps[0]; body.opinions = opinions;
       return fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -900,19 +1031,38 @@ function buildPlanEditor(el, t, plan) {
   curPlanData = [];
   var appNo = (plan && plan.appNo) || (t.app && t.app.no) || appNoOf(t.app && t.app.name) || '';
   (plan.edits || []).forEach(function (e) {
+    var hasCompare = Object.prototype.hasOwnProperty.call(e, 'opinionGrok') || Object.prototype.hasOwnProperty.call(e, 'opinionGemini') || Object.prototype.hasOwnProperty.call(e, 'opinionDoubao');
     curPlanData.push({
       find: e.find || '', replace: e.replace || '', clause: e.clause || '',
-      opinion: e.opinion || e.clause || '', opName: e.opName || '', clauseId: e.clauseId || '',
+      opinion: e.opinion || e.clause || '',
+      opinionGrok: e.opinionGrok || '',
+      opinionGemini: e.opinionGemini || '',
+      opinionDoubao: e.opinionDoubao || '',
+      hasCompare: hasCompare,
+      hasDoubao: Object.prototype.hasOwnProperty.call(e, 'opinionDoubao'),
+      opName: e.opName || '', clauseId: e.clauseId || '',
       section: e._sec || e.section || '其他', appNo: e.appNo || appNo
     });
   });
   var loLines = (plan.leftovers || []).join('\n');
 
   var poolSum = (plan && plan.pool && plan.pool.summary) || (t.poolHit && (t.poolHit.talent || t.poolHit.enterprise) && ('人才 ' + (t.poolHit.talent || '无') + '；企业 ' + (t.poolHit.enterprise || '无'))) || '';
+  var att = (plan && plan.attachments) || {};
+  var attItems = att.items || [];
+  var attSum = att.summary || (t.attachHit && t.attachHit.summary) || '';
   var h = '<div class="pnote">🤖 源文件申报书编号 <b class="pno">' + esc(appNo || '未识别') + '</b>　' + esc(t.app && t.app.name || '') +
     (poolSum ? '<br>📚 库内检索：' + esc(poolSum) : '') +
-    '<br>模型已生成 <b>' + curPlanData.length + '</b> 条编辑。请逐条核对：<b>意见条款</b>为短摘要，<b>修改意见</b>为意见文件原文摘录；<b>修改前</b>为定位锚点（只读，勿改），<b>修改后</b>可直接改写；取消勾选＝放弃该条。人工新增行可填写锚点。全部确认后点击下方按钮才会写入文件。</div>';
-  h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:18%">修改前（定位用，勿改）</th><th style="width:22%">修改意见</th><th style="width:24%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
+    (attSum ? '<br>📎 缺附件检索：' + esc(attSum) : '') +
+    '<br>Grok、Gemini、火山已分别生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>为短摘要；三列修改意见为各模型给出的改写；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（默认可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。</div>';
+  if (attItems.length) {
+    h += '<div class="att-box"><div class="att-h">📎 已检索到的附件（点击下载）</div><ul class="att-ul">';
+    attItems.forEach(function (it) {
+      var src = it.source === 'papers' ? '论文系统' : '人才库';
+      h += '<li><span class="att-k">' + esc(it.kind || '附件') + '</span> <a class="dl" href="' + escAttr(it.download || '') + '">' + esc(it.filename || it.title || '下载') + '</a> <em>' + esc(src) + (it.title && it.title !== it.filename ? ' · ' + it.title : '') + '</em></li>';
+    });
+    h += '</ul></div>';
+  }
+  h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:12%">修改前（定位用，勿改）</th><th style="width:14%">Grok修改意见</th><th style="width:14%">Gemini修改意见</th><th style="width:14%">火山修改意见</th><th style="width:16%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
   h += '<button class="mini addrow" id="addRowBtn">➕ 新增一行</button>';
   h += '<h3><span class="ic">📝</span>遗留事项（每行一条，可编辑）</h3><textarea id="loTa" class="lo-ta"></textarea>';
   h += '<div class="actions"><button id="applyBtn" class="primary">✅ 确认无误，写入文件</button><button id="replanBtn" class="ghost">🔄 重新生成计划</button><span id="planErr" class="err"></span></div>';
@@ -922,12 +1072,12 @@ function buildPlanEditor(el, t, plan) {
   curPlanData.forEach(function (e, i) { tb.appendChild(buildRow(e, i)); });
   el.querySelector('#loTa').value = loLines;
   el.oninput = function (ev) {
-    if (ev.target && ev.target.matches && ev.target.matches('.ta-find,.ta-rep,.ta-op,.ta-clause')) fitTa(ev.target);
+    if (ev.target && ev.target.matches && ev.target.matches('.ta-find,.ta-rep,.ta-op,.ta-op-grok,.ta-op-gemini,.ta-op-doubao,.ta-clause')) fitTa(ev.target);
   };
   requestAnimationFrame(function () { fitPlanFields(tb); });
 
   el.querySelector('#addRowBtn').onclick = function () {
-    var ne = { find: '', replace: '', clause: '（人工新增）', opinion: '', opName: '', clauseId: '', section: '其他', appNo: appNo };
+    var ne = { find: '', replace: '', clause: '（人工新增）', opinion: '', opinionGrok: '', opinionGemini: '', opinionDoubao: '', hasDoubao: true, opName: '', clauseId: '', section: '其他', appNo: appNo };
     var i2 = curPlanData.push(ne) - 1;
     tb.appendChild(buildRow(ne, i2, { editableFind: true }));
     requestAnimationFrame(function () { fitPlanFields(tb.lastChild); });
@@ -949,17 +1099,20 @@ function buildPlanEditor(el, t, plan) {
     rows.forEach(function (tr) {
       var oi = parseInt(tr.getAttribute('data-oi'), 10);
       var cb = tr.querySelector('input[type=checkbox]');
-      var taF = tr.querySelector('.ta-find'), taR = tr.querySelector('.ta-rep'), taO = tr.querySelector('.ta-op');
+      var taF = tr.querySelector('.ta-find'), taR = tr.querySelector('.ta-rep');
       var taC = tr.querySelector('.ta-clause');
+      var taG = tr.querySelector('.ta-op-grok'), taM = tr.querySelector('.ta-op-gemini'), taD = tr.querySelector('.ta-op-doubao');
       if (!cb.checked) return;
       var fv = taF.value.trim();
       if (!fv) { missName.push('#' + (oi + 1)); return; }
       var src = curPlanData[oi] || {};
-      var opinion = (taO && taO.value) || src.opinion || '';
       out.push({
         find: taF.value, replace: taR.value,
         clause: (taC && taC.value) || src.clause || '',
-        opinion: opinion,
+        opinion: src.opinion || '',
+        opinionGrok: realOp(taG),
+        opinionGemini: realOp(taM),
+        opinionDoubao: realOp(taD),
         opName: src.opName || '',
         clauseId: src.clauseId || '',
         _sec: src.section || '其他',
@@ -991,25 +1144,61 @@ function fitTa(el) {
 
 function fitPlanFields(root) {
   if (!root) return;
-  var list = root.querySelectorAll ? root.querySelectorAll('.ta-find,.ta-rep,.ta-op,.ta-clause') : [];
+  var list = root.querySelectorAll ? root.querySelectorAll('.ta-find,.ta-rep,.ta-op,.ta-op-grok,.ta-op-gemini,.ta-op-doubao,.ta-clause') : [];
   for (var i = 0; i < list.length; i++) fitTa(list[i]);
 }
 
+function realOp(ta) {
+  if (!ta) return '';
+  var v = String(ta.value || '');
+  if (!v || v === OP_EMPTY || v === OP_LEGACY) return '';
+  return v;
+}
 function buildRow(e, oi, opts) {
   var tr = document.createElement('tr');
   tr.setAttribute('data-oi', oi);
-  var opinion = e.opinion || e.clause || '';
-  var opTip = e.opName ? ' title="' + escAttr(e.opName) + '"' : '';
+  var grokOp = e.opinionGrok || '';
+  var geminiOp = e.opinionGemini || '';
+  var doubaoOp = e.opinionDoubao || '';
+  var emptyHint = (e.hasCompare === false) ? OP_LEGACY : OP_EMPTY;
+  var grokEmpty = grokOp ? '' : emptyHint;
+  var geminiEmpty = geminiOp ? '' : emptyHint;
+  var doubaoEmpty = doubaoOp ? '' : (e.hasDoubao === false ? OP_LEGACY : emptyHint);
+  var clauseTip = e.opinion ? ' title="' + escAttr(e.opinion) + '"' : (e.opName ? ' title="' + escAttr(e.opName) + '"' : '');
   var findRo = (opts && opts.editableFind) ? '' : ' readonly';
   tr.innerHTML =
     '<td><input type="checkbox" checked></td>' +
     '<td><span class="pno">' + esc(e.appNo || '—') + '</span></td>' +
     '<td><span class="tag">' + esc(e.section) + '</span></td>' +
-    '<td><textarea class="ta-clause" rows="1">' + escHtml(e.clause) + '</textarea></td>' +
+    '<td><textarea class="ta-clause" rows="1"' + clauseTip + '>' + escHtml(e.clause) + '</textarea></td>' +
     '<td><textarea class="ta-find" rows="1"' + findRo + '>' + escHtml(e.find) + '</textarea></td>' +
-    '<td><textarea class="ta-op" rows="1"' + opTip + '>' + escHtml(opinion) + '</textarea></td>' +
+    '<td><div class="op-cell">' +
+      '<textarea class="ta-op ta-op-grok" rows="1" readonly>' + escHtml(grokOp || grokEmpty) + '</textarea>' +
+      '<button type="button" class="use-op" data-src="grok"' + (grokOp ? '' : ' disabled') + '>采用</button>' +
+    '</div></td>' +
+    '<td><div class="op-cell">' +
+      '<textarea class="ta-op ta-op-gemini" rows="1" readonly>' + escHtml(geminiOp || geminiEmpty) + '</textarea>' +
+      '<button type="button" class="use-op" data-src="gemini"' + (geminiOp ? '' : ' disabled') + '>采用</button>' +
+    '</div></td>' +
+    '<td><div class="op-cell">' +
+      '<textarea class="ta-op ta-op-doubao" rows="1" readonly>' + escHtml(doubaoOp || doubaoEmpty) + '</textarea>' +
+      '<button type="button" class="use-op" data-src="doubao"' + (doubaoOp ? '' : ' disabled') + '>采用</button>' +
+    '</div></td>' +
     '<td><textarea class="ta-rep" rows="1">' + escHtml(e.replace) + '</textarea></td>' +
     '<td><button class="delbtn">✕</button></td>';
   tr.querySelector('.delbtn').onclick = function () { tr.parentNode.removeChild(tr); };
+  var opSel = { grok: '.ta-op-grok', gemini: '.ta-op-gemini', doubao: '.ta-op-doubao' };
+  Array.prototype.slice.call(tr.querySelectorAll('.use-op')).forEach(function (btn) {
+    btn.onclick = function () {
+      var src = btn.getAttribute('data-src');
+      var ta = tr.querySelector(opSel[src] || '.ta-op-grok');
+      var rep = tr.querySelector('.ta-rep');
+      if (!ta || !rep || btn.disabled) return;
+      var val = realOp(ta);
+      if (!val) return;
+      rep.value = val;
+      fitTa(rep);
+    };
+  });
   return tr;
 }

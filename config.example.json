@@ -2,6 +2,7 @@
   "baseUrl": "填入 Grok 网关 /v1",
   "apiKey": "填入 Grok 密钥",
   "geminiApiKey": "填入 12ai 密钥",
+  "doubaoApiKey": "填入 火山方舟密钥",
   "reasoningEffort": "medium",
   "model": "grok-4.6",
   "models": [
@@ -14,11 +15,24 @@
       "stream": true,
       "timeoutSec": 300,
       "reasoningEffort": ""
+    },
+    {
+      "id": "doubao-seed-2-0-mini-260428",
+      "label": "火山",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "apiKey": "填入",
+      "stream": true,
+      "timeoutSec": 300,
+      "reasoningEffort": ""
     }
   ],
   "pool": {
     "baseUrl": "填入",
     "apiKey": "填入",
     "mode": "all"
+  },
+  "papers": {
+    "baseUrl": "http://192.168.2.8:8000",
+    "apiKey": "填入"
   }
 }

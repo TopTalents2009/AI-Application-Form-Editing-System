@@ -2,11 +2,13 @@
 from __future__ import annotations
 import asyncio, json, os, re, secrets, shutil, time
 from pathlib import Path
-from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_llm
+from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_llm, compare_model_profiles, model_family, COMPARE_FAMS, OPINION_FIELDS, fam_tag
 from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
 from .pool import lookup_for_app, format_pool_prompt, save_snapshot
+from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block
 from .report_docx import write_compare_docx
+from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits
 
 SECTION_FILES = {"基本信息": "basic-info.md", "教育": "education.md", "工作": "work.md", "论文": "papers.md", "项目": "projects.md"}
 SECTION_ORDER = ["基本信息", "教育", "工作", "论文", "项目", "其他"]
@@ -299,7 +301,7 @@ class TaskStore:
         fp = RULES_DIR / fname if fname else None
         return fp.read_text(encoding="utf-8") if fp and Path(fp).exists() else ""
 
-    def build_section_plan_messages(self, sec, items, app_text, pool_text=""):
+    def build_section_plan_messages(self, sec, items, app_text, pool_text="", attach_text=""):
         tpl = (ROOT_DIR / "SECTION_PLAN_TEMPLATE.md").read_text(encoding="utf-8")
         rules = self.load_rules(sec) or "（本章节暂无专门规则，按申报书通用规范处理）"
         lines = []
@@ -312,9 +314,11 @@ class TaskStore:
                 lines.append("原文：" + opinion)
             lines.append("")
         body = tpl.replace("{{SECTION}}", sec).replace("{{RULES}}", rules)
+        body = body.replace("{{FORM_REQS}}", extract_form_requirements(app_text))
         body = body.replace("{{CLAUSES}}", "\n".join(lines).strip())
         body = body.replace("{{APP_TEXT}}", app_text)
         body = body.replace("{{POOL_DATA}}", pool_text or "（未检索到库内记录，仅能使用申报书正文；缺数据写入 leftovers）")
+        body = body.replace("{{ATTACH_DATA}}", attach_text or "（修改意见未点名缺失附件）")
         return [{"role": "user", "content": body}]
 
     async def verify_docx(self, fp):
@@ -409,25 +413,66 @@ class TaskStore:
         self.persist(t)
         self.log(t, "📚 " + (snap.get("summary") or "无库内匹配") + (("（" + "；".join(snap.get("notes") or []) + "）") if snap.get("notes") else ""))
         pool_text = format_pool_prompt(snap)
-        self.log(t, "📝 开始按章生成计划（模型 " + str(t.get("modelLabel") or t.get("model") or "") + "，申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章，最多 " + str(PLAN_CONCURRENCY) + " 路过模型）…")
-        plan_sem = asyncio.Semaphore(PLAN_CONCURRENCY)
-        async def plan_one(sec):
-            n = len(by_sec[sec])
-            self.log(t, "📝 【" + sec + "】排队出计划（" + str(n) + " 条意见）…")
-            async with plan_sem:
-                self.log(t, "⏳ 【" + sec + "】正在调用大模型…")
-                try:
-                    r = await chat(self.build_section_plan_messages(sec, by_sec[sec], texts["appText"], pool_text), json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=t.get("model"))
-                    plan = extract_json(r["content"])
-                    n_e = len(plan.get("edits") or []) if isinstance(plan, dict) else 0
-                    n_l = len(plan.get("leftovers") or []) if isinstance(plan, dict) else 0
-                    self.log(t, "✅ 【" + sec + "】返回 " + str(n_e) + " 条编辑 / " + str(n_l) + " 条遗留")
-                    return {"sec": sec, "plan": plan, "error": None}
-                except Exception as e:
-                    self.log(t, "⚠️ 【" + sec + "】失败：" + str(e)[:150])
-                    return {"sec": sec, "plan": None, "error": str(e)[:200]}
-        settled = await asyncio.gather(*(plan_one(s) for s in sec_order))
+        opinion_blob = [c.get("opinion") or "" for c in clauses] + [c.get("clause") or "" for c in clauses]
+        attach = {"needed": [], "items": [], "private": {}, "notes": [], "summary": ""}
+        self.log(t, "📎 检索缺失附件（人才库优先，论文走论文系统）…")
+        try:
+            attach = await resolve_missing(t["id"], opinion_blob, snap, app_no)
+            save_attach_snapshot(t["dir"], attach)
+        except Exception as e:
+            attach["notes"] = list(attach.get("notes") or []) + ["缺附件检索失败：" + str(e)[:160]]
+            self.log(t, "⚠️ 缺附件检索失败：" + str(e)[:160])
+        t["attachHit"] = {"summary": attach.get("summary") or "", "needed": attach.get("needed") or [], "found": len(attach.get("items") or [])}
+        self.persist(t)
+        if attach.get("needed"):
+            self.log(t, "📎 " + (attach.get("summary") or "缺附件检索完成") + (("（" + "；".join(attach.get("notes") or []) + "）") if attach.get("notes") else ""))
+        attach_text = format_attach_prompt(attach)
+        pair = compare_model_profiles()
+        primary_id = str(t.get("model") or "")
+        primary_fam = model_family(primary_id)
+        models_for_plan = []
+        skip_note = []
+        for fam in COMPARE_FAMS:
+            prof = pair.get(fam)
+            if prof and prof.get("ready"):
+                models_for_plan.append((fam, prof["id"], prof.get("label") or fam_tag(fam)))
+            else:
+                skip_note.append(fam_tag(fam) + " 未配置")
+                if fam == primary_fam:
+                    models_for_plan.append((fam, primary_id, str(t.get("modelLabel") or primary_id)))
+        if not models_for_plan:
+            models_for_plan.append((primary_fam, primary_id, str(t.get("modelLabel") or primary_id)))
+        if skip_note:
+            self.log(t, "⚠️ 对照模型：" + "；".join(skip_note))
+        n_models = len(models_for_plan)
+        names_all = "、".join(fam_tag(fam) for fam, _, _ in models_for_plan)
+        self.log(t, "📝 开始按章多模型对照（每章同时向 " + names_all + " 提交，主模型 " + str(t.get("modelLabel") or primary_id) + "，申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章 × " + str(n_models) + " 模型，章节并发 " + str(PLAN_CONCURRENCY) + "）…")
+        sec_sem = asyncio.Semaphore(PLAN_CONCURRENCY)
 
+        async def plan_one(sec, model_id, fam, label):
+            tag = fam_tag(fam)
+            self.log(t, "⏳ 【" + sec + "·" + tag + "】正在调用 " + str(label) + "…")
+            try:
+                r = await chat(self.build_section_plan_messages(sec, by_sec[sec], texts["appText"], pool_text, attach_text), json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=model_id)
+                plan = extract_json(r["content"])
+                n_e = len(plan.get("edits") or []) if isinstance(plan, dict) else 0
+                n_l = len((plan.get("leftovers") if isinstance(plan, dict) else None) or [])
+                self.log(t, "✅ 【" + sec + "·" + tag + "】返回 " + str(n_e) + " 条编辑 / " + str(n_l) + " 条遗留")
+                return {"sec": sec, "plan": plan, "error": None, "fam": fam, "model": model_id}
+            except Exception as e:
+                self.log(t, "⚠️ 【" + sec + "·" + tag + "】失败：" + str(e)[:150])
+                return {"sec": sec, "plan": None, "error": str(e)[:200], "fam": fam, "model": model_id}
+
+        async def plan_sec(sec):
+            n = len(by_sec[sec])
+            names = " + ".join(fam_tag(fam) for fam, _, _ in models_for_plan)
+            async with sec_sem:
+                self.log(t, "🚀 【" + sec + "】同时提交 " + names + "（" + str(n) + " 条意见）…")
+                rows = await asyncio.gather(*(plan_one(sec, mid, fam, label) for fam, mid, label in models_for_plan))
+                return list(rows)
+
+        sec_results = await asyncio.gather(*(plan_sec(s) for s in sec_order))
+        settled = [row for group in sec_results for row in group]
         items_by_cid = {c["cid"]: c for c in clauses}
 
         def resolve_item(e2, sec):
@@ -441,38 +486,231 @@ class TaskStore:
                         break
             return src
 
-        edits, leftovers, failed_secs = [], [], []
-        for s in settled:
-            if s["error"]: failed_secs.append(s["sec"] + ": " + s["error"]); continue
-            plan_edits = s["plan"].get("edits") if isinstance(s["plan"], dict) else None
-            for e2 in (plan_edits if isinstance(plan_edits, list) else []):
-                if not isinstance(e2, dict) or not str(e2.get("find", "")).strip(): continue
-                k = norm_find(e2.get("find"))
-                if any(x["_k"] == k for x in edits): continue
-                if len(str(e2.get("find", ""))) > 2000 or len(str(e2.get("replace", ""))) > 8000:
-                    self.log(t, "⛔ 已丢弃超长编辑（find/replace 超限），条款：" + str(e2.get("clause", ""))[:40])
+        def collect_for(fam):
+            edits, leftovers, failed = [], [], []
+            rows = [s for s in settled if s.get("fam") == fam]
+            if not rows:
+                return edits, leftovers, failed
+            tag = fam_tag(fam)
+            for s in rows:
+                if s.get("error"):
+                    failed.append(s["sec"] + "(" + tag + "): " + s["error"])
                     continue
-                src = resolve_item(e2, s["sec"])
-                e2["_k"] = k; e2["_sec"] = s["sec"]; e2["section"] = s["sec"]; e2["appNo"] = app_no
-                e2["clause"] = str(e2.get("clause") or (src["clause"] if src else "") or "")
-                e2["opinion"] = (src["opinion"] if src else "") or e2.get("opinion") or e2.get("clause") or ""
-                e2["opName"] = (src.get("opName") if src else "") or e2.get("opName") or ""
-                e2["clauseId"] = (src["cid"] if src else "") or str(e2.get("clauseId") or "")
-                edits.append(e2)
-            for lv in ((s["plan"].get("leftovers") if isinstance(s["plan"], dict) else None) or []):
-                leftovers.append("【" + s["sec"] + "】" + str(lv))
-        if len(failed_secs) == len(settled):
-            raise ValueError("全部章节计划调用失败：" + (failed_secs[0] if failed_secs else ""))
-        if failed_secs: self.log(t, "⚠️ 部分章节失败：" + "；".join(failed_secs))
+                plan_edits = s["plan"].get("edits") if isinstance(s.get("plan"), dict) else None
+                for e2 in (plan_edits if isinstance(plan_edits, list) else []):
+                    if not isinstance(e2, dict) or not str(e2.get("find", "")).strip():
+                        continue
+                    k = norm_find(e2.get("find"))
+                    if any(x["_k"] == k for x in edits):
+                        continue
+                    if len(str(e2.get("find", ""))) > 2000 or len(str(e2.get("replace", ""))) > 8000:
+                        self.log(t, "⛔ 已丢弃超长编辑（" + tag + "），条款：" + str(e2.get("clause", ""))[:40])
+                        continue
+                    src = resolve_item(e2, s["sec"])
+                    item = dict(e2)
+                    item["_k"] = k
+                    item["_sec"] = s["sec"]
+                    item["section"] = s["sec"]
+                    item["appNo"] = app_no
+                    item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+                    item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
+                    item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
+                    item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
+                    edits.append(item)
+                for lv in ((s["plan"].get("leftovers") if isinstance(s.get("plan"), dict) else None) or []):
+                    leftovers.append("【" + tag + "·" + s["sec"] + "】" + str(lv))
+            return edits, leftovers, failed
+
+        edits_map, lo_map, fail_map = {}, {}, {}
+        for fam in COMPARE_FAMS:
+            e, lo, fail = collect_for(fam)
+            edits_map[fam], lo_map[fam], fail_map[fam] = e, lo, fail
+        failed_secs = [x for fam in COMPARE_FAMS for x in fail_map[fam]]
+        if not any(edits_map[f] or lo_map[f] for f in COMPARE_FAMS):
+            if failed_secs:
+                raise ValueError("全部章节计划调用失败：" + (failed_secs[0] if failed_secs else ""))
+            raise ValueError("各章节均未产出有效编辑")
+        if failed_secs:
+            self.log(t, "⚠️ 部分章节失败：" + "；".join(failed_secs))
+
+        def match_alt(e, pool, used):
+            cid = str(e.get("clauseId") or "").strip()
+            k = e.get("_k")
+            for a in pool:
+                if id(a) in used:
+                    continue
+                if k and a.get("_k") == k:
+                    return a
+            if cid:
+                hits = [a for a in pool if id(a) not in used and str(a.get("clauseId") or "").strip() == cid]
+                if len(hits) == 1:
+                    return hits[0]
+            ck = re.sub(r"\s+", "", str(e.get("clause") or ""))[:80]
+            if ck:
+                hits = []
+                for a in pool:
+                    if id(a) in used:
+                        continue
+                    ak = re.sub(r"\s+", "", str(a.get("clause") or ""))[:80]
+                    if ak and ak == ck:
+                        hits.append(a)
+                if len(hits) == 1:
+                    return hits[0]
+            return None
+
+        def leftover_bits(rows, fam):
+            tag = fam_tag(fam)
+            out = []
+            for lv in rows:
+                s = str(lv or "").strip()
+                m = re.match(r"【(Grok|Gemini|火山)·([^】]+)】(.*)", s, re.S)
+                if not m or m.group(1) != tag:
+                    continue
+                rest = (m.group(3) or "").strip()
+                cids = []
+                cm = re.match(r"\[([^\]]+)\]\s*(.*)", rest, re.S)
+                if cm:
+                    cids = [x.strip() for x in re.split(r"[/,，、]", cm.group(1)) if x.strip()]
+                    rest = (cm.group(2) or "").strip()
+                else:
+                    cm = re.match(r"(S[\w]+)(?:\s*/\s*S[\w]+)*\s*[：:]\s*(.*)", rest, re.S)
+                    if cm:
+                        head = rest.split("：", 1)[0].split(":", 1)[0]
+                        cids = [x.strip() for x in re.split(r"[/,，、]", head) if x.strip()]
+                        rest = (cm.group(2) or "").strip()
+                out.append({"sec": m.group(2), "cids": cids, "text": rest or s})
+            return out
+
+        def fill_empty_opinions(edits_rows, leftovers_rows):
+            by_fam = {fam: leftover_bits(leftovers_rows, fam) for fam in COMPARE_FAMS}
+            used_lo = {fam: set() for fam in COMPARE_FAMS}
+            for e in edits_rows:
+                for fam in COMPARE_FAMS:
+                    field = OPINION_FIELDS[fam]
+                    if str(e.get(field) or "").strip():
+                        continue
+                    cid = str(e.get("clauseId") or "").strip()
+                    sec = str(e.get("section") or e.get("_sec") or "")
+                    bits = by_fam[fam]
+                    picked = None
+                    if cid:
+                        for i, b in enumerate(bits):
+                            if i in used_lo[fam]:
+                                continue
+                            if cid in (b.get("cids") or []):
+                                picked = i
+                                break
+                    if picked is None and sec:
+                        cand = [i for i, b in enumerate(bits) if i not in used_lo[fam] and b.get("sec") == sec]
+                        if len(cand) == 1:
+                            picked = cand[0]
+                    if picked is None:
+                        continue
+                    e[field] = bits[picked]["text"]
+                    used_lo[fam].add(picked)
+
+        order = [primary_fam] if primary_fam in COMPARE_FAMS else []
+        for f in COMPARE_FAMS:
+            if f not in order:
+                order.append(f)
+        primary_use = next((f for f in order if edits_map[f]), order[0])
+        if primary_use != primary_fam and edits_map[primary_use]:
+            self.log(t, "⚠️ 主模型本章无有效编辑，改用 " + fam_tag(primary_use) + " 作为主计划")
+            primary_fam = primary_use
+
+        used = {fam: set() for fam in COMPARE_FAMS}
+        edits = []
+
+        def apply_hits(row, hits, source_fam):
+            for fam in COMPARE_FAMS:
+                hit = hits.get(fam)
+                row[OPINION_FIELDS[fam]] = str((hit or {}).get("replace") or "")
+            src_field = OPINION_FIELDS.get(source_fam)
+            if src_field:
+                row[src_field] = row.get(src_field) or str(row.get("replace") or "")
+            row["replace"] = str(row.get("replace") or "")
+            return row
+
+        for e in edits_map[primary_use]:
+            hits = {}
+            for fam in COMPARE_FAMS:
+                if fam == primary_use:
+                    hits[fam] = e
+                    used[fam].add(id(e))
+                else:
+                    alt = match_alt(e, edits_map[fam], used[fam])
+                    hits[fam] = alt
+                    if alt:
+                        used[fam].add(id(alt))
+            edits.append(apply_hits(e, hits, primary_use))
+        for fam in COMPARE_FAMS:
+            if fam == primary_use:
+                continue
+            for e in edits_map[fam]:
+                if id(e) in used[fam]:
+                    continue
+                if any(x.get("_k") == e.get("_k") for x in edits):
+                    continue
+                extra = dict(e)
+                extra["replace"] = str(e.get("replace") or "")
+                hits = {fam: e}
+                used[fam].add(id(e))
+                for f2 in COMPARE_FAMS:
+                    if f2 == fam:
+                        continue
+                    alt = match_alt(e, edits_map[f2], used[f2])
+                    if alt:
+                        hits[f2] = alt
+                        used[f2].add(id(alt))
+                edits.append(apply_hits(extra, hits, fam))
+
+        leftovers = []
+        seen_lo = set()
+        for fam in [primary_use] + [f for f in COMPARE_FAMS if f != primary_use]:
+            for lv in lo_map[fam]:
+                key = re.sub(r"\s+", "", str(lv))
+                if key in seen_lo:
+                    continue
+                seen_lo.add(key)
+                leftovers.append(lv)
+        fill_empty_opinions(edits, leftovers)
+        for msg in check_replace_limits(edits, texts["appText"]):
+            leftovers.append("【表内限字】" + msg)
+        try:
+            attach = await resolve_missing(t["id"], opinion_blob + leftovers, snap, app_no, prev=attach)
+            save_attach_snapshot(t["dir"], attach)
+        except Exception as e:
+            self.log(t, "⚠️ 缺附件补检索失败：" + str(e)[:160])
+        t["attachHit"] = {"summary": attach.get("summary") or "", "needed": attach.get("needed") or [], "found": len(attach.get("items") or [])}
+        self.persist(t)
+        lo_blob = "\n".join(str(x) for x in leftovers)
+        for line in leftover_lines(attach):
+            dls = re.findall(r"/api/tasks/\S+/ext-files/\S+", line)
+            if dls and all(x in lo_blob for x in dls):
+                continue
+            if line in leftovers:
+                continue
+            leftovers.append(line)
+            lo_blob += "\n" + line
+
         if not edits and not leftovers:
             raise ValueError("各章节均未产出有效编辑")
         tmp_dir = Path(t["dir"]) / "work" / "tmp"; tmp_dir.mkdir(parents=True, exist_ok=True)
         (tmp_dir / "plan.json").write_text(json.dumps({
             "appNo": app_no, "appName": t["app"]["name"], "sections": sec_order,
             "edits": edits, "leftovers": leftovers,
+            "compareModels": {
+                "primary": primary_id,
+                "primaryFamily": primary_fam,
+                "grok": (pair.get("grok") or {}).get("id") or "",
+                "gemini": (pair.get("gemini") or {}).get("id") or "",
+                "doubao": (pair.get("doubao") or {}).get("id") or "",
+            },
             "pool": {"summary": snap.get("summary") or "", "hit": snap.get("hit") or {}, "notes": snap.get("notes") or []},
+            "attachments": public_plan_block(attach),
         }, ensure_ascii=False, indent=2), encoding="utf-8")
-        self.log(t, "🧩 合并计划：" + str(len(edits)) + " 条编辑 / " + str(len(leftovers)) + " 条遗留")
+        counts = " / ".join(fam_tag(f) + " " + str(len(edits_map[f])) for f in COMPARE_FAMS)
+        self.log(t, "🧩 合并对照计划：" + str(len(edits)) + " 条编辑 / " + str(len(leftovers)) + " 条遗留（" + counts + "）")
         return edits, leftovers
 
     async def run_task(self, t):
@@ -519,6 +757,12 @@ class TaskStore:
             check_txt = tmp_dir / "_final.txt"
             await self._py([SCRIPTS_DIR / "sb_extract.py", out_docx, check_txt])
             final_text = check_txt.read_text(encoding="utf-8") if check_txt.exists() else ""
+            leftovers = list(leftovers or [])
+            limit_hits = check_text_limits(final_text)
+            for msg in limit_hits:
+                leftovers.append("【表内限字】" + msg)
+            if limit_hits:
+                self.log(t, "⚠️ 表内限字未达标 " + str(len(limit_hits)) + " 处，已写入遗留事项")
             nrm = lambda x: re.sub(r"\s+", "", str(x or ""))
 
             rows = []
@@ -535,10 +779,17 @@ class TaskStore:
                 clause = str(e2.get("clause") or "")
                 find = str(e2.get("find") or "")
                 opinion = str(e2.get("opinion") or e2.get("clause") or "")
+                og = str(e2.get("opinionGrok") or "")
+                om = str(e2.get("opinionGemini") or "")
+                od = str(e2.get("opinionDoubao") or "")
                 replace = str(e2.get("replace") or "")
-                row_dicts.append({"n": i2 + 1, "section": sec, "clause": clause, "find": find, "opinion": opinion, "replace": replace, "status": st})
-                rows.append("| " + str(i2 + 1) + " | " + sec + " | " + esc_md(clause)[:70] + " | " + esc_md(find)[:40] + "… | " + esc_md(opinion)[:70] + " | " + esc_md(replace)[:40] + "… | " + st + " |")
-            report_lines = ["# 修改对照表", "", "> 管线：大模型出计划 → 人工修订 → 内置执行器落盘　生成时间：" + now_str(), "", "| # | 章节 | 意见条款 | 改前摘录 | 修改意见 | 改后摘录 | 结果 |", "|---|---|---|---|---|---|---|"] + rows
+                row_dicts.append({
+                    "n": i2 + 1, "section": sec, "clause": clause, "find": find,
+                    "opinion": opinion, "opinionGrok": og, "opinionGemini": om, "opinionDoubao": od,
+                    "replace": replace, "status": st,
+                })
+                rows.append("| " + str(i2 + 1) + " | " + sec + " | " + esc_md(clause)[:70] + " | " + esc_md(find)[:40] + "… | " + esc_md(og)[:70] + " | " + esc_md(om)[:70] + " | " + esc_md(od)[:70] + " | " + esc_md(replace)[:40] + "… | " + st + " |")
+            report_lines = ["# 修改对照表", "", "> 管线：Grok / Gemini / 火山 多模型出计划 → 人工修订 → 内置执行器落盘　生成时间：" + now_str(), "", "| # | 章节 | 意见条款 | 改前摘录 | Grok修改意见 | Gemini修改意见 | 火山修改意见 | 改后摘录 | 结果 |", "|---|---|---|---|---|---|---|---|---|"] + rows
             (out_dir / "修改对照表.md").write_text("\n".join(report_lines), encoding="utf-8")
             try:
                 for old in out_dir.glob("*修改对照表.docx"):

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py27">
+<link rel="stylesheet" href="/public/style.css?v=py35">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -21,7 +21,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     <div class="logo">📄</div>
     <div class="titles">
       <h1>申报书智能修改系统</h1>
-      <p>上传申报书与修改意见 → 大模型出计划 · 内置执行器改文档 → 成品与逐条对照表</p>
+      <p>上传申报书与修改意见 → Grok / Gemini / 火山 对照出计划 · 内置执行器改文档 → 成品与逐条对照表</p>
     </div>
     <a class="nav-extra" href="/client-extract" target="_blank" rel="noopener">客户端年龄改写 ↗</a>
     <div class="live"><span class="dot"></span><span id="liveStatus">服务运行中</span></div>
@@ -36,9 +36,25 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     <h2><span class="ic">✨</span>新建任务</h2>
 
     <div class="field">
-      <label class="flabel">选择模型</label>
-      <div id="engineRow"><select id="engine"></select></div>
-      <div id="modelPanel" class="model-panel">正在读取配置…</div>
+      <label class="flabel">模型配置</label>
+      <p class="cfg-hint">下拉菜单选择要修改配置的模型（Grok / Gemini / 火山）；另选默认采用（分类与「修改后」）。生成意见同时调用三个已配置模型。</p>
+      <div class="cfg-toolbar">
+        <div class="cfg-dd-col">
+          <span class="cfg-mini">编辑配置</span>
+          <div id="engineRow"></div>
+        </div>
+        <div class="cfg-dd-col">
+          <span class="cfg-mini">默认采用</span>
+          <div id="defaultRow"></div>
+        </div>
+      </div>
+      <div id="cfgForm" class="cfg-form">正在读取配置…</div>
+      <div class="cfg-actions">
+        <button type="button" id="cfgSaveBtn" class="ghost">保存配置</button>
+        <button type="button" id="cfgDefaultBtn" class="ghost">保存为默认</button>
+        <button type="button" id="cfgRestoreBtn" class="ghost">恢复默认</button>
+        <span id="cfgMsg" class="err"></span>
+      </div>
     </div>
 
     <div class="field">
@@ -142,8 +158,8 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 
 </main>
 
-<footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据 · v2.0</footer>
+<footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据 · v2.1</footer>
 
-<script src="/public/app.js?v=py27"></script>
+<script src="/public/app.js?v=py35"></script>
 </body>
 </html>

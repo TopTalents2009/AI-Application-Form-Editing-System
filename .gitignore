@@ -1,5 +1,6 @@
 # secrets
 config.json
+config.default.json
 .env
 .env.*
 

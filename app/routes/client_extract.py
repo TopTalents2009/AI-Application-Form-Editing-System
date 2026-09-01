@@ -1,4 +1,4 @@
-"""客户端提取：计划 → 人工确认 → 写入（与申报书任务同一流程）。"""
+"""客户端提取：计划 → 人工确认 → 写出输入文件夹中的新申报书。"""
 from __future__ import annotations
 
 import json
@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
 from ..config import STATIC_DIR
+from ..client_patch.apply_docx import apply_forms
 from ..client_patch.extract_birth import (
     AGE_LIMIT,
     TARGET_YEAR,
@@ -17,7 +18,6 @@ from ..client_patch.extract_birth import (
     input_dir,
     save_results,
 )
-from ..client_patch.patch_titles import apply_client_edits
 
 
 def _result_path(root: Path) -> Path:
@@ -48,6 +48,9 @@ def _flatten_edits(rows: list) -> list:
             item = dict(e)
             item.setdefault("client", row.get("clientAbs") or row.get("client"))
             item.setdefault("appNo", row.get("name") or row.get("folder") or "")
+            item.setdefault("folder", row.get("folder") or "")
+            if row.get("sourceDocs") and "sourceDocs" not in item:
+                item["sourceDocs"] = row.get("sourceDocs")
             out.append(item)
     return out
 
@@ -82,7 +85,7 @@ def create_router():
 
     @router.post("/api/client-extract/plan")
     def plan():
-        """扫描并生成编辑计划，不写客户端库。"""
+        """扫描并生成编辑计划，不改 Word。"""
         root = input_dir()
         try:
             rows = extract_workspace(root)
@@ -111,6 +114,24 @@ def create_router():
         """兼容旧按钮：等同生成计划，不写入。"""
         return plan()
 
+    def _case_folder(root: Path, e: dict) -> Path:
+        name = str(e.get("folder") or "").strip()
+        if name:
+            p = (root / name).resolve()
+            root_r = root.resolve()
+            if p.is_dir() and (p == root_r or root_r in p.parents):
+                return p
+        client = Path(str(e.get("client") or e.get("clientAbs") or "").strip())
+        cur = client.resolve() if str(client) else None
+        if cur and cur.is_file():
+            cur = cur.parent
+        root_r = root.resolve()
+        while cur and cur != cur.parent:
+            if cur.parent == root_r:
+                return cur
+            cur = cur.parent
+        raise HTTPException(400, "无法定位该条编辑对应的输入文件夹")
+
     @router.post("/api/client-extract/apply")
     def apply(body: dict):
         raw = body.get("edits") or []
@@ -120,23 +141,17 @@ def create_router():
         root = input_dir()
         grouped: dict[str, list] = defaultdict(list)
         for e in edits:
-            key = str(e.get("client") or "").strip()
-            if not key:
-                raise HTTPException(400, "编辑缺少客户端路径")
-            grouped[key].append(e)
+            folder = _case_folder(root, e)
+            grouped[str(folder)].append(e)
 
         applied = []
         for key, group in grouped.items():
-            pkg = Path(key)
-            if not pkg.is_absolute():
-                pkg = (root / key).resolve()
-            if not pkg.is_dir():
-                raise HTTPException(400, f"客户端目录不存在：{pkg}")
+            folder = Path(key)
             try:
-                result = apply_client_edits(pkg, group)
+                result = apply_forms(folder, group)
             except Exception as exc:
-                raise HTTPException(500, f"{pkg}: {exc}") from exc
-            applied.append({"client": str(pkg), **result})
+                raise HTTPException(500, f"{folder}: {exc}") from exc
+            applied.append(result)
 
         leftover = [str(x) for x in (body.get("leftovers") or []) if str(x).strip()]
         rec = {

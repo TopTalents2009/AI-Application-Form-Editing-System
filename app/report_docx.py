@@ -9,8 +9,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-HEADERS = ["#", "章节", "意见条款", "改前摘录", "修改意见", "改后摘录", "结果"]
-COL_CM = (1.2, 2.0, 4.4, 5.2, 5.2, 5.2, 2.6)
+HEADERS = ["#", "章节", "意见条款", "改前摘录", "Grok修改意见", "Gemini修改意见", "火山修改意见", "改后摘录", "结果"]
+COL_CM = (0.9, 1.4, 2.6, 2.8, 3.5, 3.5, 3.5, 3.5, 1.8)
 
 
 def _east_asia(run, name="微软雅黑", size=9, bold=False, color=None):
@@ -105,7 +105,7 @@ def write_compare_docx(path, *, app_name: str, app_no: str, created: str, rows: 
 
     data = list(rows or [])
     if not data:
-        data = [{"n": "", "section": "", "clause": "（无编辑行）", "find": "", "opinion": "", "replace": "", "status": ""}]
+        data = [{"n": "", "section": "", "clause": "（无编辑行）", "find": "", "opinion": "", "opinionGrok": "", "opinionGemini": "", "opinionDoubao": "", "replace": "", "status": ""}]
     for i, item in enumerate(data):
         tr = table.add_row()
         st = str(item.get("status") or "")
@@ -115,14 +115,16 @@ def write_compare_docx(path, *, app_name: str, app_no: str, created: str, rows: 
             item.get("section") or "",
             item.get("clause") or "",
             item.get("find") or "",
-            item.get("opinion") or "",
+            item.get("opinionGrok") or item.get("opinion") or "",
+            item.get("opinionGemini") or "",
+            item.get("opinionDoubao") or "",
             item.get("replace") or "",
             st,
         ]
         for j, val in enumerate(vals):
             tr.cells[j].width = Cm(COL_CM[j])
-            center = j in (0, 1, 6)
-            if j == 6 and st:
+            center = j in (0, 1, 8)
+            if j == 8 and st:
                 _cell_text(tr.cells[j], val, size=9, bold=True, color=sc, fill=sf, center=True)
             else:
                 _cell_text(tr.cells[j], val, size=9, center=center)

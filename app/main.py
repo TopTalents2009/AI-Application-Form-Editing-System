@@ -33,8 +33,26 @@ app.include_router(client_extract_router)
 
 @app.get("/api/config")
 def api_config():
-    from .config import public_config
-    return public_config()
+    from .config import editor_config
+    return editor_config()
+
+@app.post("/api/config")
+def api_config_save(body: dict):
+    from fastapi import HTTPException
+    from .config import save_config
+    try:
+        return save_config(body, save_as_default=bool((body or {}).get("saveAsDefault")))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+@app.post("/api/config/restore-default")
+def api_config_restore():
+    from fastapi import HTTPException
+    from .config import restore_default_config
+    try:
+        return restore_default_config()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 @app.get("/api/pool/health")
 async def api_pool_health():
@@ -52,6 +70,8 @@ import asyncio
 
 @app.on_event("startup")
 def _startup():
+    from .config import ensure_default_config
+    ensure_default_config()
     runner.bind_loop(asyncio.get_running_loop())
     # 恢复语义已在各 Store 的 load_all 中处理（非终态→failed/中断）
     pass

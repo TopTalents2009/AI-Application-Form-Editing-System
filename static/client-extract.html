@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>客户端年龄改写 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=ce2">
+<link rel="stylesheet" href="/public/style.css?v=ce3">
 <style>
 .hint { font-size:13px; color:var(--sub); line-height:1.6; margin:0 0 16px; }
 .mono-path { font-family:Consolas,monospace; font-size:12px; background:#f4f7fb; padding:8px 10px; border-radius:8px; word-break:break-all; }
@@ -22,7 +22,7 @@ button.ghost { border:1px solid #c5d0e0; background:#fff; padding:8px 14px; bord
     <div class="logo">🎂</div>
     <div class="titles">
       <h1>客户端年龄改写</h1>
-      <p>流程与申报书修改一致：扫描出计划 → 人工核对修改前/后 → 确认后再写入客户端</p>
+      <p>流程与申报书修改一致：扫描出计划 → 人工核对修改前/后 → 确认后生成输入文件夹中的新申报书</p>
     </div>
     <a class="nav-extra" href="/" target="_blank" rel="noopener">返回申报书修改 ↗</a>
     <div class="live"><span class="dot"></span><span>独立页面</span></div>
@@ -31,7 +31,7 @@ button.ghost { border:1px solid #c5d0e0; background:#fff; padding:8px 14px; bord
 <main class="wrap">
   <section class="card">
     <h2><span class="ic">📂</span>待提取目录</h2>
-    <p class="hint">把带客户端（RCZX2026.exe）的材料文件夹放进下面目录，再点「生成编辑计划」。此步只读扫描，不会改库。1987-01-01 以前出生才会出现改写行。</p>
+    <p class="hint">把带客户端（RCZX2026.exe）和申报书 Word 的材料文件夹放进下面目录，再点「生成编辑计划」。此步只读扫描，不会改文件。确认后会在原申报书旁生成「原文件名_修改后.docx」。1987-01-01 以前出生才会出现改写行。</p>
     <div class="mono-path" id="inbox">读取中…</div>
     <div class="hint" id="folderInfo"></div>
     <div class="btn-row">
@@ -90,14 +90,14 @@ function buildPlanEditor(plan) {
   var skipN = rows.filter(function (r) { return r.patch_skip && !(r.edits && r.edits.length); }).length;
   var h = "<div class=\"pnote\">已扫描 <b>" + rows.length + "</b> 个客户端，生成 <b>" + curPlanData.length +
     "</b> 条编辑" + (skipN ? "（另有 " + skipN + " 个无需改写）" : "") +
-    "。<b>修改前</b>为库内原文（只读），<b>修改后</b>可改写；取消勾选＝放弃该条。全部确认后点击下方按钮才会写入客户端数据库。</div>";
+    "。<b>修改前</b>为定位用原文（只读），<b>修改后</b>可改写；取消勾选＝放弃该条。全部确认后点击下方按钮，会在输入文件夹里的申报书旁生成「原文件名_修改后.docx」，不改客户端库。</div>";
   h += "<div class=\"ptable-wrap\"><table class=\"ptable\"><thead><tr>" +
     "<th style=\"width:34px\">用</th><th style=\"width:120px\">编号</th><th style=\"width:88px\">章节</th>" +
     "<th>意见条款</th><th style=\"width:18%\">修改前（定位用，勿改）</th>" +
     "<th style=\"width:22%\">修改意见</th><th style=\"width:24%\">修改后（可编辑）</th><th style=\"width:36px\"></th>" +
     "</tr></thead><tbody id=\"planRows\"></tbody></table></div>";
   h += "<h3><span class=\"ic\">📝</span>遗留事项（每行一条，可编辑）</h3><textarea id=\"loTa\" class=\"lo-ta\"></textarea>";
-  h += "<div class=\"actions\"><button id=\"applyBtn\" class=\"primary\">✅ 确认无误，写入文件</button>" +
+  h += "<div class=\"actions\"><button id=\"applyBtn\" class=\"primary\">✅ 确认无误，生成新申报书</button>" +
     "<button id=\"replanBtn\" class=\"ghost\">🔄 重新生成计划</button><span id=\"planErr\" class=\"err\"></span></div>";
   el.innerHTML = h;
   var tb = el.querySelector("#planRows");
@@ -131,6 +131,7 @@ function buildPlanEditor(plan) {
         section: src.section || "其他",
         appNo: src.appNo || "",
         client: src.client || "",
+        folder: src.folder || "",
         table: src.table || "",
         id: src.id,
         fields: src.fields || {}
@@ -140,21 +141,29 @@ function buildPlanEditor(plan) {
     var lo = document.getElementById("loTa").value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
     if (!out.length && !lo.length) { errEl.textContent = "没有任何要应用的编辑或遗留事项"; return; }
     var btn = this;
-    btn.disabled = true; btn.textContent = "写入中…";
+    btn.disabled = true; btn.textContent = "正在生成新申报书…";
     fetch("/api/client-extract/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ edits: out, leftovers: lo })
     }).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.statusText); return j; }); })
       .then(function (j) {
-        document.getElementById("log").textContent = "已写入 " + (j.applied || []).length + " 个客户端。";
-        el.innerHTML = "<div class=\"empty\">已确认写入。可再次点「生成编辑计划」复核。</div>";
+        var lines = [];
+        (j.applied || []).forEach(function (a) {
+          if (a.error) lines.push((a.folder || "") + "：" + a.error);
+          (a.outputs || []).forEach(function (o) {
+            lines.push((o.out || "") + "  命中 " + (o.hits || 0) + " / 未命中 " + (o.misses || 0));
+          });
+        });
+        document.getElementById("log").textContent =
+          "已生成 " + lines.length + " 份修改后的申报书。\n" + lines.join("\n");
+        el.innerHTML = "<div class=\"empty\">已在输入文件夹中写出新申报书。可再次点「生成编辑计划」复核。</div>";
       })
       .catch(function (e2) { errEl.textContent = e2.message || String(e2); })
       .finally(function () {
         if (!btn || !document.body.contains(btn)) return;
         btn.disabled = false;
-        btn.textContent = "✅ 确认无误，写入文件";
+        btn.textContent = "✅ 确认无误，生成新申报书";
       });
   };
 }
@@ -172,7 +181,7 @@ document.getElementById("runBtn").onclick = async function () {
   const err = document.getElementById("formErr");
   err.textContent = "";
   btn.disabled = true;
-  document.getElementById("log").textContent = "正在扫描客户端（只读，不写库）…";
+  document.getElementById("log").textContent = "正在扫描客户端与申报书（只读，不改文件）…";
   try {
     const r = await fetch("/api/client-extract/plan", { method: "POST" });
     const j = await r.json();

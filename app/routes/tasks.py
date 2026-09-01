@@ -50,6 +50,9 @@ def create_router(runner):
                 "replace": str(e2.get("replace", "")),
                 "clause": str(e2.get("clause", "")),
                 "opinion": str(e2.get("opinion") or e2.get("clause") or ""),
+                "opinionGrok": str(e2.get("opinionGrok") or ""),
+                "opinionGemini": str(e2.get("opinionGemini") or ""),
+                "opinionDoubao": str(e2.get("opinionDoubao") or ""),
                 "opName": str(e2.get("opName") or ""),
                 "clauseId": str(e2.get("clauseId") or ""),
                 "appNo": str(e2.get("appNo") or ""),
@@ -69,6 +72,33 @@ def create_router(runner):
             return {"id": runner.replan(tid)}
         except ValueError as e:
             raise HTTPException(400, str(e))
+
+    @router.get("/api/tasks/{tid}/ext-files/{fid}")
+    async def task_ext_file(tid: str, fid: str):
+        t = runner.get(tid)
+        if not t:
+            raise HTTPException(404, "任务不存在")
+        from ..attachments import load_private, fetch_upstream
+        from ..papers import PapersError
+        from fastapi.responses import Response
+        from urllib.parse import quote
+        priv = load_private(t["dir"], fid)
+        if not priv:
+            raise HTTPException(404, "附件不存在或计划已过期")
+        try:
+            content, filename, ctype, _st = await fetch_upstream(priv)
+        except PapersError as e:
+            raise HTTPException(e.status or 502, e.message)
+        except Exception as e:
+            raise HTTPException(502, str(e)[:200])
+        return Response(
+            content=content,
+            media_type=ctype or "application/octet-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename or "file"),
+            },
+        )
 
     @router.get("/api/tasks/{tid}/files")
     def task_file(tid: str, dir: str = "output", name: str = ""):
