@@ -62,7 +62,7 @@ class BatchStore:
         await proc.communicate()
         return proc.returncode == 0
 
-    async def create(self, body) -> dict:
+    async def create(self, body, owner: str = None) -> dict:
         apps = body.get("apps") or []; ops = body.get("opinions") or []
         if not apps: raise ValueError("至少上传一份申报书")
         for a in apps:
@@ -95,6 +95,8 @@ class BatchStore:
         b = {"id": bid, "dir": str(d), "status": "extracting", "createdAt": now_str(),
              "model": prof.get("id") or "", "modelLabel": prof.get("label") or "",
              "apps": app_names, "opinions": op_names, "log": [], "match": None, "error": None, "taskIds": []}
+        if owner:
+            b["owner"] = str(owner)
         self.batches[bid] = b; self.persist(b)
         asyncio.get_event_loop().create_task(self._process(b))
         return b
@@ -108,13 +110,13 @@ class BatchStore:
                 if await self._ensure_txt(Path(b["dir"]) / "input" / n, out):
                     app_texts[n] = out.read_text(encoding="utf-8")
                 else:
-                    self.log(b, "⚠️ 提取失败 " + n)
+                    self.log(b, "提取失败 " + n)
             for n in b["opinions"]:
                 out = txt_dir / (Path(n).stem + ".txt")
                 if await self._ensure_txt(Path(b["dir"]) / "input" / n, out):
                     op_texts[n] = out.read_text(encoding="utf-8")
                 else:
-                    self.log(b, "⚠️ 提取失败 " + n)
+                    self.log(b, "提取失败 " + n)
             # 内容级校验：每本上传的书必须真的像已填写申报书
             for n in b["apps"]:
                 tx = app_texts.get(n, "")
@@ -126,11 +128,11 @@ class BatchStore:
             b["status"] = "matching"; self.persist(b)
             profiles = [M.extract_book_profile(n, app_texts[n]) for n in b["apps"] if n in app_texts]
             result = M.match_batch(profiles, [{"name": n, "text": t} for n, t in op_texts.items()])
-            self.log(b, "🧮 规则匹配完成")
+            self.log(b, "规则匹配完成")
             cfg = load_config()
             if result["unmatched"] and cfg["configured"]:
                 b["status"] = "arbitrating"; self.persist(b)
-                self.log(b, "⚖️ LLM 仲裁 " + str(len(result["unmatched"])) + " 个待定块…")
+                self.log(b, "LLM 仲裁 " + str(len(result["unmatched"])) + " 个待定块…")
                 try:
                     nl = chr(10)
                     book_list = nl.join(str(i2 + 1) + ". " + x["file"] + (("（" + x["name"] + "）") if x["name"] else "") + ((" 编号:" + "/".join(x["nums"])) if x["nums"] else "") for i2, x in enumerate(result["books"]))
@@ -155,13 +157,13 @@ class BatchStore:
                             moved += 1; moved_idx.add(idx)
                     result["unmatched"] = [u for i2, u in enumerate(result["unmatched"]) if i2 not in moved_idx]
                     extra = ("，跳过无效 index " + str(bad_idx)) if bad_idx else ""
-                    self.log(b, "⚖️ 仲裁移入 " + str(moved) + " 块，余 " + str(len(result["unmatched"])) + " 块未配对" + extra)
+                    self.log(b, "仲裁移入 " + str(moved) + " 块，余 " + str(len(result["unmatched"])) + " 块未配对" + extra)
                 except Exception as e2:
-                    self.log(b, "⚠️ 仲裁跳过：" + str(e2)[:120])
+                    self.log(b, "仲裁跳过：" + str(e2)[:120])
             b["match"] = result
             b["status"] = "ready"
             cnt = sum(1 for x in result["books"] if x["matched"])
-            self.log(b, "✅ 匹配就绪：" + str(cnt) + " 本书有配对；未配对 " + str(len(result["unmatched"])) + "；共享 " + str(len(result["shared"])) + "；通用 " + str(len(result["genericPool"])))
+            self.log(b, "匹配就绪：" + str(cnt) + " 本书有配对；未配对 " + str(len(result["unmatched"])) + "；共享 " + str(len(result["shared"])) + "；通用 " + str(len(result["genericPool"])))
         except Exception as e:
             import traceback
             b["status"] = "failed"
@@ -226,7 +228,7 @@ class BatchStore:
             payload = {"engine": "api", "model": b.get("model") or "", "batchId": bid,
                        "app": {"name": book["file"], "dataB64": base64.b64encode((Path(b["dir"]) / "input" / book["file"]).read_bytes()).decode()},
                        "opinions": [{"name": s["name"], "dataB64": base64.b64encode(s["content"].encode("utf-8")).decode()} for s in segs]}
-            t = self.runner.create(payload)
+            t = self.runner.create(payload, owner=b.get("owner"))
             self.runner.enqueue(t["id"])
             created.append(t["id"])
         b["status"] = "started"; b["taskIds"] = created; self.persist(b)

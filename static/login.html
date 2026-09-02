@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 申报书智能修改系统</title>
+<link rel="stylesheet" href="/public/style.css?v=py37">
+<style>
+.auth-page{min-height:100vh;display:grid;grid-template-columns:minmax(420px,46%) 1fr}
+
+/* ========== 左侧品牌区 ========== */
+.brand{
+  position:relative;overflow:hidden;color:#fff;
+  background:linear-gradient(150deg,#0e1d40 0%,#16306b 45%,#2450a4 100%);
+  display:flex;flex-direction:column;justify-content:space-between;
+  padding:52px 56px;
+}
+.brand::before,.brand::after{
+  content:"";position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;pointer-events:none;
+}
+.brand::before{width:520px;height:520px;background:#3b74d6;top:-180px;right:-140px;animation:drift 14s ease-in-out infinite alternate}
+.brand::after{width:420px;height:420px;background:#4f8ae8;bottom:-160px;left:-120px;opacity:.35;animation:drift 18s ease-in-out infinite alternate-reverse}
+@keyframes drift{to{transform:translate(-40px,34px) scale(1.08)}}
+.brand-grid{
+  position:absolute;inset:0;pointer-events:none;opacity:.5;
+  background-image:radial-gradient(rgba(255,255,255,.14) 1px,transparent 1px);
+  background-size:26px 26px;
+  -webkit-mask-image:linear-gradient(160deg,rgba(0,0,0,.8),transparent 62%);
+          mask-image:linear-gradient(160deg,rgba(0,0,0,.8),transparent 62%);
+}
+.brand>*{position:relative;z-index:1}
+.brand-head{display:flex;align-items:center;gap:14px}
+.brand-logo{
+  width:52px;height:52px;border-radius:15px;font-size:20px;font-weight:700;
+  background:rgba(255,255,255,.14);backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);
+}
+.brand-head h1{margin:0;font-size:20px;letter-spacing:1px}
+.brand-head p{margin:3px 0 0;font-size:12.5px;opacity:.68;letter-spacing:.5px}
+.brand-body{max-width:400px}
+.brand-body h2{margin:0 0 14px;font-size:30px;line-height:1.35;font-weight:700;letter-spacing:.5px}
+.brand-body h2 em{font-style:normal;background:linear-gradient(90deg,#9cc2ff,#e4eeff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand-body>p{margin:0;font-size:14px;line-height:1.9;color:rgba(255,255,255,.72)}
+.feat{list-style:none;margin:30px 0 0;padding:0;display:grid;gap:14px}
+.feat li{display:flex;gap:12px;align-items:flex-start;font-size:13.5px;line-height:1.6;color:rgba(255,255,255,.88)}
+.feat .fi{
+  flex-shrink:0;width:34px;height:34px;border-radius:10px;font-size:15px;
+  background:rgba(255,255,255,.12);backdrop-filter:blur(4px);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.2);
+}
+.feat b{display:block;font-size:13.5px;color:#fff}
+.feat span{color:rgba(255,255,255,.62);font-size:12.5px}
+.brand-foot{font-size:12px;color:rgba(255,255,255,.45);letter-spacing:.4px}
+
+/* ========== 右侧表单区 ========== */
+.form-side{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:40px 32px;position:relative;
+  background:
+    radial-gradient(900px 320px at 100% -60px, rgba(59,116,214,.10), transparent 62%),
+    radial-gradient(700px 300px at 0% 110%, rgba(59,116,214,.08), transparent 60%),
+    #f6f8fc;
+}
+.form-box{width:100%;max-width:396px;animation:rise .5s ease both}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.form-box h2{margin:0 0 8px;font-size:26px;font-weight:700;color:var(--ink)}
+.form-box .sub{margin:0 0 30px;font-size:13.5px;color:var(--sub)}
+.f-row{margin-bottom:18px}
+.f-row label{display:block;font-size:13px;font-weight:600;color:#3c465a;margin-bottom:8px}
+.inp{position:relative;display:flex;align-items:center}
+.inp .in-ic{
+  position:absolute;left:13px;font-size:15px;color:#93a0b8;pointer-events:none;
+  transition:color .18s;
+}
+.inp input{
+  width:100%;height:48px;padding:0 44px 0 14px;
+  font-size:14px;font-family:inherit;color:var(--ink);
+  background:#fff;border:1.5px solid #dde4f0;border-radius:12px;
+  outline:none;transition:border-color .18s, box-shadow .18s, background .18s;
+}
+.inp input::placeholder{color:#a8b2c5}
+.inp input:hover{border-color:#c3cfE8}
+.inp input:focus{
+  border-color:var(--brand2);
+  box-shadow:0 0 0 4px rgba(59,116,214,.13);
+}
+.inp input:focus~.in-ic{color:var(--brand2)}
+.eye{
+  position:absolute;right:6px;height:32px;padding:0 10px;border:none;background:none;
+  border-radius:9px;cursor:pointer;font-size:12px;line-height:1;color:#5b6577;
+  display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;
+}
+.eye:hover{background:#eef3fb;color:var(--brand2)}
+.caps{display:none;margin-top:7px;font-size:12px;color:var(--warn)}
+.form-err{
+  display:none;align-items:flex-start;gap:8px;
+  margin:2px 0 16px;padding:10px 13px;
+  font-size:13px;line-height:1.5;color:var(--bad);
+  background:#fdf1f0;border:1px solid #f5d3d1;border-radius:10px;
+}
+.form-err.show{display:flex;animation:shake .4s ease}
+@keyframes shake{20%{transform:translateX(-5px)}40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}
+.btn-login{
+  width:100%;height:48px;margin-top:4px;border:none;border-radius:12px;cursor:pointer;
+  font-size:15px;font-weight:700;font-family:inherit;letter-spacing:6px;text-indent:6px;color:#fff;
+  background:linear-gradient(120deg,#2450a4,#3b74d6);
+  box-shadow:0 10px 22px -8px rgba(36,80,164,.55);
+  transition:transform .15s, box-shadow .2s, filter .2s;
+}
+.btn-login:hover{transform:translateY(-1px);box-shadow:0 14px 26px -8px rgba(36,80,164,.6);filter:saturate(1.08)}
+.btn-login:active{transform:translateY(0)}
+.btn-login:disabled{opacity:.6;cursor:wait;transform:none}
+.btn-login .spin{
+  display:inline-block;width:15px;height:15px;vertical-align:-2px;margin-right:8px;
+  border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.form-foot{margin-top:26px;font-size:13.5px;color:var(--sub);text-align:center}
+.form-foot a{color:var(--brand);font-weight:700;text-decoration:none}
+.form-foot a:hover{text-decoration:underline}
+.side-foot{margin-top:34px;font-size:12px;color:#9aa4b8;text-align:center}
+
+/* ========== 响应式 ========== */
+@media (max-width:900px){
+  .auth-page{grid-template-columns:1fr}
+  .brand{display:none}
+  .mobile-brand{display:flex!important}
+}
+.mobile-brand{
+  display:none;align-items:center;gap:12px;margin:0 0 26px;padding:14px 18px;
+  border-radius:14px;color:#fff;background:linear-gradient(120deg,#14264f,#2450a4);
+}
+.mobile-brand .brand-logo{width:40px;height:40px;font-size:20px;border-radius:11px}
+.mobile-brand h1{margin:0;font-size:16px}
+.mobile-brand p{margin:2px 0 0;font-size:11.5px;opacity:.7}
+</style>
+</head>
+<body>
+<div class="auth-page">
+
+  <aside class="brand">
+    <div class="brand-grid"></div>
+    <div class="brand-head">
+      <div class="brand-logo">申</div>
+      <div>
+        <h1>申报书智能修改系统</h1>
+        <p>AI APPLICATION FORM EDITING SYSTEM</p>
+      </div>
+    </div>
+    <div class="brand-body">
+      <h2>修改意见进，<br><em>成品申报书出</em></h2>
+      <p>上传申报书与区域修改意见，三大模型对照生成编辑计划，人工确认后按原文版式写入 Word。</p>
+      <ul class="feat">
+        <li><span class="fi">1</span><div><b>三模型对照出计划</b><span>Grok / Gemini / 火山 并发给出修改建议</span></div></li>
+        <li><span class="fi">2</span><div><b>版式保真写入</b><span>保持源文件表格、单元格与段落结构</span></div></li>
+        <li><span class="fi">3</span><div><b>人才库 · 论文附件检索</b><span>缺护照、缺论文？自动查库给链接</span></div></li>
+        <li><span class="fi">4</span><div><b>人工确认 · 原件只读</b><span>确认前不改 Word，禁止编造事实</span></div></li>
+      </ul>
+    </div>
+    <div class="brand-foot">本地单机服务 · 原件只读 · 严禁编造数据 · v2.3</div>
+  </aside>
+
+  <main class="form-side">
+    <div class="form-box">
+      <div class="mobile-brand">
+        <div class="brand-logo">申</div>
+        <div>
+          <h1>申报书智能修改系统</h1>
+          <p>AI APPLICATION FORM EDITING SYSTEM</p>
+        </div>
+      </div>
+      <h2>欢迎回来</h2>
+      <p class="sub">请登录你的账号，继续处理申报书</p>
+
+      <form id="loginForm" autocomplete="off">
+        <div class="f-row">
+          <label for="username">用户名</label>
+          <div class="inp">
+            <input type="text" id="username" required maxlength="32" placeholder="请输入用户名">
+            </div>
+        </div>
+        <div class="f-row">
+          <label for="password">密码</label>
+          <div class="inp">
+            <input type="password" id="password" required maxlength="64" placeholder="请输入密码">
+            <button type="button" class="eye" id="eyeBtn" title="显示 / 隐藏密码" tabindex="-1">显示</button>
+          </div>
+          <div class="caps" id="capsHint">键盘大写锁定已开启</div>
+        </div>
+
+        <div class="form-err" id="errBox"><span id="err"></span></div>
+        <button type="submit" class="btn-login" id="submitBtn">登 录</button>
+      </form>
+
+      <p class="form-foot">还没有账号？<a href="/register">立即注册</a></p>
+      <p class="side-foot">登录即代表同意仅将本系统用于申报书修改工作</p>
+    </div>
+  </main>
+
+</div>
+<script>
+(function () {
+  var form = document.getElementById('loginForm');
+  var err = document.getElementById('err');
+  var errBox = document.getElementById('errBox');
+  var btn = document.getElementById('submitBtn');
+
+  function fail(msg) {
+    err.textContent = msg;
+    errBox.classList.remove('show');
+    void errBox.offsetWidth; /* 重触发抖动动画 */
+    errBox.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = '登 录';
+  }
+
+  document.getElementById('eyeBtn').addEventListener('click', function () {
+    var pw = document.getElementById('password');
+    var show = pw.type === 'password';
+    pw.type = show ? 'text' : 'password';
+    this.textContent = show ? '隐藏' : '显示';
+  });
+
+  var caps = document.getElementById('capsHint');
+  document.getElementById('password').addEventListener('keyup', function (e) {
+    if (e.getModifierState) caps.style.display = e.getModifierState('CapsLock') ? 'block' : 'none';
+  });
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    errBox.classList.remove('show');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>登录中…';
+    fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value.trim(),
+        password: document.getElementById('password').value
+      })
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, data: j }; });
+    }).then(function (res) {
+      if (res.ok && res.data && res.data.ok) {
+        var u = res.data.user || {};
+        btn.textContent = '登录成功，正在进入…';
+        location.href = u.role === 'admin' ? '/admin' : (res.data.redirect || '/');
+        return;
+      }
+      fail((res.data && res.data.detail) || '登录失败，请重试');
+    }).catch(function (ex) {
+      fail('网络异常：' + (ex && ex.message || ex));
+    });
+  });
+})();
+</script>
+</body>
+</html>

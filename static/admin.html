@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理控制台 · 申报书智能修改系统</title>
+<link rel="stylesheet" href="/public/style.css?v=py37">
+<style>
+:root{ --nav-w:216px; }
+*{box-sizing:border-box}
+.admin-shell{min-height:100vh;display:flex;flex-direction:column;background:
+  radial-gradient(900px 300px at 90% -60px, rgba(59,116,214,.10), transparent 60%), #f2f5fa;}
+
+/* ===== 顶栏 ===== */
+.topbar{
+  display:flex;align-items:center;gap:16px;padding:14px 28px;color:#fff;
+  background:linear-gradient(120deg,#14264f,#1f3b73 55%,#2450a4);
+  box-shadow:0 2px 12px rgba(16,32,64,.18);
+}
+.topbar .tlogo{
+  width:38px;height:38px;border-radius:11px;font-size:19px;
+  background:rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.25);
+}
+.topbar h1{margin:0;font-size:17px;letter-spacing:1px}
+.topbar .tsub{font-size:11.5px;opacity:.65;margin-top:2px}
+.topbar .grow{flex:1}
+.topbar .tuser{
+  font-size:13px;background:rgba(255,255,255,.12);padding:7px 14px;border-radius:999px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22);
+  max-width:min(280px, 36vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.topbar a.tbtn,.topbar button.tbtn{
+  color:#fff;text-decoration:none;font-size:13px;font-family:inherit;cursor:pointer;
+  background:rgba(255,255,255,.12);padding:7px 14px;border:none;border-radius:999px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22);transition:background .15s;
+}
+.topbar a.tbtn:hover,.topbar button.tbtn:hover{background:rgba(255,255,255,.22)}
+
+/* ===== 主体：内容 + 右侧菜单 ===== */
+.admin-body{flex:1;display:flex;gap:22px;align-items:flex-start;
+  width:100%;max-width:1400px;margin:0 auto;padding:24px 28px 44px;}
+.content{flex:1;min-width:0}
+.content-sec{margin-bottom:34px;scroll-margin-top:20px}
+.sec-title{display:flex;align-items:center;gap:10px;margin:0 0 4px;font-size:20px;font-weight:700;color:var(--ink)}
+.sec-desc{margin:0 0 20px;font-size:13px;color:var(--sub)}
+
+/* ===== 右侧菜单 ===== */
+.sidenav{
+  width:var(--nav-w);flex-shrink:0;position:sticky;top:24px;
+  background:#fff;border:1px solid #e6ebf4;border-radius:16px;padding:12px;
+  box-shadow:0 1px 2px rgba(16,32,64,.05),0 10px 26px -14px rgba(16,32,64,.2);
+}
+.sidenav .nav-cap{font-size:11px;font-weight:700;letter-spacing:2px;color:#98a2b6;padding:8px 12px 6px}
+.nav-item{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:11px 12px;margin-bottom:4px;border:none;border-radius:11px;cursor:pointer;
+  font-size:13.5px;font-weight:600;color:#46506a;background:none;font-family:inherit;
+  transition:background .15s,color .15s;
+}
+.nav-item .ni{font-size:16px;width:22px;text-align:center}
+.nav-item:hover{background:#f0f5fd;color:var(--brand)}
+.nav-item.active{
+  background:linear-gradient(120deg,#2450a4,#3b74d6);color:#fff;
+  box-shadow:0 8px 18px -8px rgba(36,80,164,.55);
+}
+.nav-item.active .ni{filter:brightness(1.2)}
+.sidenav .nav-foot{margin-top:10px;padding:10px 12px 6px;border-top:1px dashed #e4e9f2;font-size:11.5px;color:#9aa4b8;line-height:1.7}
+
+/* ===== 通用卡片 ===== */
+.acard{background:#fff;border:1px solid #e9edf5;border-radius:16px;padding:20px 22px;margin-bottom:18px;
+  box-shadow:0 1px 2px rgba(16,32,64,.05),0 10px 26px -14px rgba(16,32,64,.18);
+  min-width:0}
+.acard h3{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 14px;font-size:14.5px;color:var(--ink);min-width:0}
+
+/* ===== 任务总览 ===== */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:14px;margin-bottom:18px}
+.stat{
+  background:#fff;border:1px solid #e9edf5;border-radius:14px;padding:16px 18px;position:relative;overflow:hidden;
+  box-shadow:0 1px 2px rgba(16,32,64,.05),0 8px 22px -14px rgba(16,32,64,.18);
+}
+.stat::after{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--sc,#c9d4ea)}
+.stat .sn{font-size:26px;font-weight:800;color:var(--ink);line-height:1.1}
+.stat .sl{font-size:12px;color:var(--sub);margin-top:4px}
+.tbl-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+table.tbl th,table.tbl td{padding:9px 12px;border-bottom:1px solid #eef1f6;text-align:left;vertical-align:middle;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.tbl th{background:#f6f8fc;color:#5a6577;font-weight:600}
+table.tbl tr:last-child td{border-bottom:none}
+table.tbl.tbl-tasks{table-layout:fixed}
+table.tbl td.td-name{white-space:normal;word-break:break-all;line-height:1.45;overflow:hidden}
+table.tbl td.td-clip{overflow:hidden;text-overflow:ellipsis}
+table.tbl td.ops{overflow:visible;white-space:nowrap}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:600}
+.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.st-done{color:#188038;background:#e7f5ec}
+.st-planned{color:#2450a4;background:#e9f0fc}
+.st-running{color:#b26a00;background:#fdf3e2}
+.st-failed{color:#c5221f;background:#fdecea}
+.st-pending{color:#6b4fa0;background:#f1ebfb}
+.mono{font-family:Consolas,monospace}
+.mini{font-size:12px;padding:4px 10px;border:1px solid #d7deea;background:#fff;border-radius:8px;cursor:pointer;font-family:inherit}
+.mini:hover{border-color:var(--brand2);background:#f0f6ff}
+
+/* ===== 新建任务 ===== */
+.newtask-hero{
+  border-radius:16px;color:#fff;padding:30px 32px;margin-bottom:18px;position:relative;overflow:hidden;
+  background:linear-gradient(130deg,#14264f,#1f3b73 55%,#2450a4);
+}
+.newtask-hero::before{content:"";position:absolute;width:340px;height:340px;border-radius:50%;
+  background:#3b74d6;filter:blur(70px);opacity:.45;top:-140px;right:-80px}
+.newtask-hero>*{position:relative}
+.newtask-hero h3{margin:0 0 8px;font-size:20px}
+.newtask-hero p{margin:0 0 18px;font-size:13.5px;color:rgba(255,255,255,.75);max-width:560px;line-height:1.8}
+.btn-open{
+  display:inline-block;text-decoration:none;color:#fff;font-size:14px;font-weight:700;font-family:inherit;
+  padding:11px 26px;border-radius:11px;border:none;cursor:pointer;letter-spacing:2px;
+  background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.3);
+  transition:background .15s,transform .15s;
+}
+.btn-open:hover{background:rgba(255,255,255,.26);transform:translateY(-1px)}
+.btn-save{
+  padding:10px 22px;border:none;border-radius:11px;cursor:pointer;
+  font-size:14px;font-weight:700;font-family:inherit;color:#fff;letter-spacing:2px;
+  background:linear-gradient(120deg,#2450a4,#3b74d6);
+  box-shadow:0 10px 22px -8px rgba(36,80,164,.55);transition:transform .15s,filter .2s;
+}
+.btn-save:hover{transform:translateY(-1px);filter:saturate(1.08)}
+.btn-save:disabled{opacity:.6;cursor:wait;transform:none}
+.cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;min-width:0}
+.cfg-grid .span2{grid-column:1 / -1}
+.f-row{margin-bottom:14px;min-width:0}
+.f-row label{display:block;font-size:13px;font-weight:600;color:#3c465a;margin-bottom:6px}
+.inp input,.inp select{
+  width:100%;max-width:100%;height:42px;padding:0 12px;border:1px solid #d7deea;border-radius:10px;
+  font-family:inherit;font-size:13px;background:#fff;min-width:0;box-sizing:border-box;
+}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:#3c465a;padding-top:8px}
+.cfg-tag{
+  font-size:11px;padding:2px 9px;border-radius:6px;background:#e9f0fc;color:var(--brand);font-weight:700;
+  max-width:min(320px, 100%);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+table.tbl tr.task-row{cursor:pointer}
+table.tbl tr.task-row:hover{background:#f6f9ff}
+table.tbl tr.task-row.open{background:#eef4ff}
+table.tbl tr.task-files td{background:#f7f9fd;padding:0;white-space:normal;overflow:visible}
+.files-box{padding:12px 16px 14px 18px}
+.files-box .fh{font-size:12.5px;font-weight:700;color:#33415e;margin-bottom:8px}
+.files-box ul{margin:0;padding:0;list-style:none}
+.files-box li{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px dashed #e4eaf3;font-size:13px}
+.files-box li:last-child{border-bottom:none}
+.files-box .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1c2333}
+.files-box .fs{color:#8291ad;font-size:12px;flex-shrink:0}
+.files-box a.dl{flex-shrink:0;padding:3px 12px;border-radius:8px;background:#eef4ff;color:var(--brand);
+  font-size:12px;font-weight:600;text-decoration:none}
+.files-box a.dl:hover{background:#e0ecff}
+.files-muted{color:#98a2b6;font-size:13px;padding:4px 0}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+.step{background:#fff;border:1px solid #e9edf5;border-radius:14px;padding:16px 18px;
+  box-shadow:0 1px 2px rgba(16,32,64,.05),0 8px 22px -14px rgba(16,32,64,.18)}
+.step .si{width:34px;height:34px;border-radius:10px;background:#eef4ff;display:flex;align-items:center;justify-content:center;font-size:16px;margin-bottom:10px}
+.step b{display:block;font-size:13.5px;margin-bottom:4px}
+.step span{font-size:12.5px;color:var(--sub);line-height:1.6}
+
+/* ===== 人员信息 ===== */
+.me-tag{color:var(--brand);font-size:11px;font-weight:700;margin-left:4px}
+.role-sel,.status-sel{padding:4px 6px;font-size:12.5px;border-radius:7px;border:1px solid #d7deea;background:#fff;font-family:inherit}
+.reset-pw{width:120px;padding:5px 8px;font-size:12.5px;border:1px solid #d7deea;border-radius:7px;font-family:inherit}
+td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visible}
+.msg{font-size:13px;margin:0 0 12px;min-height:16px}
+.msg.ok{color:var(--ok)}
+.msg.bad{color:var(--bad)}
+
+/* ===== 系统信息 ===== */
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media (max-width:760px){
+  .info-grid{grid-template-columns:1fr}
+  .cfg-grid{grid-template-columns:1fr}
+}
+.kv{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:9px 2px;border-bottom:1px dashed #eef1f6;font-size:13px;min-width:0}
+.kv:last-child{border-bottom:none}
+.kv .k{color:var(--sub);flex-shrink:0}
+.kv .v{font-weight:600;color:var(--ink);text-align:right;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+.kv .v select{max-width:min(360px, 100%)}
+.dot-ok{color:var(--ok)}
+.dot-bad{color:var(--bad)}
+.model-row{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px dashed #eef1f6;font-size:13px;min-width:0}
+.model-row:last-child{border-bottom:none}
+.model-row .mn{font-weight:700;flex-shrink:0;max-width:8em}
+.model-row .mid{font-family:Consolas,monospace;font-size:12px;color:var(--sub);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.model-row span:last-child{flex-shrink:0}
+
+/* ===== 响应式 ===== */
+@media (max-width:860px){
+  .admin-body{flex-direction:column-reverse;padding:16px 16px 36px}
+  .sidenav{position:static;width:100%;display:flex;flex-wrap:wrap;gap:6px;padding:8px}
+  .sidenav .nav-cap,.sidenav .nav-foot{display:none}
+  .nav-item{width:auto;margin:0}
+  .info-grid{grid-template-columns:1fr}
+  .cfg-grid{grid-template-columns:1fr}
+  .topbar{flex-wrap:wrap;gap:10px}
+  .topbar .tuser{max-width:100%}
+}
+</style>
+</head>
+<body>
+<div class="admin-shell">
+
+  <header class="topbar">
+    <div class="tlogo">申</div>
+    <div>
+      <h1>管理控制台</h1>
+      <div class="tsub">申报书智能修改系统 · ADMIN CONSOLE</div>
+    </div>
+    <div class="grow"></div>
+    <span class="tuser" id="whoami">—</span>
+    <a class="tbtn" href="/" target="_blank" rel="noopener">↗ 打开系统</a>
+    <button type="button" class="tbtn" id="logoutBtn">退出登录</button>
+  </header>
+
+  <div class="admin-body">
+
+    <!-- 左侧内容 -->
+    <div class="content">
+
+      <!-- 任务总览 -->
+      <section class="content-sec" id="sec-overview">
+        <h2 class="sec-title">任务总览</h2>
+        <p class="sec-desc">全部任务与批次的运行情况（管理员可见全部数据）</p>
+        <div class="stat-grid" id="statGrid">
+          <div class="stat" style="--sc:#2450a4"><div class="sn" id="stTotal">—</div><div class="sl">任务总数</div></div>
+          <div class="stat" style="--sc:#6b4fa0"><div class="sn" id="stBatch">—</div><div class="sl">批次总数</div></div>
+          <div class="stat" style="--sc:#b26a00"><div class="sn" id="stRunning">—</div><div class="sl">运行 / 排队中</div></div>
+          <div class="stat" style="--sc:#188038"><div class="sn" id="stDone">—</div><div class="sl">已完成</div></div>
+          <div class="stat" style="--sc:#c5221f"><div class="sn" id="stFailed">—</div><div class="sl">失败</div></div>
+        </div>
+        <div class="acard">
+          <h3>最近任务 <span style="font-size:12px;font-weight:500;color:var(--sub)">点击一行查看并下载产出</span></h3>
+          <div class="tbl-wrap">
+            <table class="tbl tbl-tasks">
+              <colgroup>
+                <col style="width:18%"><col style="width:26%"><col style="width:12%">
+                <col style="width:10%"><col style="width:12%"><col style="width:6%"><col style="width:16%">
+              </colgroup>
+              <thead><tr><th>创建时间</th><th>申报书</th><th>编号</th><th>创建人</th><th>状态</th><th>批次</th><th></th></tr></thead>
+              <tbody id="taskBody"><tr><td colspan="7">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 新建任务 -->
+      <section class="content-sec" id="sec-newtask">
+        <h2 class="sec-title">新建任务</h2>
+        <p class="sec-desc">任务在主系统中创建，管理员与普通用户使用同一入口</p>
+        <div class="newtask-hero">
+          <h3>上传申报书 + 修改意见，一键生成编辑计划</h3>
+          <p>系统按编号自动配对申报书与意见，三大模型对照给出修改计划，人工确认后按原文版式写入 Word，产出修改后文档、对照表与遗留事项。</p>
+          <a class="btn-open" href="/" target="_blank" rel="noopener">打开主系统新建任务</a>
+        </div>
+        <div class="steps">
+          <div class="step"><b>上传文件</b><span>选择本批次全部申报书（.docx）与区域修改意见文件</span></div>
+          <div class="step"><b>配对确认</b><span>核对编号 / 姓名自动匹配结果，处理未配对条款</span></div>
+          <div class="step"><b>生成计划</b><span>Grok / Gemini / 火山 按章并发，人工逐条核对采用</span></div>
+          <div class="step"><b>确认落盘</b><span>确认后写入 Word，下载成品、对照表与遗留事项</span></div>
+        </div>
+      </section>
+
+      <!-- 人员信息 -->
+      <section class="content-sec" id="sec-users">
+        <h2 class="sec-title">人员信息</h2>
+        <p class="sec-desc">管理本系统账号：角色、状态、密码与删除（每页保护最后一名管理员）</p>
+        <div class="acard">
+          <div class="msg" id="msg"></div>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th>ID</th><th>用户名</th><th>真实姓名</th><th>部门</th><th>角色</th><th>状态</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr>
+              </thead>
+              <tbody id="tbody"><tr><td colspan="9">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 模型配置 -->
+      <section class="content-sec" id="sec-config">
+        <h2 class="sec-title">模型配置</h2>
+        <p class="sec-desc">修改模型接入参数（密钥留空表示不修改）；普通用户在主系统只能查看</p>
+        <div class="acard">
+          <h3>默认采用</h3>
+          <div class="kv"><span class="k">分类与「修改后」默认模型</span>
+            <span class="v"><select id="classifyModel" class="role-sel" style="min-width:220px"></select></span>
+          </div>
+        </div>
+        <div id="cfgCards"></div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button type="button" class="btn-save" id="cfgSave">保存配置</button>
+          <button type="button" class="mini" id="cfgRestore">恢复默认配置</button>
+          <span class="msg" id="cfgMsg" style="margin:0"></span>
+        </div>
+      </section>
+
+      <!-- 系统信息 -->
+      <section class="content-sec" id="sec-system">
+        <h2 class="sec-title">系统信息</h2>
+        <p class="sec-desc">运行版本与各组件配置状态（不展示密钥与内网地址）</p>
+        <div class="info-grid">
+          <div class="acard" style="margin-bottom:0">
+            <h3>系统</h3>
+            <div id="sysBasic">加载中…</div>
+          </div>
+          <div class="acard" style="margin-bottom:0">
+            <h3>数据</h3>
+            <div id="sysData">加载中…</div>
+          </div>
+          <div class="acard" style="margin-bottom:0;grid-column:1 / -1">
+            <h3>模型接入</h3>
+            <div id="sysModels">加载中…</div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- 右侧菜单 -->
+    <nav class="sidenav">
+      <div class="nav-cap">控制台菜单</div>
+      <button type="button" class="nav-item active" data-sec="overview">任务总览</button>
+      <button type="button" class="nav-item" data-sec="newtask">新建任务</button>
+      <button type="button" class="nav-item" data-sec="users">人员信息</button>
+      <button type="button" class="nav-item" data-sec="config">模型配置</button>
+      <button type="button" class="nav-item" data-sec="system">系统信息</button>
+      <div class="nav-foot">本地单机服务<br>原件只读 · 严禁编造数据</div>
+    </nav>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  var me = null;
+  var STATUS = {
+    done: ['st-done', '已完成'], planned: ['st-planned', '待确认'],
+    running: ['st-running', '运行中'], pending: ['st-pending', '排队中'],
+    failed: ['st-failed', '失败'], matching: ['st-running', '配对中']
+  };
+  function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function badge(st) {
+    var m = STATUS[st] || ['st-pending', st || '未知'];
+    return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
+  }
+  var msg = document.getElementById('msg');
+  function say(ok, t) { msg.className = 'msg ' + (ok ? 'ok' : 'bad'); msg.textContent = t; setTimeout(function () { if (msg.textContent === t) msg.textContent = ''; }, 4000); }
+
+  /* ===== 菜单：锚点滚动 + 滚动高亮 ===== */
+  var items = Array.prototype.slice.call(document.querySelectorAll('.nav-item'));
+  items.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var sec = document.getElementById('sec-' + btn.getAttribute('data-sec'));
+      if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+  var sections = items.map(function (btn) {
+    return document.getElementById('sec-' + btn.getAttribute('data-sec'));
+  });
+  function spyNav() {
+    var y = window.scrollY + 120, idx = 0;
+    sections.forEach(function (s, i) { if (s && s.offsetTop <= y) idx = i; });
+    items.forEach(function (b, i) { b.classList.toggle('active', i === idx); });
+  }
+  window.addEventListener('scroll', spyNav, { passive: true });
+  spyNav();
+
+  /* ===== 登录校验 ===== */
+  fetch('/api/auth/me').then(function (r) {
+    if (!r.ok) { location.href = '/login'; throw new Error('unauth'); }
+    return r.json();
+  }).then(function (j) {
+    me = j.user || {};
+    if (me.role !== 'admin') {
+      document.body.innerHTML = '<div style="max-width:420px;margin:80px auto;text-align:center;font-family:inherit">' +
+        '<div style="font-size:44px;font-weight:700">权限受限</div><h2 style="margin:12px 0">需要管理员权限</h2>' +
+        '<p style="color:#5b6577;font-size:14px">当前账号：' + esc(me.realName || me.username || '') + '（' + esc(me.role === 'admin' ? '管理员' : '普通用户') + '）</p>' +
+        '<a href="/" style="color:#2450a4;font-weight:700">← 返回系统</a></div>';
+      return;
+    }
+    var who = me.realName + (me.department ? ' · ' + me.department : '');
+    var whoEl = document.getElementById('whoami');
+    whoEl.textContent = who;
+    whoEl.title = who;
+    loadOverview();
+    loadUsers();
+    loadSystem();
+    loadConfig();
+  }).catch(function () {});
+
+  /* ===== 任务总览 ===== */
+  function loadOverview() {
+    Promise.all([
+      fetch('/api/tasks').then(function (r) { return r.json(); }),
+      fetch('/api/batches').then(function (r) { return r.json(); })
+    ]).then(function (res) {
+      var tasks = res[0].tasks || [];
+      var batches = res[1].batches || [];
+      var done = 0, failed = 0, running = 0;
+      tasks.forEach(function (t) {
+        if (t.status === 'done') done++;
+        else if (t.status === 'failed') failed++;
+        else running++;
+      });
+      document.getElementById('stTotal').textContent = tasks.length;
+      document.getElementById('stBatch').textContent = batches.length;
+      document.getElementById('stRunning').textContent = running;
+      document.getElementById('stDone').textContent = done;
+      document.getElementById('stFailed').textContent = failed;
+      totals.tasks = tasks.length;
+      totals.batches = batches.length;
+      renderDataCard();
+      var tb = document.getElementById('taskBody');
+      tb.innerHTML = '';
+      var openId = tb.getAttribute('data-open') || '';
+      tasks.slice(0, 20).forEach(function (t) {
+        var tr = document.createElement('tr');
+        tr.className = 'task-row' + (t.id === openId ? ' open' : '');
+        tr.setAttribute('data-id', t.id);
+        var nOut = (t.deliverables || t.outputs || []).length;
+        tr.innerHTML =
+          '<td class="td-clip" title="' + esc(t.createdAt) + '">' + esc(t.createdAt) + '</td>' +
+          '<td class="td-name" title="' + esc(t.app && t.app.name) + '">' + esc(t.app && t.app.name) + '</td>' +
+          '<td class="mono td-clip" title="' + esc(t.app && t.app.no) + '">' + esc(t.app && t.app.no) + '</td>' +
+          '<td class="td-clip" title="' + esc(t.owner || '（历史）') + '">' + esc(t.owner || '（历史）') + '</td>' +
+          '<td>' + badge(t.status) + '</td>' +
+          '<td class="mono">' + (t.batchId ? '√' : '—') + '</td>' +
+          '<td><button type="button" class="mini" data-open="' + esc(t.id) + '">' + (t.id === openId ? '收起' : (nOut ? '查看产出 · ' + nOut : '查看产出')) + '</button></td>';
+        tb.appendChild(tr);
+        if (t.id === openId) {
+          var fr = document.createElement('tr');
+          fr.className = 'task-files';
+          fr.setAttribute('data-for', t.id);
+          fr.innerHTML = '<td colspan="7"><div class="files-box"><div class="files-muted">加载产出…</div></div></td>';
+          tb.appendChild(fr);
+          fillTaskFiles(fr, t.id);
+        }
+      });
+      if (!tasks.length) tb.innerHTML = '<tr><td colspan="7" style="color:#98a2b6">暂无任务</td></tr>';
+    }).catch(function (e) { console.warn('overview', e); });
+  }
+
+  function fmtSize(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+  function fillTaskFiles(fr, tid) {
+    fetch('/api/tasks/' + encodeURIComponent(tid)).then(function (r) { return r.json(); }).then(function (t) {
+      var files = t.outputs || t.deliverables || [];
+      var box = fr.querySelector('.files-box');
+      if (!box) return;
+      if (!files.length) {
+        box.innerHTML = '<div class="fh">产出文件</div><div class="files-muted">该任务尚无产出（未完成写入或校验未通过）</div>';
+        return;
+      }
+      var lis = files.map(function (o) {
+        var href = '/api/tasks/' + encodeURIComponent(tid) + '/files?dir=output&name=' + encodeURIComponent(o.name);
+        return '<li><span class="fn" title="' + esc(o.name) + '">' + esc(o.name) + '</span>' +
+          '<span class="fs">' + fmtSize(o.size) + '</span>' +
+          '<a class="dl" href="' + href + '" download>下载</a></li>';
+      }).join('');
+      box.innerHTML = '<div class="fh">产出文件 · ' + files.length + ' 个</div><ul>' + lis + '</ul>';
+    }).catch(function (e) {
+      var box = fr.querySelector('.files-box');
+      if (box) box.innerHTML = '<div class="files-muted">读取失败：' + esc(e.message || '') + '</div>';
+    });
+  }
+  function toggleTaskOpen(tid) {
+    var tb = document.getElementById('taskBody');
+    var cur = tb.getAttribute('data-open') || '';
+    tb.setAttribute('data-open', cur === tid ? '' : tid);
+    loadOverview();
+  }
+  document.getElementById('taskBody').addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('a.dl')) return;
+    var btn = e.target.closest ? e.target.closest('button[data-open]') : null;
+    if (btn) {
+      e.preventDefault();
+      toggleTaskOpen(btn.getAttribute('data-open'));
+      return;
+    }
+    var tr = e.target.closest ? e.target.closest('tr.task-row') : null;
+    if (tr) toggleTaskOpen(tr.getAttribute('data-id'));
+  });
+
+  /* ===== 人员信息 ===== */
+  var userCount = 0;
+  var totals = { tasks: '—', batches: '—' };
+  function loadUsers() {
+    fetch('/api/admin/users').then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) { say(false, j.detail || '加载失败'); return; }
+      userCount = (j.users || []).length;
+      renderUsers(j.users || []);
+      renderDataCard();
+    }).catch(function (e) { say(false, '加载失败：' + e.message); });
+  }
+  function renderUsers(users) {
+    var tbody = document.getElementById('tbody');
+    tbody.innerHTML = '';
+    users.forEach(function (u) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + u.id + '</td>' +
+        '<td class="td-clip" title="' + esc(u.username) + '">' + esc(u.username) + '</td>' +
+        '<td class="td-name" title="' + esc(u.realName) + '">' + esc(u.realName) + '</td>' +
+        '<td class="td-name" title="' + esc(u.department) + '">' + esc(u.department) + '</td>' +
+        '<td><select class="role-sel" data-id="' + u.id + '">' +
+          '<option value="user"' + (u.role === 'user' ? ' selected' : '') + '>普通用户</option>' +
+          '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>管理员</option>' +
+        '</select></td>' +
+        '<td><select class="status-sel" data-id="' + u.id + '">' +
+          '<option value="active"' + (u.status === 'active' ? ' selected' : '') + '>启用</option>' +
+          '<option value="disabled"' + (u.status === 'disabled' ? ' selected' : '') + '>停用</option>' +
+        '</select></td>' +
+        '<td>' + esc(u.createdAt) + '</td>' +
+        '<td>' + esc(u.lastLoginAt || '—') + '</td>' +
+        '<td class="ops">' +
+          '<input type="password" class="reset-pw" placeholder="新密码" data-id="' + u.id + '">' +
+          '<button type="button" class="mini" data-act="pw" data-id="' + u.id + '">重置</button>' +
+          '<button type="button" class="mini" data-act="del" data-id="' + u.id + '">删除</button>' +
+        '</td>';
+      if (me && u.id === me.id) {
+        var tag = document.createElement('span');
+        tag.className = 'me-tag';
+        tag.textContent = '(我)';
+        tr.children[1].appendChild(tag);
+      }
+      tbody.appendChild(tr);
+    });
+  }
+  document.getElementById('tbody').addEventListener('change', function (e) {
+    var sel = e.target;
+    if (!sel.classList.contains('role-sel') && !sel.classList.contains('status-sel')) return;
+    var id = sel.getAttribute('data-id');
+    var body = sel.classList.contains('role-sel') ? { role: sel.value } : { status: sel.value };
+    fetch('/api/admin/users/' + id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+    .then(function (res) {
+      if (res.ok && res.data.ok) { say(true, '已更新'); loadUsers(); }
+      else { say(false, (res.data.detail) || '更新失败'); loadUsers(); }
+    });
+  });
+  document.getElementById('tbody').addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    var id = btn.getAttribute('data-id');
+    var act = btn.getAttribute('data-act');
+    if (act === 'pw') {
+      var input = document.querySelector('input.reset-pw[data-id="' + id + '"]');
+      var pw = (input && input.value) || '';
+      if (!pw) { say(false, '请先输入新密码'); return; }
+      fetch('/api/admin/users/' + id, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        if (res.ok && res.data.ok) { say(true, '密码已重置'); input.value = ''; }
+        else say(false, (res.data.detail) || '重置失败');
+      });
+    } else if (act === 'del') {
+      if (!confirm('确定删除该用户？此操作不可恢复。')) return;
+      fetch('/api/admin/users/' + id, { method: 'DELETE' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        if (res.ok && res.data.ok) { say(true, '已删除'); loadUsers(); }
+        else say(false, (res.data.detail) || '删除失败');
+      });
+    }
+  });
+
+  /* ===== 系统信息 ===== */
+  function kv(k, v) { return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>'; }
+  function loadSystem() {
+    fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
+      var ed = cfg.edit || {};
+      var okCnt = ['grok', 'gemini', 'doubao'].filter(function (f) { return ed[f] && ed[f].hasKey; }).length;
+      document.getElementById('sysBasic').innerHTML =
+        kv('系统版本', 'v' + esc(cfg.version || '')) +
+        kv('部署方式', '本地单机 · 端口 3777') +
+        kv('模型接入', '<span class="' + (okCnt ? 'dot-ok' : 'dot-bad') + '">●</span> ' + okCnt + ' / 3 已配置') +
+        kv('配置状态', cfg.configured ? '<span class="dot-ok">●</span> 正常' : '<span class="dot-bad">●</span> 未配置');
+      var rows = '';
+      ['grok', 'gemini', 'doubao'].forEach(function (f) {
+        var m = ed[f] || {};
+        rows += '<div class="model-row">' +
+          '<span class="mn">' + esc(m.label || f) + '</span>' +
+          '<span class="mid" title="' + esc(m.id || '') + '">' + esc(m.id || '') + '</span>' +
+          '<span class="' + (m.hasKey ? 'dot-ok' : 'dot-bad') + '">● ' + (m.hasKey ? '密钥已配置' : '未配置密钥') + '</span>' +
+        '</div>';
+      });
+      document.getElementById('sysModels').innerHTML = rows;
+      renderDataCard();
+    }).catch(function (e) {
+      document.getElementById('sysBasic').innerHTML = '<div class="kv"><span class="k">加载失败</span><span class="v">' + esc(e.message || '') + '</span></div>';
+    });
+  }
+
+  function renderDataCard() {
+    var el = document.getElementById('sysData');
+    if (!el) return;
+    el.innerHTML =
+      kv('用户数据库', '<span class="dot-ok">●</span> MySQL 已连接') +
+      kv('账号总数', userCount + ' 人') +
+      kv('任务存储', totals.tasks + ' 个任务') +
+      kv('批次存储', totals.batches + ' 个批次');
+  }
+
+  /* ===== 模型配置 ===== */
+  var cfgData = null;
+  var cfgMsg = document.getElementById('cfgMsg');
+  function sayCfg(ok, t) { cfgMsg.className = 'msg ' + (ok ? 'ok' : 'bad'); cfgMsg.textContent = t; setTimeout(function () { if (cfgMsg.textContent === t) cfgMsg.textContent = ''; }, 5000); }
+
+  function loadConfig() {
+    fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
+      cfgData = cfg;
+      renderConfig(cfg);
+    }).catch(function (e) { sayCfg(false, '配置加载失败：' + (e.message || '')); });
+  }
+
+  function renderConfig(cfg) {
+    var ed = cfg.edit || {};
+    var fams = [
+      { key: 'grok', name: 'Grok' },
+      { key: 'gemini', name: 'Gemini' },
+      { key: 'doubao', name: '火山' }
+    ];
+    var wrap = document.getElementById('cfgCards');
+    wrap.innerHTML = '';
+    fams.forEach(function (f) {
+      var m = ed[f.key] || {};
+      var card = document.createElement('div');
+      card.className = 'acard';
+      card.innerHTML =
+        '<h3>' + esc(m.label || f.name) + ' <span class="cfg-tag" title="' + esc(m.id || '') + '">' + esc(m.id || '') + '</span>' +
+          '<span style="margin-left:auto;font-size:12px;font-weight:600;color:' + (m.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (m.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
+        '<div class="cfg-grid">' +
+          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="' + f.key + '" data-k="baseUrl" value="' + esc(m.baseUrl || '') + '" placeholder="OpenAI 兼容接口地址"></div></div>' +
+          '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="' + f.key + '" data-k="apiKey" value="" placeholder="' + (m.hasKey ? '••••••••（已配置）' : '填入密钥') + '"></div></div>' +
+          '<div class="f-row"><label>超时（秒）</label><div class="inp"><input type="number" min="30" max="900" data-f="' + f.key + '" data-k="timeoutSec" value="' + esc(m.timeoutSec || '') + '"></div></div>' +
+          (f.key === 'grok'
+            ? '<div class="f-row"><label>推理强度</label><div class="inp"><select data-f="grok" data-k="reasoningEffort" class="role-sel" style="width:100%;height:46px;padding:0 10px">' +
+                ['low', 'medium', 'high'].map(function (v) { return '<option value="' + v + '"' + ((m.reasoningEffort || 'medium') === v ? ' selected' : '') + '>' + v + '</option>'; }).join('') +
+              '</select></div></div>'
+            : '<div class="f-row"><label>流式</label><div class="chk"><input type="checkbox" data-f="' + f.key + '" data-k="stream"' + (m.stream ? ' checked' : '') + '> 使用流式输出</div></div>'
+          ) +
+        '</div>';
+      wrap.appendChild(card);
+    });
+    /* 默认模型下拉：三个模型的 id + 当前默认 */
+    var sel = document.getElementById('classifyModel');
+    var opts = [];
+    fams.forEach(function (f) {
+      var m = ed[f.key] || {};
+      if (m.id) opts.push([m.id, (m.label || f.key) + ' · ' + m.id]);
+    });
+    sel.innerHTML = opts.map(function (o) {
+      return '<option value="' + esc(o[0]) + '"' + (ed.classifyModel === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+    }).join('');
+  }
+
+  document.getElementById('cfgSave').addEventListener('click', function () {
+    var btn = this;
+    btn.disabled = true;
+    function famPayload(key) {
+      var p = {};
+      document.querySelectorAll('[data-f="' + key + '"]').forEach(function (el) {
+        var k = el.getAttribute('data-k');
+        if (k === 'apiKey') { if (el.value.trim()) p.apiKey = el.value.trim(); }
+        else if (k === 'stream') p.stream = el.checked;
+        else if (k === 'timeoutSec') { var n = parseInt(el.value, 10); if (n > 0) p.timeoutSec = n; }
+        else if (k === 'baseUrl') p.baseUrl = el.value.trim();
+        else p[k] = el.value;
+      });
+      return p;
+    }
+    var payload = {
+      grok: famPayload('grok'),
+      gemini: famPayload('gemini'),
+      doubao: famPayload('doubao'),
+      classifyModel: document.getElementById('classifyModel').value
+    };
+    fetch('/api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+    .then(function (res) {
+      if (res.ok && res.data && res.data.version) { sayCfg(true, '✓ 配置已保存'); cfgData = res.data; renderConfig(res.data); }
+      else sayCfg(false, (res.data && res.data.detail) || '保存失败');
+      btn.disabled = false;
+    }).catch(function (e) { sayCfg(false, '保存失败：' + (e.message || '')); btn.disabled = false; });
+  });
+
+  document.getElementById('cfgRestore').addEventListener('click', function () {
+    if (!confirm('确定恢复为默认配置？当前修改将被覆盖。')) return;
+    fetch('/api/config/restore-default', { method: 'POST' })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+    .then(function (res) {
+      if (res.ok && res.data && res.data.version) { sayCfg(true, '✓ 已恢复默认'); cfgData = res.data; renderConfig(res.data); }
+      else sayCfg(false, (res.data && res.data.detail) || '恢复失败');
+    });
+  });
+
+  document.getElementById('logoutBtn').addEventListener('click', function () {
+    fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login'; });
+  });
+})();
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@ var batchTimer = null;
 function scheduleBatchOff() {}
 var currentSiblings = null;
 var currentPage = 0;
+var listExpanded = {};
 
 function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
@@ -73,20 +74,7 @@ function closeAllMenus() {
 }
 function updateLive() {
   var live = $('liveStatus');
-  if (!live) return;
-  var g = cfgDraft.grok || {};
-  var m = cfgDraft.gemini || {};
-  var d = cfgDraft.doubao || {};
-  var bits = [];
-  if (g.ready) bits.push(g.label || 'Grok');
-  if (m.ready) bits.push(m.label || 'Gemini');
-  if (d.ready) bits.push(d.label || '火山');
-  var def = modelList(currentCfg).filter(function (x) { return x.id === cfgDraft.classifyModel; })[0];
-  var edit = modelList(currentCfg).filter(function (x) { return x.id === cfgEditId; })[0];
-  var t = bits.length ? ('服务运行中 · 已接入 ' + bits.join(' / ')) : '服务运行中 · 模型未配置';
-  if (def && (def.label || def.id)) t += '　默认 ' + (def.label || def.id);
-  if (edit && (edit.label || edit.id)) t += '　编辑 ' + (edit.label || edit.id);
-  live.textContent = t;
+  if (live) live.textContent = '服务运行中';
 }
 function cfgField(id, label, value, extra) {
   extra = extra || {};
@@ -308,9 +296,12 @@ function fileToB64(file) {
     r.readAsDataURL(file);
   });
 }
-function chip(name, bad, hint) {
+function chip(name, bad, hint, kind, idx) {
     var cls = 'chip' + (bad ? ' bad' : '');
-    return '<span class="' + cls + '" title="' + escAttr(name) + '">' + (bad ? '⚠ ' : '') + esc(name) + (hint ? '<em> ' + hint + '</em>' : '') + '</span>';
+    var x = (kind != null && idx != null)
+      ? '<button type="button" class="chip-x" data-kind="' + kind + '" data-i="' + idx + '" aria-label="移除" title="移除">×</button>'
+      : '';
+    return '<span class="' + cls + '" title="' + escAttr(name) + '"><span class="chip-n">' + (bad ? '! ' : '') + esc(name) + (hint ? '<em> ' + hint + '</em>' : '') + '</span>' + x + '</span>';
   }
 function isDocx(name) { return /\.docx$/i.test(String(name || '')); }
 function auditAppFiles(fileList) {
@@ -324,6 +315,46 @@ function auditAppFiles(fileList) {
     }
   });
   return { good: good, badNames: badNames };
+}
+
+var pickedApps = [];
+var pickedOps = [];
+function fileKey(f) {
+  return [f.name, f.size, f.lastModified].join('\t');
+}
+function mergeFiles(store, incoming) {
+  var seen = {};
+  store.forEach(function (f) { seen[fileKey(f)] = true; });
+  incoming.forEach(function (f) {
+    var k = fileKey(f);
+    if (!seen[k]) { seen[k] = true; store.push(f); }
+  });
+  return store;
+}
+function renderAppChips() {
+  var el = $('appName');
+  if (!el) return;
+  el.innerHTML = pickedApps.map(function (f, i) {
+    var bad = !isDocx(f.name);
+    var warnOp = /意见/.test(f.name);
+    var hint = bad ? '非 .docx' : (warnOp ? '名称含“意见”' : '');
+    return chip(f.name, bad || warnOp, hint, 'app', i);
+  }).join('');
+}
+function renderOpChips() {
+  var el = $('opNames');
+  if (!el) return;
+  el.innerHTML = pickedOps.map(function (f, i) {
+    return chip(f.name, false, '', 'op', i);
+  }).join('');
+}
+function clearPicked() {
+  pickedApps = [];
+  pickedOps = [];
+  if ($('appFile')) $('appFile').value = '';
+  if ($('opFiles')) $('opFiles').value = '';
+  renderAppChips();
+  renderOpChips();
 }
 
 /* ---------- list ---------- */
@@ -440,17 +471,89 @@ function rowKey(row) {
   if (row.batchId) return 'b:' + row.batchId;
   return 't:' + (row.id || '');
 }
+function booksOf(row) {
+  if (row && row.books && row.books.length) return row.books;
+  if (row && row.sibs && row.sibs.length) return row.sibs.map(asSib);
+  if (row && row.kind === 'task') return [{ id: row.id, appName: row.name, status: row.status }];
+  return [];
+}
+function paintNameCell(tr, row) {
+  var td = tr.querySelector('.col-name');
+  if (!td) return;
+  var open = !!(row.count > 1 && listExpanded[rowKey(row)]);
+  var books = booksOf(row);
+  var extra = '';
+  if (row.count > 1) {
+    extra = '<button type="button" class="tcount tcount-btn" title="展开查看全部申报书">' + row.count + ' 本 ' + (open ? '▴' : '▾') + '</button>';
+  }
+  var lis = '';
+  if (row.count > 1) {
+    lis = '<ul class="tbooks' + (open ? '' : ' hidden') + '">';
+    books.forEach(function (b, i) {
+      lis += '<li data-i="' + i + '"><span class="tbook-name" title="' + escAttr(b.appName || '') + '">' + esc(b.appName || '未命名') + '</span>';
+      if (b.status) lis += '<span class="badge st-' + escAttr(b.status) + '">' + esc(statusText(b.status)) + '</span>';
+      lis += '</li>';
+    });
+    lis += '</ul>';
+  }
+  td.innerHTML = '<div class="namecell' + (open ? ' open' : '') + '"><span class="tname" title="' + escAttr(row.title || row.name || '') + '">' + esc(row.name || '') + '</span>' + extra + lis + '</div>';
+  var btn = td.querySelector('.tcount-btn');
+  var tname = td.querySelector('.tname');
+  function toggle(ev) {
+    if (ev) ev.stopPropagation();
+    if (!row || row.count < 2) return;
+    var k = rowKey(row);
+    listExpanded[k] = !listExpanded[k];
+    paintNameCell(tr, tr._row || row);
+  }
+  if (btn) btn.onclick = toggle;
+  if (tname && row.count > 1) {
+    tname.style.cursor = 'pointer';
+    tname.onclick = toggle;
+  }
+  var ul = td.querySelector('.tbooks');
+  if (ul) {
+    ul.onclick = function (ev) {
+      ev.stopPropagation();
+      var li = ev.target.closest ? ev.target.closest('li') : null;
+      if (!li) return;
+      openBookFromRow(tr._row || row, parseInt(li.getAttribute('data-i'), 10));
+    };
+  }
+}
+function openBookFromRow(row, i) {
+  if (!row) return;
+  if (row.kind === 'batch-pending') {
+    currentSiblings = null; currentPage = 0;
+    $('detailCard').classList.add('hidden');
+    pollBatch(row.batchId);
+    return;
+  }
+  var books = booksOf(row);
+  var idx = isFinite(i) ? i : 0;
+  if (idx < 0 || idx >= books.length) idx = 0;
+  if (row.kind === 'batch' && books.length) {
+    currentSiblings = books.map(asSib);
+    currentPage = idx;
+    var hit = books[idx] || books[0];
+    if (hit && hit.id) showDetail(hit.id);
+    return;
+  }
+  currentSiblings = null; currentPage = 0;
+  updatePager();
+  if (row.id) showDetail(row.id);
+}
 function renderRow(row, tb) {
   var tr = document.createElement('tr');
   tr.setAttribute('data-key', rowKey(row));
   tr._row = row;
-  var extra = row.count > 1 ? '<span class="tcount">' + row.count + ' 本</span>' : '';
   tr.innerHTML =
     '<td class="col-time">' + esc(row.createdAt) + '</td>' +
-    '<td class="col-name"><div class="namecell"><span class="tname" title="' + escAttr(row.title) + '">' + esc(row.name) + '</span>' + extra + '</div></td>' +
+    '<td class="col-name"></td>' +
     '<td class="col-st"><span class="badge st-' + escAttr(row.status) + '">' + esc(statusText(row.status)) + '</span></td>' +
-    '<td class="col-act"><button class="mini">查看</button></td>';
-  tr.querySelector('button').onclick = function () { openListRow(tr._row); };
+    '<td class="col-act"><button type="button" class="mini">查看</button></td>';
+  paintNameCell(tr, row);
+  tr.querySelector('.col-act button').onclick = function () { openListRow(tr._row); };
   if (tb) tb.appendChild(tr);
   return tr;
 }
@@ -460,25 +563,8 @@ function updateRow(tr, row) {
   var timeTd = tr.querySelector('.col-time');
   var at = String(row.createdAt || '');
   if (timeTd && timeTd.textContent !== at) timeTd.textContent = at;
-  var nameEl = tr.querySelector('.tname');
-  var name = String(row.name || '');
-  var title = String(row.title || '');
-  if (nameEl) {
-    if (nameEl.textContent !== name) nameEl.textContent = name;
-    if (nameEl.getAttribute('title') !== title) nameEl.setAttribute('title', title);
-  }
-  var cell = tr.querySelector('.namecell');
-  var extra = cell ? cell.querySelector('.tcount') : null;
-  if (row.count > 1) {
-    var txt = row.count + ' 本';
-    if (!extra && cell) {
-      extra = document.createElement('span');
-      extra.className = 'tcount';
-      extra.textContent = txt;
-      cell.appendChild(extra);
-    } else if (extra && extra.textContent !== txt) extra.textContent = txt;
-  } else if (extra) extra.parentNode.removeChild(extra);
-  var badge = tr.querySelector('.badge');
+  paintNameCell(tr, row);
+  var badge = tr.querySelector('.col-st .badge');
   if (badge) {
     var cls = 'badge st-' + (row.status || '');
     var tx = statusText(row.status);
@@ -550,9 +636,10 @@ function buildListRows(tasks, batches) {
       kind: 'batch-pending',
       createdAt: b.createdAt,
       status: b.status,
-      name: (apps[0] || '批次') + (apps.length > 1 ? ' 等' + apps.length + '本' : ''),
+      name: apps[0] || '批次',
       title: apps.join('、'),
       count: apps.length,
+      books: apps.map(function (n) { return { id: '', appName: n, status: b.status }; }),
       batchId: b.id
     });
   });
@@ -569,9 +656,10 @@ function buildListRows(tasks, batches) {
       kind: 'batch',
       createdAt: newest,
       status: aggregateStatus(sibs),
-      name: (first.app && first.app.name) + (sibs.length > 1 ? ' 等' + sibs.length + '本' : ''),
+      name: (first.app && first.app.name) || '',
       title: sibs.map(function (x) { return x.app && x.app.name; }).join('、'),
       count: sibs.length,
+      books: sibs.map(asSib),
       sibs: sibs,
       batchId: bid,
       id: first.id
@@ -640,11 +728,11 @@ function renderStepper(status) {
   $('stepper').innerHTML = html;
 }
 function lnClass(msg) {
-  if (msg.indexOf('✅') === 0) return 'ln-ok';
-  if (msg.indexOf('⚠️') === 0) return 'ln-warn';
-  if (msg.indexOf('🔧') === 0) return 'ln-tool';
-  if (msg.indexOf('💬') === 0) return 'ln-say';
-  if (msg.indexOf('🚀') === 0) return 'ln-go';
+  msg = String(msg || '');
+  if (/(失败|跳过|警告|未命中|丢弃|超长|未达标|未检出|中断|不可用)/.test(msg)) return 'ln-warn';
+  if (/(完成|就绪|已改|已生成|返回 \d+)/.test(msg)) return 'ln-ok';
+  if (/(同时提交|直连模式|开始按章)/.test(msg)) return 'ln-go';
+  if (/(检索|提取|分类|仲裁)/.test(msg)) return 'ln-tool';
   return '';
 }
 function renderDetail(t) {
@@ -677,7 +765,7 @@ function renderDetail(t) {
   var ul = $('outList');
   ul.innerHTML = '';
   shown.forEach(function (o) {
-    var ic = o.name.endsWith('.docx') ? '📘' : (o.name.endsWith('.md') ? '📝' : '🐍');
+    var ic = '';
     var li = document.createElement('li');
     li.innerHTML =
       '<span class="fic">' + ic + '</span>' +
@@ -774,7 +862,7 @@ function pollDetail() {
     failStreak++;
     if (failStreak === 2) {
       var m = document.getElementById('detailMeta');
-      if (m) m.innerHTML = '<span style="color:#c5221f;font-weight:700">⚠ 服务无响应</span> —— 请确认 start.cmd 窗口是否还开着（关闭窗口＝停止服务）；恢复后本页会自动继续。';
+      if (m) m.innerHTML = '<span style="color:#c5221f;font-weight:700">服务无响应</span> —— 请确认 start.cmd 窗口是否还开着（关闭窗口＝停止服务）；恢复后本页会自动继续。';
     }
   });
 }
@@ -782,11 +870,11 @@ function pollDetail() {
 /* ---------- events ---------- */
 $('submitBtn').onclick = function () {
   var errEl = $('formErr'); errEl.textContent = '';
-  var rawApps = Array.from($('appFile').files || []);
+  var rawApps = pickedApps.slice();
   var audit = auditAppFiles(rawApps);
   if (audit.badNames.length) { errEl.textContent = '申报书栏存在无效选择：' + audit.badNames.join('；'); return; }
   var appFs = audit.good;
-  var opFs = Array.from($('opFiles').files || []);
+  var opFs = pickedOps.slice();
   if (!appFs.length) { errEl.textContent = '请选择申报书 .docx'; return; }
   if (!opFs.length) { errEl.textContent = '请至少选择一份修改意见文档'; return; }
   var multi = appFs.length > 1;
@@ -803,8 +891,7 @@ $('submitBtn').onclick = function () {
     body.apps = apps; body.opinions = opinions;
     return fetch('/api/batches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   }).then(readJson).then(function (res) {
-    $('appFile').value = ''; $('opFiles').value = '';
-    $('appName').innerHTML = ''; $('opNames').innerHTML = '';
+    clearPicked();
     refreshList();
     if (multi) {
       currentSiblings = null; currentPage = 0;
@@ -817,12 +904,11 @@ $('submitBtn').onclick = function () {
   }).catch(function (e) {
     errEl.textContent = '提交失败: ' + e;
   }).finally(function () {
-    $('submitBtn').disabled = false; $('submitBtn').textContent = '🚀 提交任务';
+    $('submitBtn').disabled = false; $('submitBtn').textContent = '提交任务';
   });
 };
 function resetForm() {
-  $('appFile').value = ''; $('opFiles').value = '';
-  $('appName').innerHTML = ''; $('opNames').innerHTML = '';
+  clearPicked();
 }
 function hideSharedMatch() {
   var h = $('sharedHead'); if (h) h.classList.add('hidden');
@@ -847,10 +933,10 @@ function renderMatch(b) {
     hideSharedMatch();
     scheduleBatchOff();
     var sum = b.taskSummaries || [];
-    var h = '<div class="mbook"><div class="mbook-h"><span>📦 批次成果（每本书一份修改稿）</span><span class="cnt">' + sum.length + ' 本</span></div><div class="mlist">';
+    var h = '<div class="mbook"><div class="mbook-h"><span>批次成果（每本书一份修改稿）</span><span class="cnt">' + sum.length + ' 本</span></div><div class="mlist">';
     sum.forEach(function (ts) {
       var badge = '<span class="badge st-' + ts.status + '">' + statusText(ts.status) + '</span>';
-      h += '<div class="mrow" style="border-top:none"><span class="fic">📘</span><span class="mtxt"><b>' + esc(ts.app) + '</b>　' + badge;
+      h += '<div class="mrow" style="border-top:none"><span class="mtxt"><b>' + esc(ts.app) + '</b>　' + badge;
       (ts.deliverables || []).forEach(function (o) {
         if (o.name.endsWith('_修改后.docx') || o.name.indexOf('对照表') >= 0 || o.name.indexOf('遗留') >= 0) {
           h += ' <a href="/api/tasks/' + ts.id + '/files?dir=output&name=' + encodeURIComponent(o.name) + '" style="color:#1462ae">' + esc(o.name) + '</a>';
@@ -872,7 +958,7 @@ function renderMatch(b) {
   books.forEach(function (bk) {
     if (!bk.matched.length) return;
     totalBlocks += bk.matched.length;
-    html += '<div class="mbook"><div class="mbook-h"><span>📘 ' + esc(bk.file) + '</span><span class="cnt">' + bk.matched.length + ' 块</span></div><div class="mlist">';
+    html += '<div class="mbook"><div class="mbook-h"><span>' + esc(bk.file) + '</span><span class="cnt">' + bk.matched.length + ' 块</span></div><div class="mlist">';
     bk.matched.forEach(function (mm) {
       html += '<label class="mrow"><input type="checkbox" checked data-kind="match" data-file="' + escAttr(bk.file) + '" data-op="' + escAttr(mm.opName) + '" data-idx="' + mm.blockIdx + '">' +
         '<span class="mtxt">' + esc(mm.head) + '<br><span class="msrc">' + esc(mm.opName) + '#' + mm.blockIdx + ' · 证据: ' + esc(mm.evidence) + ' · ' + mm.score + '分</span></span></label>';
@@ -884,7 +970,7 @@ function renderMatch(b) {
   var shared = (b.match && b.match.shared) || [];
   var sh = '';
   shared.forEach(function (sm) {
-    sh += '<div class="mbook"><div class="mbook-h"><span>🔗 ' + esc(sm.head) + '</span><span class="cnt">命中 ' + (sm.books || []).length + ' 本</span></div><div class="mlist">';
+    sh += '<div class="mbook"><div class="mbook-h"><span>' + esc(sm.head) + '</span><span class="cnt">命中 ' + (sm.books || []).length + ' 本</span></div><div class="mlist">';
     sh += '<div class="mrow" style="border-top:none"><span class="mtxt"><span class="msrc">' + esc(sm.opName) + '#' + sm.blockIdx + ' · ' + esc(sm.excerpt || '') + '</span></span></div>';
     (sm.books || []).forEach(function (fn) {
       sh += '<label class="mrow"><input type="checkbox" checked data-kind="shared" data-file="' + escAttr(fn) + '" data-op="' + escAttr(sm.opName) + '" data-idx="' + sm.blockIdx + '">' +
@@ -901,7 +987,7 @@ function renderMatch(b) {
     li.textContent = u.head + '　[' + u.opName + '#' + u.blockIdx + ']';
     unl.appendChild(li);
   });
-  $('startBatchBtn').textContent = '🚀 开始执行';
+  $('startBatchBtn').textContent = '开始执行';
   $('startBatchBtn').disabled = false;
 }
 function scheduleBatchOff() { if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; } }
@@ -941,23 +1027,41 @@ $('startBatchBtn').onclick = function () {
       });
     })
     .catch(function (e) { errEl.textContent = e.message || String(e); })
-    .finally(function () { $('startBatchBtn').disabled = false; $('startBatchBtn').textContent = '🚀 开始执行'; });
+    .finally(function () { $('startBatchBtn').disabled = false; $('startBatchBtn').textContent = '开始执行'; });
 };
 
 $('appFile').addEventListener('change', function () {
   try {
-  var audit = auditAppFiles(Array.from(this.files || []));
-  var parts = audit.good.map(function (f) { return chip(f.name); });
-  audit.badNames.forEach(function (n) { parts.push(chip(n, true)); });
-  $('appName').innerHTML = parts.join('');
+    mergeFiles(pickedApps, Array.from(this.files || []));
+    this.value = '';
+    renderAppChips();
   } catch (err) { console.error(err); }
 });
 $('opFiles').addEventListener('change', function () {
   try {
-  var list = Array.from(this.files || []);
-  $('opNames').innerHTML = list.map(function (f) { return chip(f.name); }).join('');
+    mergeFiles(pickedOps, Array.from(this.files || []));
+    this.value = '';
+    renderOpChips();
   } catch (err) { console.error(err); }
 });
+function onChipRemove(ev) {
+  var btn = ev.target.closest ? ev.target.closest('.chip-x') : null;
+  if (!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  var kind = btn.getAttribute('data-kind');
+  var i = parseInt(btn.getAttribute('data-i'), 10);
+  if (isNaN(i) || i < 0) return;
+  if (kind === 'app') {
+    pickedApps.splice(i, 1);
+    renderAppChips();
+  } else if (kind === 'op') {
+    pickedOps.splice(i, 1);
+    renderOpChips();
+  }
+}
+$('appName').addEventListener('click', onChipRemove);
+$('opNames').addEventListener('click', onChipRemove);
 $('closeDetail').onclick = function () {
   $('detailCard').classList.add('hidden');
   currentDetail = null;
@@ -969,7 +1073,37 @@ $('closeDetail').onclick = function () {
 $('pagePrev').onclick = function () { switchBook(currentPage - 1); };
 $('pageNext').onclick = function () { switchBook(currentPage + 1); };
 
+// 会话过期时全局跳转登录页
+(function () {
+  var _fetch = window.fetch;
+  window.fetch = function () {
+    return _fetch.apply(this, arguments).then(function (res) {
+      if (res.status === 401 && location.pathname !== '/login') {
+        location.href = '/login';
+      }
+      return res;
+    });
+  };
+})();
+
+function initUserBox() {
+  var box = $('userBox');
+  if (!box) return;
+  fetch('/api/auth/me').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+    var u = j && j.user;
+    if (!u) { location.href = '/login'; return; }
+    $('userName').textContent = u.realName + (u.department ? ' · ' + u.department : '');
+    if (u.role === 'admin') $('adminLink').style.display = '';
+    box.style.display = '';
+    var lb = $('logoutBtn');
+    if (lb) lb.onclick = function () {
+      fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login'; });
+    };
+  });
+}
+
 loadConfig();
+initUserBox();
 refreshList();
 setInterval(refreshList, 3000);
 /* ---------- 计划编辑器（模型出计划 → 人工修订 → 确认写入） ---------- */
@@ -1050,12 +1184,12 @@ function buildPlanEditor(el, t, plan) {
   var att = (plan && plan.attachments) || {};
   var attItems = att.items || [];
   var attSum = att.summary || (t.attachHit && t.attachHit.summary) || '';
-  var h = '<div class="pnote">🤖 源文件申报书编号 <b class="pno">' + esc(appNo || '未识别') + '</b>　' + esc(t.app && t.app.name || '') +
-    (poolSum ? '<br>📚 库内检索：' + esc(poolSum) : '') +
-    (attSum ? '<br>📎 缺附件检索：' + esc(attSum) : '') +
+  var h = '<div class="pnote">源文件申报书编号 <b class="pno">' + esc(appNo || '未识别') + '</b>　' + esc(t.app && t.app.name || '') +
+    (poolSum ? '<br>库内检索：' + esc(poolSum) : '') +
+    (attSum ? '<br>缺附件检索：' + esc(attSum) : '') +
     '<br>Grok、Gemini、火山已分别生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>为短摘要；三列修改意见为各模型给出的改写；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（默认可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。</div>';
   if (attItems.length) {
-    h += '<div class="att-box"><div class="att-h">📎 已检索到的附件（点击下载）</div><ul class="att-ul">';
+    h += '<div class="att-box"><div class="att-h">已检索到的附件（点击下载）</div><ul class="att-ul">';
     attItems.forEach(function (it) {
       var src = it.source === 'papers' ? '论文系统' : '人才库';
       h += '<li><span class="att-k">' + esc(it.kind || '附件') + '</span> <a class="dl" href="' + escAttr(it.download || '') + '">' + esc(it.filename || it.title || '下载') + '</a> <em>' + esc(src) + (it.title && it.title !== it.filename ? ' · ' + it.title : '') + '</em></li>';
@@ -1063,9 +1197,9 @@ function buildPlanEditor(el, t, plan) {
     h += '</ul></div>';
   }
   h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:12%">修改前（定位用，勿改）</th><th style="width:14%">Grok修改意见</th><th style="width:14%">Gemini修改意见</th><th style="width:14%">火山修改意见</th><th style="width:16%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
-  h += '<button class="mini addrow" id="addRowBtn">➕ 新增一行</button>';
-  h += '<h3><span class="ic">📝</span>遗留事项（每行一条，可编辑）</h3><textarea id="loTa" class="lo-ta"></textarea>';
-  h += '<div class="actions"><button id="applyBtn" class="primary">✅ 确认无误，写入文件</button><button id="replanBtn" class="ghost">🔄 重新生成计划</button><span id="planErr" class="err"></span></div>';
+  h += '<button class="mini addrow" id="addRowBtn">新增一行</button>';
+  h += '<h3>遗留事项（每行一条，可编辑）</h3><textarea id="loTa" class="lo-ta"></textarea>';
+  h += '<div class="actions"><button id="applyBtn" class="primary">确认无误，写入文件</button><button id="replanBtn" class="ghost">重新生成计划</button><span id="planErr" class="err"></span></div>';
   el.innerHTML = h;
 
   var tb = el.querySelector('#planRows');
@@ -1131,7 +1265,7 @@ function buildPlanEditor(el, t, plan) {
       .finally(function () {
         if (!btn || !document.body.contains(btn)) return;
         btn.disabled = false;
-        btn.textContent = '✅ 确认无误，写入文件';
+        btn.textContent = '确认无误，写入文件';
       });
   };
 }

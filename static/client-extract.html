@@ -19,7 +19,7 @@ button.ghost { border:1px solid #c5d0e0; background:#fff; padding:8px 14px; bord
 <body>
 <header class="hero">
   <div class="wrap hero-in">
-    <div class="logo">🎂</div>
+    <div class="logo"></div>
     <div class="titles">
       <h1>客户端年龄改写</h1>
       <p>流程与申报书修改一致：扫描出计划 → 人工核对修改前/后 → 确认后生成输入文件夹中的新申报书</p>
@@ -30,7 +30,7 @@ button.ghost { border:1px solid #c5d0e0; background:#fff; padding:8px 14px; bord
 </header>
 <main class="wrap">
   <section class="card">
-    <h2><span class="ic">📂</span>待提取目录</h2>
+    <h2>待提取目录</h2>
     <p class="hint">把带客户端（RCZX2026.exe）和申报书 Word 的材料文件夹放进下面目录，再点「生成编辑计划」。此步只读扫描，不会改文件。确认后会在原申报书旁生成「原文件名_修改后.docx」。1987-01-01 以前出生才会出现改写行。</p>
     <div class="mono-path" id="inbox">读取中…</div>
     <div class="hint" id="folderInfo"></div>
@@ -41,7 +41,7 @@ button.ghost { border:1px solid #c5d0e0; background:#fff; padding:8px 14px; bord
     <div id="log"></div>
   </section>
   <section class="card">
-    <h2><span class="ic">✏️</span>编辑计划（待人工确认）</h2>
+    <h2>编辑计划（待人工确认）</h2>
     <div id="planEditor"><div class="empty">尚未生成计划</div></div>
   </section>
 </main>
@@ -71,7 +71,7 @@ function buildRow(e, oi) {
     "<td><textarea class=\"ta-find\" rows=\"1\" readonly>" + escHtml(e.find || "") + "</textarea></td>" +
     "<td><textarea class=\"ta-op\" rows=\"1\">" + escHtml(e.opinion || e.clause || "") + "</textarea></td>" +
     "<td><textarea class=\"ta-rep\" rows=\"1\">" + escHtml(e.replace || "") + "</textarea></td>" +
-    "<td><button class=\"delbtn\" type=\"button\">✕</button></td>";
+    "<td><button class=\"delbtn\" type=\"button\"></button></td>";
   tr.querySelector(".delbtn").onclick = function () { tr.parentNode.removeChild(tr); };
   return tr;
 }
@@ -96,9 +96,9 @@ function buildPlanEditor(plan) {
     "<th>意见条款</th><th style=\"width:18%\">修改前（定位用，勿改）</th>" +
     "<th style=\"width:22%\">修改意见</th><th style=\"width:24%\">修改后（可编辑）</th><th style=\"width:36px\"></th>" +
     "</tr></thead><tbody id=\"planRows\"></tbody></table></div>";
-  h += "<h3><span class=\"ic\">📝</span>遗留事项（每行一条，可编辑）</h3><textarea id=\"loTa\" class=\"lo-ta\"></textarea>";
-  h += "<div class=\"actions\"><button id=\"applyBtn\" class=\"primary\">✅ 确认无误，生成新申报书</button>" +
-    "<button id=\"replanBtn\" class=\"ghost\">🔄 重新生成计划</button><span id=\"planErr\" class=\"err\"></span></div>";
+  h += "<h3><span class=\"ic\"></span>遗留事项（每行一条，可编辑）</h3><textarea id=\"loTa\" class=\"lo-ta\"></textarea>";
+  h += "<div class=\"actions\"><button id=\"applyBtn\" class=\"primary\"> 确认无误，生成新申报书</button>" +
+    "<button id=\"replanBtn\" class=\"ghost\"> 重新生成计划</button><span id=\"planErr\" class=\"err\"></span></div>";
   el.innerHTML = h;
   var tb = el.querySelector("#planRows");
   curPlanData.forEach(function (e, i) { tb.appendChild(buildRow(e, i)); });
@@ -163,7 +163,7 @@ function buildPlanEditor(plan) {
       .finally(function () {
         if (!btn || !document.body.contains(btn)) return;
         btn.disabled = false;
-        btn.textContent = "✅ 确认无误，生成新申报书";
+        btn.textContent = " 确认无误，生成新申报书";
       });
   };
 }

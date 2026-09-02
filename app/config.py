@@ -6,7 +6,7 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.default.json"
 FILL_MARK = "填入"
-APP_VERSION = "2.1"
+APP_VERSION = "2.3"
 
 LLM_TEMPERATURE = 0.3
 LLM_RETRIES = 4
@@ -69,6 +69,16 @@ def load_config() -> dict:
     if papers_key and not papers_base:
         papers_base = "http://192.168.2.8:8000"
     papers_ok = bool(papers_base and papers_key)
+    mysql = c.get("mysql") if isinstance(c.get("mysql"), dict) else {}
+    mysql_host = str(mysql.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+    try:
+        mysql_port = int(mysql.get("port") or 3306)
+    except (TypeError, ValueError):
+        mysql_port = 3306
+    mysql_user = str(mysql.get("user") or mysql.get("username") or "root").strip() or "root"
+    mysql_password = str(mysql.get("password") or "")
+    mysql_db = str(mysql.get("database") or "shenbaoshu").strip() or "shenbaoshu"
+    mysql_ok = bool(mysql_host and mysql_user and mysql_db)
     raw_models = c.get("models") if isinstance(c.get("models"), list) else []
     client_inbox = str(c.get("clientInbox") or "").strip()
     return {
@@ -88,6 +98,12 @@ def load_config() -> dict:
         "papersBaseUrl": papers_base,
         "papersApiKey": papers_key,
         "papersConfigured": papers_ok,
+        "mysqlHost": mysql_host,
+        "mysqlPort": mysql_port,
+        "mysqlUser": mysql_user,
+        "mysqlPassword": mysql_password,
+        "mysqlDatabase": mysql_db,
+        "mysqlConfigured": mysql_ok,
         "clientInbox": client_inbox,
     }
 
@@ -151,7 +167,7 @@ def compare_model_profiles() -> dict:
 
 def engine_label() -> str:
     cfg = load_config()
-    return ("大模型直连 · " + cfg["model"]) if cfg["configured"] else "⚠ 未配置：请填写 config.json"
+    return ("大模型直连 · " + cfg["model"]) if cfg["configured"] else " 未配置：请填写 config.json"
 
 def _effort_for(mid: str, cfg: dict, explicit=None) -> str:
     if explicit is not None:

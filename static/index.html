@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py35">
+<link rel="stylesheet" href="/public/style.css?v=py40">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -16,16 +16,20 @@ window.addEventListener("error",function(e){var b=document.getElementById("errba
 window.addEventListener("unhandledrejection",function(e){var b=document.getElementById("errbar");b.style.display="block";b.textContent+="[未处理Promise] "+(e.reason&&e.reason.message||e.reason)+"\n";});
 </script>
 
-<header class="hero">
-  <div class="wrap hero-in">
-    <div class="logo">📄</div>
-    <div class="titles">
-      <h1>申报书智能修改系统</h1>
-      <p>上传申报书与修改意见 → Grok / Gemini / 火山 对照出计划 · 内置执行器改文档 → 成品与逐条对照表</p>
-    </div>
-    <a class="nav-extra" href="/client-extract" target="_blank" rel="noopener">客户端年龄改写 ↗</a>
-    <div class="live"><span class="dot"></span><span id="liveStatus">服务运行中</span></div>
+<header class="topbar">
+  <div class="tlogo">申</div>
+  <div class="ttitles">
+    <h1>申报书智能修改系统</h1>
+    <p>AI APPLICATION FORM EDITING SYSTEM</p>
   </div>
+  <div class="grow"></div>
+  <div id="userBox" style="display:none">
+    <span class="tuser" id="userName"></span>
+    <a id="adminLink" class="tbtn" href="/admin" style="display:none">用户管理</a>
+    <button type="button" class="tbtn" id="logoutBtn">退出登录</button>
+  </div>
+  <a class="tbtn" href="/client-extract" target="_blank" rel="noopener">客户端年龄改写</a>
+  <div class="live"><span class="dot"></span><span id="liveStatus">服务运行中</span></div>
 </header>
 
 <main class="wrap">
@@ -33,7 +37,27 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 <section class="grid2">
 
   <div class="card" id="newTaskCard">
-    <h2><span class="ic">✨</span>新建任务</h2>
+    <h2>新建任务</h2>
+
+    <div class="field">
+      <label class="flabel">① 申报书（.docx）</label>
+      <label class="drop" for="appFile">
+        <input type="file" id="appFile" accept=".docx" multiple>
+        <span class="dz-main">点击选择申报书文件（可多选）</span>
+        <span class="dz-sub">可多次追加；点文件右侧 × 移除。多本时按编号/姓名匹配意见</span>
+      </label>
+      <div class="chips" id="appName"></div>
+    </div>
+
+    <div class="field">
+      <label class="flabel">② 修改意见文档（可多选）</label>
+      <label class="drop" for="opFiles">
+        <input type="file" id="opFiles" accept=".docx,.wps,.txt,.md" multiple>
+        <span class="dz-main">点击选择意见文档</span>
+        <span class="dz-sub">支持 docx / wps / txt / md，可多次追加；点 × 移除</span>
+      </label>
+      <div class="chips" id="opNames"></div>
+    </div>
 
     <div class="field">
       <label class="flabel">模型配置</label>
@@ -57,37 +81,15 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
       </div>
     </div>
 
-    <div class="field">
-      <label class="flabel">① 申报书（.docx）</label>
-      <label class="drop" for="appFile">
-        <input type="file" id="appFile" accept=".docx" multiple>
-        <span class="dz-ic">📑</span>
-        <span class="dz-main">点击选择申报书文件（可多选）</span>
-        <span class="dz-sub">多本时自动按编号/姓名匹配意见，提交后可确认配对</span>
-      </label>
-      <div class="chips" id="appName"></div>
-    </div>
-
-    <div class="field">
-      <label class="flabel">② 修改意见文档（可多选）</label>
-      <label class="drop" for="opFiles">
-        <input type="file" id="opFiles" accept=".docx,.wps,.txt,.md" multiple>
-        <span class="dz-ic">💬</span>
-        <span class="dz-main">点击选择意见文档</span>
-        <span class="dz-sub">支持 docx / wps / txt / md，可一次选多份</span>
-      </label>
-      <div class="chips" id="opNames"></div>
-    </div>
-
     <div class="actions">
-      <button id="submitBtn" class="primary">🚀 提交任务</button>
+      <button id="submitBtn" class="primary">提交任务</button>
       <span id="formErr" class="err"></span>
     </div>
   </div>
 
   <div class="list-slot">
   <div class="card" id="listCard">
-    <h2><span class="ic">📋</span>任务列表 <span id="listCount" class="count-pill hidden"></span></h2>
+    <h2>任务列表 <span id="listCount" class="count-pill hidden"></span></h2>
     <div id="taskScroll" class="tsroll">
       <table id="taskTable">
         <thead><tr>
@@ -107,11 +109,11 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 
 <section class="card hidden" id="matchCard">
     <div class="dhead">
-      <h2><span class="ic">🧩</span>配对确认 <span id="batchId" class="mono tag"></span></h2>
+      <h2>配对确认 <span id="batchId" class="mono tag"></span></h2>
     </div>
     <div id="matchStats" class="meta"></div>
     <div id="matchBooks"></div>
-    <h3 id="sharedHead" class="hidden"><span class="ic">🔗</span>共享意见（命中多本，勾选要写入的申报书）</h3>
+    <h3 id="sharedHead" class="hidden">共享意见（命中多本，勾选要写入的申报书）</h3>
     <div id="sharedList"></div>
     <div class="field" style="margin-top:12px">
       <label class="switch">
@@ -120,17 +122,17 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         <span class="stext">附加通用条款池 <small>无归属的通用规范类意见块，附加给每一本书</small></span>
       </label>
     </div>
-    <h3><span class="ic">❓</span>未配对（有编号/姓名但找不到书，不会执行）</h3>
+    <h3>未配对（有编号/姓名但找不到书，不会执行）</h3>
     <ul id="unmatchedList" class="unl"></ul>
     <div class="actions">
-      <button id="startBatchBtn" class="primary">🚀 开始执行</button>
+      <button id="startBatchBtn" class="primary">开始执行</button>
       <span id="matchErr" class="err"></span>
     </div>
   </section>
 
   <section class="card hidden" id="detailCard">
   <div class="dhead">
-    <h2><span class="ic">🔍</span>任务详情 <span id="detailId" class="mono tag"></span></h2>
+    <h2>任务详情 <span id="detailId" class="mono tag"></span></h2>
     <button id="closeDetail" class="ghost">收起</button>
   </div>
 
@@ -146,20 +148,20 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
   <div id="stepper" class="stepper"></div>
   <div id="detailMeta" class="meta"></div>
 
-  <h3><span class="ic">🖥️</span>实时日志</h3>
+  <h3>实时日志</h3>
   <pre id="logBox" class="log"><div class="ln">等待事件…</div></pre>
 
-  <h3><span class="ic">📦</span>成果下载</h3>
+  <h3>成果下载</h3>
   <ul id="outList" class="outs"></ul>
 
-  <h3 id="reportHead" class="hidden"><span class="ic">📊</span>修改对照表预览 <a id="reportDocx" class="report-dl hidden" href="#">下载 Word</a></h3>
+  <h3 id="reportHead" class="hidden">修改对照表预览 <a id="reportDocx" class="report-dl hidden" href="#">下载 Word</a></h3>
   <div id="reportBox" class="report-md hidden"></div>
 </section>
 
 </main>
 
-<footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据 · v2.1</footer>
+<footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据 · v2.3</footer>
 
-<script src="/public/app.js?v=py35"></script>
+<script src="/public/app.js?v=py40"></script>
 </body>
 </html>

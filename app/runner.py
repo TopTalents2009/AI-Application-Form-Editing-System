@@ -165,11 +165,12 @@ class TaskStore:
 
     def list_meta(self):
         arr = sorted(self.tasks.values(), key=lambda x: created_key(x.get("createdAt")), reverse=True)
-        return [{"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": t["app"], "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId")} for t in arr]
+        return [{"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": t["app"], "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId"), "owner": t.get("owner") or "",
+                 "deliverables": [{"name": o["name"], "size": o.get("size", 0)} for o in (t.get("deliverables") or [])]} for t in arr]
 
     def get(self, tid): return self.tasks.get(tid) or None
 
-    def create(self, body) -> dict:
+    def create(self, body, owner: str = None) -> dict:
         engine = str(body.get("engine") or "api")
         model_id = body.get("model")
         if engine and engine != "api" and not model_id:
@@ -198,6 +199,8 @@ class TaskStore:
              "status": "queued", "createdAt": now_str(),
              "app": {"name": aname, "no": app_no_of(aname)}, "opinions": [{"name": n} for n in op_names],
              "log": [], "outputs": [], "deliverables": [], "hasReport": False, "error": None, "finishedAt": None}
+        if owner:
+            t["owner"] = str(owner)
         if body.get("batchId"):
             t["batchId"] = str(body.get("batchId"))
         self.tasks[tid] = t; self.persist(t)
@@ -254,8 +257,8 @@ class TaskStore:
             if ext in (".txt", ".md"):
                 shutil.copyfile(input_dir / f, target); continue
             so, se, rc = await self._py([SCRIPTS_DIR / "sb_extract.py", input_dir / f, target])
-            if rc != 0: self.log(t, "⚠️ 提取失败 " + f + ": " + (se or so)[:200])
-            else: self.log(t, "📄 已提取 " + f + " → txt/" + target.name)
+            if rc != 0: self.log(t, "提取失败 " + f + ": " + (se or so)[:200])
+            else: self.log(t, "已提取 " + f + " → txt/" + target.name)
 
     async def _py(self, args, timeout=120):
         proc = await asyncio.create_subprocess_exec(PYEXE, *[str(a) for a in args],
@@ -350,12 +353,12 @@ class TaskStore:
         texts = self.read_prepared_texts(t)
         if not M.is_app_content(texts["appText"]):
             raise ValueError("所选文件不像一份已填写的申报书（正文过短/未填写模板/缺封面关键字段），请检查是否选错文件")
-        self.log(t, "🤖 使用模型 " + str(t.get("modelLabel") or t.get("model") or "默认"))
-        self.log(t, "🧭 意见按章节分类中…")
+        self.log(t, "使用模型 " + str(t.get("modelLabel") or t.get("model") or "默认"))
+        self.log(t, "意见按章节分类中…")
         blocks = self.collect_opinion_blocks(texts)
         if not blocks:
             raise ValueError("意见原文切分结果为空")
-        self.log(t, "📌 已从意见文件切出 " + str(len(blocks)) + " 条原文")
+        self.log(t, "已从意见文件切出 " + str(len(blocks)) + " 条原文")
         by_id = {b["id"]: b for b in blocks}
         allowed_sec = set(SECTION_ORDER)
         clauses = []
@@ -382,7 +385,7 @@ class TaskStore:
                     "opName": blk["name"] if blk else "",
                 })
         except Exception as e:
-            self.log(t, "⚠️ 分类失败，整体按【其他】处理：" + str(e)[:150])
+            self.log(t, "分类失败，整体按【其他】处理：" + str(e)[:150])
         if not clauses:
             used = set()
             for b in blocks:
@@ -395,7 +398,7 @@ class TaskStore:
         by_sec = {}
         for c in clauses:
             by_sec.setdefault(c["section"], []).append(c)
-        self.log(t, "🗂️ 章节分布：" + "，".join(s + "×" + str(len(a)) for s, a in by_sec.items()))
+        self.log(t, "章节分布：" + "，".join(s + "×" + str(len(a)) for s, a in by_sec.items()))
 
         sec_order = [s for s in SECTION_ORDER if s in by_sec]
         if not sec_order:
@@ -403,7 +406,7 @@ class TaskStore:
             sec_order = ["其他"]
         app_no = app_no_of(t["app"]["name"])
         t.setdefault("app", {})["no"] = app_no
-        self.log(t, "🔎 检索人才库/企业库…")
+        self.log(t, "检索人才库/企业库…")
         snap = await lookup_for_app(t["app"]["name"], texts["appText"])
         try:
             save_snapshot(t["dir"], snap)
@@ -411,21 +414,21 @@ class TaskStore:
             pass
         t["poolHit"] = snap.get("hit") or {}
         self.persist(t)
-        self.log(t, "📚 " + (snap.get("summary") or "无库内匹配") + (("（" + "；".join(snap.get("notes") or []) + "）") if snap.get("notes") else ""))
+        self.log(t, "" + (snap.get("summary") or "无库内匹配") + (("（" + "；".join(snap.get("notes") or []) + "）") if snap.get("notes") else ""))
         pool_text = format_pool_prompt(snap)
         opinion_blob = [c.get("opinion") or "" for c in clauses] + [c.get("clause") or "" for c in clauses]
         attach = {"needed": [], "items": [], "private": {}, "notes": [], "summary": ""}
-        self.log(t, "📎 检索缺失附件（人才库优先，论文走论文系统）…")
+        self.log(t, "检索缺失附件（人才库优先，论文走论文系统）…")
         try:
             attach = await resolve_missing(t["id"], opinion_blob, snap, app_no)
             save_attach_snapshot(t["dir"], attach)
         except Exception as e:
             attach["notes"] = list(attach.get("notes") or []) + ["缺附件检索失败：" + str(e)[:160]]
-            self.log(t, "⚠️ 缺附件检索失败：" + str(e)[:160])
+            self.log(t, "缺附件检索失败：" + str(e)[:160])
         t["attachHit"] = {"summary": attach.get("summary") or "", "needed": attach.get("needed") or [], "found": len(attach.get("items") or [])}
         self.persist(t)
         if attach.get("needed"):
-            self.log(t, "📎 " + (attach.get("summary") or "缺附件检索完成") + (("（" + "；".join(attach.get("notes") or []) + "）") if attach.get("notes") else ""))
+            self.log(t, "" + (attach.get("summary") or "缺附件检索完成") + (("（" + "；".join(attach.get("notes") or []) + "）") if attach.get("notes") else ""))
         attach_text = format_attach_prompt(attach)
         pair = compare_model_profiles()
         primary_id = str(t.get("model") or "")
@@ -443,10 +446,10 @@ class TaskStore:
         if not models_for_plan:
             models_for_plan.append((primary_fam, primary_id, str(t.get("modelLabel") or primary_id)))
         if skip_note:
-            self.log(t, "⚠️ 对照模型：" + "；".join(skip_note))
+            self.log(t, "对照模型：" + "；".join(skip_note))
         n_models = len(models_for_plan)
         names_all = "、".join(fam_tag(fam) for fam, _, _ in models_for_plan)
-        self.log(t, "📝 开始按章多模型对照（每章同时向 " + names_all + " 提交，主模型 " + str(t.get("modelLabel") or primary_id) + "，申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章 × " + str(n_models) + " 模型，章节并发 " + str(PLAN_CONCURRENCY) + "）…")
+        self.log(t, "开始按章多模型对照（每章同时向 " + names_all + " 提交，主模型 " + str(t.get("modelLabel") or primary_id) + "，申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章 × " + str(n_models) + " 模型，章节并发 " + str(PLAN_CONCURRENCY) + "）…")
         sec_sem = asyncio.Semaphore(PLAN_CONCURRENCY)
 
         async def plan_one(sec, model_id, fam, label):
@@ -457,17 +460,17 @@ class TaskStore:
                 plan = extract_json(r["content"])
                 n_e = len(plan.get("edits") or []) if isinstance(plan, dict) else 0
                 n_l = len((plan.get("leftovers") if isinstance(plan, dict) else None) or [])
-                self.log(t, "✅ 【" + sec + "·" + tag + "】返回 " + str(n_e) + " 条编辑 / " + str(n_l) + " 条遗留")
+                self.log(t, "【" + sec + "·" + tag + "】返回 " + str(n_e) + " 条编辑 / " + str(n_l) + " 条遗留")
                 return {"sec": sec, "plan": plan, "error": None, "fam": fam, "model": model_id}
             except Exception as e:
-                self.log(t, "⚠️ 【" + sec + "·" + tag + "】失败：" + str(e)[:150])
+                self.log(t, "【" + sec + "·" + tag + "】失败：" + str(e)[:150])
                 return {"sec": sec, "plan": None, "error": str(e)[:200], "fam": fam, "model": model_id}
 
         async def plan_sec(sec):
             n = len(by_sec[sec])
             names = " + ".join(fam_tag(fam) for fam, _, _ in models_for_plan)
             async with sec_sem:
-                self.log(t, "🚀 【" + sec + "】同时提交 " + names + "（" + str(n) + " 条意见）…")
+                self.log(t, "【" + sec + "】同时提交 " + names + "（" + str(n) + " 条意见）…")
                 rows = await asyncio.gather(*(plan_one(sec, mid, fam, label) for fam, mid, label in models_for_plan))
                 return list(rows)
 
@@ -504,7 +507,7 @@ class TaskStore:
                     if any(x["_k"] == k for x in edits):
                         continue
                     if len(str(e2.get("find", ""))) > 2000 or len(str(e2.get("replace", ""))) > 8000:
-                        self.log(t, "⛔ 已丢弃超长编辑（" + tag + "），条款：" + str(e2.get("clause", ""))[:40])
+                        self.log(t, "已丢弃超长编辑（" + tag + "），条款：" + str(e2.get("clause", ""))[:40])
                         continue
                     src = resolve_item(e2, s["sec"])
                     item = dict(e2)
@@ -531,7 +534,7 @@ class TaskStore:
                 raise ValueError("全部章节计划调用失败：" + (failed_secs[0] if failed_secs else ""))
             raise ValueError("各章节均未产出有效编辑")
         if failed_secs:
-            self.log(t, "⚠️ 部分章节失败：" + "；".join(failed_secs))
+            self.log(t, "部分章节失败：" + "；".join(failed_secs))
 
         def match_alt(e, pool, used):
             cid = str(e.get("clauseId") or "").strip()
@@ -615,7 +618,7 @@ class TaskStore:
                 order.append(f)
         primary_use = next((f for f in order if edits_map[f]), order[0])
         if primary_use != primary_fam and edits_map[primary_use]:
-            self.log(t, "⚠️ 主模型本章无有效编辑，改用 " + fam_tag(primary_use) + " 作为主计划")
+            self.log(t, "主模型本章无有效编辑，改用 " + fam_tag(primary_use) + " 作为主计划")
             primary_fam = primary_use
 
         used = {fam: set() for fam in COMPARE_FAMS}
@@ -680,7 +683,7 @@ class TaskStore:
             attach = await resolve_missing(t["id"], opinion_blob + leftovers, snap, app_no, prev=attach)
             save_attach_snapshot(t["dir"], attach)
         except Exception as e:
-            self.log(t, "⚠️ 缺附件补检索失败：" + str(e)[:160])
+            self.log(t, "缺附件补检索失败：" + str(e)[:160])
         t["attachHit"] = {"summary": attach.get("summary") or "", "needed": attach.get("needed") or [], "found": len(attach.get("items") or [])}
         self.persist(t)
         lo_blob = "\n".join(str(x) for x in leftovers)
@@ -710,7 +713,7 @@ class TaskStore:
             "attachments": public_plan_block(attach),
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         counts = " / ".join(fam_tag(f) + " " + str(len(edits_map[f])) for f in COMPARE_FAMS)
-        self.log(t, "🧩 合并对照计划：" + str(len(edits)) + " 条编辑 / " + str(len(leftovers)) + " 条遗留（" + counts + "）")
+        self.log(t, "合并对照计划：" + str(len(edits)) + " 条编辑 / " + str(len(leftovers)) + " 条遗留（" + counts + "）")
         return edits, leftovers
 
     async def run_task(self, t):
@@ -718,10 +721,10 @@ class TaskStore:
             t["startedAt"] = now_str()
             await self.prepare(t)
             t["status"] = "running"; self.persist(t)
-            self.log(t, "🚀 大模型直连模式（生成编辑计划，等待人工确认）")
+            self.log(t, "大模型直连模式（生成编辑计划，等待人工确认）")
             edits, leftovers = await self.generate_plan(t)
             t["status"] = "planned"; self.persist(t)
-            self.log(t, "📋 计划就绪：" + str(len(edits)) + " 条编辑 / " + str(len(leftovers)) + " 条遗留 —— 请在前端核对“修改前/修改后”，确认后才会写入文件")
+            self.log(t, "计划就绪：" + str(len(edits)) + " 条编辑 / " + str(len(leftovers)) + " 条遗留 —— 请在前端核对“修改前/修改后”，确认后才会写入文件")
         except ValueError as e:
             t["status"] = "failed"; t["error"] = str(e); t["finishedAt"] = now_str(); self.persist(t)
         except Exception as e:
@@ -733,7 +736,7 @@ class TaskStore:
     async def apply_confirmed(self, t, edits, leftovers):
         try:
             t["status"] = "running"; t["error"] = None; self.persist(t)
-            self.log(t, "✍️ 人工确认完成（" + str(len(edits)) + " 条编辑），开始写入文件…")
+            self.log(t, "人工确认完成（" + str(len(edits)) + " 条编辑），开始写入文件…")
             tmp_dir = Path(t["dir"]) / "work" / "tmp"; tmp_dir.mkdir(parents=True, exist_ok=True)
             plan_path = tmp_dir / "plan.json"
             plan_path.write_text(json.dumps({
@@ -752,7 +755,7 @@ class TaskStore:
             misses = sum(1 for a2 in applied if a2.get("status") == "miss")
             hits = sum(1 for a2 in applied if str(a2.get("status") or "").startswith("hit"))
             note = ("（" + str(misses) + " 处未命中，转人工）") if misses else ""
-            self.log(t, "🎯 落盘 " + str(hits) + "/" + str(len(applied)) + " 处" + note)
+            self.log(t, "落盘 " + str(hits) + "/" + str(len(applied)) + " 处" + note)
 
             check_txt = tmp_dir / "_final.txt"
             await self._py([SCRIPTS_DIR / "sb_extract.py", out_docx, check_txt])
@@ -762,19 +765,19 @@ class TaskStore:
             for msg in limit_hits:
                 leftovers.append("【表内限字】" + msg)
             if limit_hits:
-                self.log(t, "⚠️ 表内限字未达标 " + str(len(limit_hits)) + " 处，已写入遗留事项")
+                self.log(t, "表内限字未达标 " + str(len(limit_hits)) + " 处，已写入遗留事项")
             nrm = lambda x: re.sub(r"\s+", "", str(x or ""))
 
             rows = []
             row_dicts = []
             for i2, a2 in enumerate(applied):
                 e2 = edits[i2] if i2 < len(edits) else {}
-                st = "✅ 已改"
-                if a2.get("status") == "miss": st = "⚠️ 未命中·需人工定位"
-                elif a2.get("status") == "skip": st = "⚠️ 空锚点·已跳过"
+                st = " 已改"
+                if a2.get("status") == "miss": st = " 未命中·需人工定位"
+                elif a2.get("status") == "skip": st = " 空锚点·已跳过"
                 else:
                     rep_n = nrm(e2.get("replace"))[:50]
-                    if rep_n and rep_n not in nrm(final_text): st = "⚠️ 已改·终检未检出"
+                    if rep_n and rep_n not in nrm(final_text): st = " 已改·终检未检出"
                 sec = str(e2.get("_sec", e2.get("section", "-")))
                 clause = str(e2.get("clause") or "")
                 find = str(e2.get("find") or "")
@@ -804,16 +807,16 @@ class TaskStore:
                     rows=row_dicts,
                     leftovers=leftovers,
                 )
-                self.log(t, "📄 已生成修改对照表（Markdown + Word " + docx_stem + ".docx）")
+                self.log(t, "已生成修改对照表（Markdown + Word " + docx_stem + ".docx）")
             except Exception as e:
-                self.log(t, "⚠️ 对照表 Word 生成失败，已保留 Markdown：" + str(e)[:120])
+                self.log(t, "对照表 Word 生成失败，已保留 Markdown：" + str(e)[:120])
             lo_txt = "\n".join(str(i2 + 1) + ". " + s for i2, s in enumerate(leftovers)) if leftovers else "（无）"
             (out_dir / "遗留事项.md").write_text("# 遗留事项（需人工补充真实数据）\n\n" + lo_txt, encoding="utf-8")
 
             if not await self.verify_outputs(t):
                 t["status"] = "failed"; t["error"] = "成品校验未通过（详见产出校验信息）"; return
             t["status"] = "done"
-            self.log(t, "✅ 完成：编辑 " + str(hits) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件")
+            self.log(t, "完成：编辑 " + str(hits) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件")
         except Exception as e:
             import traceback; t["status"] = "failed"
             t["error"] = traceback.format_exc()[-900:]

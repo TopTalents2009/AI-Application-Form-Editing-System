@@ -3,6 +3,7 @@
 用法: python apply_edits.py <src.docx> <out.docx> <backup.docx> <plan.json>
 plan.json: {"edits":[{"find":"...","replace":"..."}, ...]}   replace 为空串表示删除该片段。
 策略: 复制源包后只改 w:t / 必要的 w:br；跨段锚点按原段落/单元格回写，不把邻栏合并进一格。
+写入后若单元格/文本框内容高于原框，缩小该格字号与行距，避免撑破栏位。
 输出: stdout JSON {"results":[{"find","status"}...]}  与 edits 等长（空锚点 status=skip）。
 """
 import sys, json, re, shutil
@@ -12,6 +13,13 @@ from docx.oxml.ns import qn
 MAX_SPAN = 8
 SEP = '\n'
 XML_SPACE = '{http://www.w3.org/XML/1998/namespace}space'
+MIN_SZ = 16  # 8pt，再小申报书难以阅读
+_A_EXT = '{http://schemas.openxmlformats.org/drawingml/2006/main}ext'
+_ROW_EXTRA = re.compile(
+    r'^\d{4}[./\-年]\d{1,2}'
+    r'|^\d+\s*/\s*\d+\s*$'
+    r'|^\d{4}\.\d{2}\.\d{2}'
+)
 _LABEL_EXACT = {
     '重要经历', '主要技术能力', '标志性成果', '业务领域', '核心技术', '发展情况',
     '引进必要性', '岗位匹配', '工作基础',
@@ -120,6 +128,244 @@ def rewrite(p, new_text):
         if t.getparent() is first_r:
             continue
         _set_t(t, '')
+
+
+def _attr(el, name):
+    if el is None:
+        return None
+    return el.get(qn(name)) or el.get(name.split(':', 1)[-1])
+
+
+def _para_sz(p, default=21):
+    for el in p.iter(qn('w:sz')):
+        v = _attr(el, 'w:val')
+        if v:
+            try:
+                return int(float(v))
+            except ValueError:
+                continue
+    return default
+
+
+def _em_units(text):
+    n = 0.0
+    for ch in str(text or ''):
+        if ch in '\n\r':
+            continue
+        o = ord(ch)
+        if o < 128 or 0xFF61 <= o <= 0xFF9F:
+            n += 0.5
+        else:
+            n += 1.0
+    return n
+
+
+def _line_twips(p, sz_hp):
+    base = max(int(sz_hp) or 21, 1) * 10
+    pPr = p.find(qn('w:pPr'))
+    sp = pPr.find(qn('w:spacing')) if pPr is not None else None
+    if sp is None:
+        return base, 0, 0
+    def _int(name):
+        v = _attr(sp, name)
+        try:
+            return int(float(v)) if v else 0
+        except ValueError:
+            return 0
+    before, after = _int('w:before'), _int('w:after')
+    line, rule = _int('w:line'), (_attr(sp, 'w:lineRule') or 'auto')
+    if line <= 0:
+        line_h = base
+    elif rule in ('exact', 'atLeast'):
+        line_h = line
+    else:
+        line_h = max(1, int(base * line / 240))
+    return line_h, before, after
+
+
+def _para_height(p, text, width_twips, sz_hp=None):
+    sz_hp = int(sz_hp or _para_sz(p))
+    line_h, before, after = _line_twips(p, sz_hp)
+    char_w = max(sz_hp, 1) * 10
+    inner = max(int(width_twips or 0), char_w)
+    cpl = max(1.0, inner / float(char_w))
+    lines = 0
+    parts = split_lines(text) if str(text or '') else ['']
+    if not parts:
+        parts = ['']
+    for part in parts:
+        em = _em_units(part)
+        if em <= 0:
+            lines += 1
+        else:
+            lines += max(1, int((em + cpl - 0.01) // cpl))
+    return before + after + lines * line_h
+
+
+def _tc_width(tc):
+    tcPr = tc.find(qn('w:tcPr')) if tc is not None else None
+    tcw = tcPr.find(qn('w:tcW')) if tcPr is not None else None
+    if tcw is None:
+        return None
+    typ = _attr(tcw, 'w:type') or 'dxa'
+    try:
+        w = int(float(_attr(tcw, 'w:w') or 0))
+    except ValueError:
+        return None
+    if typ in ('dxa', 'nil', ''):
+        return w if w > 0 else None
+    return None
+
+
+def _tr_height(tr):
+    trPr = tr.find(qn('w:trPr')) if tr is not None else None
+    trh = trPr.find(qn('w:trHeight')) if trPr is not None else None
+    if trh is None:
+        return 0
+    try:
+        return int(float(_attr(trh, 'w:val') or 0))
+    except ValueError:
+        return 0
+
+
+def _txbx_size(txbx):
+    n = txbx
+    while n is not None:
+        if n.tag in (qn('w:drawing'), qn('w:pict')) or n.tag.endswith('}wsp') or n.tag.endswith('}anchor') or n.tag.endswith('}inline'):
+            for el in n.iter(_A_EXT):
+                cx, cy = el.get('cx'), el.get('cy')
+                if cx and cy:
+                    try:
+                        return int(cx) // 635, int(cy) // 635
+                    except ValueError:
+                        continue
+            break
+        n = n.getparent()
+    return None, None
+
+
+def _box_info(p):
+    n = p
+    while n is not None:
+        if n.tag == qn('w:txbxContent'):
+            w, h = _txbx_size(n)
+            return {'kind': 'txbx', 'key': ('txbx', id(n)), 'width': w, 'height': h}
+        if n.tag == qn('w:tc'):
+            w = _tc_width(n)
+            tr = n.getparent()
+            h = _tr_height(tr) if tr is not None and tr.tag == qn('w:tr') else 0
+            return {'kind': 'tc', 'key': cell_path(p), 'width': w, 'height': h}
+        n = n.getparent()
+    return None
+
+
+def snapshot_boxes(paras, texts):
+    out = []
+    for i, p in enumerate(paras):
+        info = _box_info(p)
+        if not info or not info.get('width'):
+            out.append(None)
+            continue
+        out.append({
+            'kind': info['kind'],
+            'key': info['key'],
+            'width': info['width'],
+            'height': info['height'] or 0,
+            'text': texts[i],
+            'sz': _para_sz(p),
+        })
+    return out
+
+
+def _set_para_sz(p, sz_hp):
+    val = str(max(MIN_SZ, int(sz_hp)))
+    rprs = list(p.iter(qn('w:rPr')))
+    if not rprs:
+        r = p.find(qn('w:r'))
+        if r is None:
+            r = p.makeelement(qn('w:r'), {})
+            p.append(r)
+        rpr = r.makeelement(qn('w:rPr'), {})
+        r.insert(0, rpr)
+        rprs = [rpr]
+    for rPr in rprs:
+        for tag in (qn('w:sz'), qn('w:szCs')):
+            el = rPr.find(tag)
+            if el is None:
+                el = rPr.makeelement(tag, {})
+                rPr.append(el)
+            el.set(qn('w:val'), val)
+
+
+def _tighten_spacing(p):
+    pPr = p.find(qn('w:pPr'))
+    if pPr is None:
+        return
+    sp = pPr.find(qn('w:spacing'))
+    if sp is None:
+        return
+    line = _attr(sp, 'w:line')
+    rule = _attr(sp, 'w:lineRule') or 'auto'
+    if line and (rule is None or rule == 'auto'):
+        try:
+            lv = int(float(line))
+        except ValueError:
+            return
+        if lv > 200:
+            sp.set(qn('w:line'), str(max(200, int(lv * 0.85))))
+
+
+def _fit_group(paras, texts, snap, key, idxs):
+    s0 = snap[idxs[0]]
+    width = s0['width']
+    if not width:
+        return
+    same = [i for i, s in enumerate(snap) if s and s['key'] == key]
+    if not same:
+        same = list(idxs)
+    orig_need = 0
+    for i in same:
+        orig_need += _para_height(paras[i], snap[i]['text'], width, snap[i]['sz'])
+    box_h = max(s0['height'] or 0, orig_need)
+
+    def needed(sz_map):
+        total = 0
+        for i in same:
+            sz = sz_map.get(i) or _para_sz(paras[i])
+            total += _para_height(paras[i], texts[i], width, sz)
+        return total
+
+    if needed({}) <= int(box_h * 1.04) + 20:
+        return
+    targets = [i for i in same if not is_label(texts[i])]
+    if not targets:
+        targets = list(idxs)
+    orig_sz = min(_para_sz(paras[i]) for i in targets)
+    chosen = None
+    for sz in range(orig_sz - 1, MIN_SZ - 1, -1):
+        if needed({i: sz for i in targets}) <= box_h:
+            chosen = sz
+            break
+    if chosen is None:
+        chosen = MIN_SZ
+        for i in targets:
+            _tighten_spacing(paras[i])
+    if chosen < orig_sz:
+        for i in targets:
+            _set_para_sz(paras[i], chosen)
+
+
+def fit_overflow(paras, texts, snap):
+    """把变长的单元格/文本框缩回原框高度（缩小字号，不改表格结构）。"""
+    groups = {}
+    for i, s in enumerate(snap):
+        if not s:
+            continue
+        if (texts[i] or '') == (s['text'] or ''):
+            continue
+        groups.setdefault(s['key'], []).append(i)
+    for key, idxs in groups.items():
+        _fit_group(paras, texts, snap, key, idxs)
 
 
 def rewrite_and_twins(paras, texts, idx, new_T):
@@ -301,6 +547,8 @@ def align_parts(lines, originals, same_cell):
             continue
         if _is_foreign_heading(ln, orig_labels):
             continue
+        if _ROW_EXTRA.match(str(ln).strip()):
+            continue
         extra.append(ln)
     if extra and last_body is not None:
         cur = parts[last_body]
@@ -371,6 +619,7 @@ def apply_file(src, out, backup, edits):
     doc = Document(out)
     paras = list(doc.element.body.iter(qn('w:p')))
     texts = [para_text(p) for p in paras]
+    snap = snapshot_boxes(paras, texts)
     results = []
     for e in edits or []:
         find = str(e.get('find', '')).replace('\r\n', '\n').replace('\r', '\n').strip()
@@ -409,6 +658,7 @@ def apply_file(src, out, backup, edits):
                         apply_span(paras, texts, idxs, a, b, rep)
                         status = 'hit-span-loose'
         results.append({'find': find[:100], 'status': status})
+    fit_overflow(paras, texts, snap)
     doc.save(out)
     return results
 
