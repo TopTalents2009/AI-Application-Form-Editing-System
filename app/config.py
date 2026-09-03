@@ -30,26 +30,43 @@ def llm_api_base(url: str) -> str:
         return u
     return u + "/v1"
 
+
+def httpx_trust_env() -> bool:
+    """仅当显式设置了 HTTP(S)_PROXY 时才走代理。
+
+    Windows 的 Internet 设置会被 urllib/httpx 当成系统代理；本机开了无效代理时，
+    内网 Grok 网关会变成空 502，12ai 会变成空 ConnectError。
+    """
+    for k in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        if str(os.environ.get(k) or "").strip():
+            return True
+    return False
+
 def _usable_secret(val) -> str:
     s = str(val or "").strip().strip('"').strip("'")
     if not s or FILL_MARK in s:
         return ""
     return s
 
-def _read_config_file() -> tuple[dict, str]:
-    if not CONFIG_PATH.exists():
-        return {}, "找不到 config.json"
-    data = CONFIG_PATH.read_bytes()
-    last = "无法解析 config.json"
+def _decode_json(data: bytes, name: str) -> tuple[dict, str]:
+    if not data:
+        return {}, name + " 为空"
+    last = "无法解析 " + name
     for enc in ("utf-8-sig", "utf-8", "utf-16", "gbk"):
         try:
             obj = json.loads(data.decode(enc))
             if isinstance(obj, dict):
                 return obj, ""
-            return {}, "config.json 根节点必须是对象"
+            return {}, name + " 根节点必须是对象"
         except Exception as e:
             last = str(e) or last
     return {}, last
+
+
+def _read_config_file() -> tuple[dict, str]:
+    if not CONFIG_PATH.exists():
+        return {}, "找不到 config.json"
+    return _decode_json(CONFIG_PATH.read_bytes(), "config.json")
 
 def load_config() -> dict:
     c, err = _read_config_file()
@@ -111,6 +128,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent
 TASKS_DIR = DATA_DIR / "tasks"
 BATCHES_DIR = DATA_DIR / "batches"
 CLIENT_INBOX_DIR = DATA_DIR / "client_inbox"
+FEEDBACK_DIR = DATA_DIR / "feedback"
 STATIC_DIR = DATA_DIR / "static"
 SCRIPTS_DIR = DATA_DIR / "scripts"
 RULES_DIR = DATA_DIR / "rules"
@@ -194,7 +212,11 @@ def _remote_chat_ids(base_url: str, api_key: str) -> list:
             llm_api_base(base_url) + "/models",
             headers={"Authorization": "Bearer " + api_key, "Accept": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=5) as r:
+        if httpx_trust_env():
+            opener = urllib.request.build_opener()
+        else:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=5) as r:
             data = json.loads(r.read().decode("utf-8", "replace") or "{}")
         rows = data.get("data") if isinstance(data, dict) else data
         seen = set()
@@ -462,8 +484,24 @@ def _merge_gemini(raw: dict, gemini: dict):
     raw["models"] = models
 
 
+def _merge_pool(raw: dict, pool: dict):
+    """人才库 / 企业库只读接口（pool 块）。留空字段保持当前值。"""
+    blob = raw.get("pool") if isinstance(raw.get("pool"), dict) else {}
+    base = str(pool.get("baseUrl") or "").strip().rstrip("/")
+    if base:
+        blob["baseUrl"] = base
+    key = _usable_secret(pool.get("apiKey")) if "apiKey" in pool else ""
+    if key:
+        blob["apiKey"] = key
+    mode = str(pool.get("mode") or "").strip()
+    if mode:
+        blob["mode"] = mode
+    if blob:
+        raw["pool"] = blob
+
+
 def save_config(payload: dict, save_as_default: bool = False) -> dict:
-    """合并当前正在编辑的模型配置，并可改默认采用模型。不改数据库配置。"""
+    """合并当前正在编辑的模型 / 人才库配置，并可改默认采用模型。不改数据库配置。"""
     if not isinstance(payload, dict):
         raise ValueError("配置必须是对象")
     raw, err = _read_config_file()
@@ -480,6 +518,9 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
         _merge_gemini(raw, gemini)
     if doubao:
         _merge_doubao(raw, doubao)
+    pool = payload.get("pool") if isinstance(payload.get("pool"), dict) else None
+    if pool:
+        _merge_pool(raw, pool)
     classify = str(payload.get("classifyModel") or payload.get("model") or "").strip()
     if classify:
         raw["model"] = classify
@@ -490,12 +531,25 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
     return editor_config()
 
 
+# 恢复默认只回滚 LLM 接入参数；数据库 / 人才库 / 论文 / 收件箱等运行时配置保留当前值
+_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox")
+
+
 def restore_default_config() -> dict:
     if not DEFAULT_CONFIG_PATH.exists():
         raise ValueError("没有默认配置（config.default.json）")
-    tmp = CONFIG_PATH.with_suffix(".json.tmp")
-    tmp.write_bytes(DEFAULT_CONFIG_PATH.read_bytes())
-    atomic_replace(tmp, CONFIG_PATH)
+    default, derr = _decode_json(DEFAULT_CONFIG_PATH.read_bytes(), "config.default.json")
+    if derr:
+        raise ValueError("默认配置损坏：" + derr)
+    if not isinstance(default, dict):
+        default = {}
+    if CONFIG_PATH.exists():
+        cur, cerr = _decode_json(CONFIG_PATH.read_bytes(), "config.json")
+        if not cerr and isinstance(cur, dict):
+            for k in _RESTORE_PRESERVE_KEYS:
+                if isinstance(cur.get(k), (dict, list, str, int, float)) and cur.get(k) not in (None, ""):
+                    default[k] = cur[k]
+    _write_json(CONFIG_PATH, default)
     _remote_models.clear()
     return editor_config()
 
@@ -544,6 +598,12 @@ def editor_config() -> dict:
         "grok": grok,
         "gemini": gemini,
         "doubao": doubao,
+        "pool": {
+            "baseUrl": cfg.get("poolBaseUrl") or "",
+            "hasKey": bool(cfg.get("poolApiKey")),
+            "mode": cfg.get("poolMode") or "all",
+            "configured": bool(cfg.get("poolConfigured")),
+        },
         "classifyModel": cfg.get("model") or grok["id"],
         "hasDefault": DEFAULT_CONFIG_PATH.exists(),
     }

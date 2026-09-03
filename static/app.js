@@ -258,13 +258,50 @@ function restoreCfg() {
     setCfgMsg(false, '恢复失败：' + (err && err.message || err));
   });
 }
+function renderProbe(res) {
+  var box = $('probeBox');
+  if (!box) return;
+  var rows = (res && res.results) || [];
+  if (!rows.length) {
+    box.hidden = false;
+    box.innerHTML = '<div class="p-row p-bad">' + esc((res && res.error) || '没有可检测的模型') + '</div>';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = rows.map(function (r) {
+    var ms = r.ms ? (' · ' + (r.ms / 1000).toFixed(1) + 's') : '';
+    if (r.ok) return '<div class="p-row p-ok">● ' + esc(r.label || r.id) + ' 已连通' + ms + (r.detail ? '（' + esc(r.detail) + '）' : '') + '</div>';
+    return '<div class="p-row p-bad">● ' + esc(r.label || r.id) + ' 失败' + ms + '：' + esc(r.error || '未知错误') + '</div>';
+  }).join('');
+}
+function probeModels() {
+  var btn = $('cfgProbeBtn');
+  var box = $('probeBox');
+  if (box) { box.hidden = false; box.innerHTML = '<div class="p-row">正在检测 Grok / Gemini / 火山…</div>'; }
+  if (btn) btn.disabled = true;
+  setCfgMsg(false, '');
+  fetch('/api/config/probe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}'
+  }).then(readJson).then(function (res) {
+    renderProbe(res);
+    var n = ((res && res.results) || []).filter(function (r) { return r.ok; }).length;
+    var tot = ((res && res.results) || []).length;
+    setCfgMsg(!!(res && res.ok), n + '/' + tot + ' 个模型连通' + (res && res.ok ? '' : '（未通的模型提交任务会失败）'));
+  }).catch(function (err) {
+    if (box) { box.hidden = false; box.innerHTML = '<div class="p-row p-bad">' + esc(err && err.message || err) + '</div>'; }
+    setCfgMsg(false, '检测失败：' + (err && err.message || err));
+  }).then(function () { if (btn) btn.disabled = false; });
+}
 function bindCfgButtons() {
   if (window._cfgBound) return;
   window._cfgBound = true;
-  var s = $('cfgSaveBtn'), d = $('cfgDefaultBtn'), r = $('cfgRestoreBtn');
+  var s = $('cfgSaveBtn'), d = $('cfgDefaultBtn'), r = $('cfgRestoreBtn'), p = $('cfgProbeBtn');
   if (s) s.onclick = function () { saveCfg(false); };
   if (d) d.onclick = function () { saveCfg(true); };
   if (r) r.onclick = function () { restoreCfg(); };
+  if (p) p.onclick = function () { probeModels(); };
 }
 if (!window._engineMenuBound) {
   window._engineMenuBound = true;
@@ -304,14 +341,25 @@ function chip(name, bad, hint, kind, idx) {
     return '<span class="' + cls + '" title="' + escAttr(name) + '"><span class="chip-n">' + (bad ? '! ' : '') + esc(name) + (hint ? '<em> ' + hint + '</em>' : '') + '</span>' + x + '</span>';
   }
 function isDocx(name) { return /\.docx$/i.test(String(name || '')); }
+function isPdf(name) { return /\.pdf$/i.test(String(name || '')); }
+function isAppFile(name) { return isDocx(name) || isPdf(name); }
+function opExtKind(name) {
+  var n = String(name || '');
+  if (/\.(jpe?g|png|webp|gif|tiff?|bmp)$/i.test(n)) return 'image';
+  if (/\.(xlsx|xlsm|xls|csv)$/i.test(n)) return 'excel';
+  if (/\.(docx|wps)$/i.test(n)) return 'word';
+  if (/\.(txt|md)$/i.test(n)) return 'text';
+  return '';
+}
+function isOpFile(name) { return !!opExtKind(name); }
 function auditAppFiles(fileList) {
   var good = [], badNames = [];
   fileList.forEach(function (f) {
-    if (isDocx(f.name)) {
+    if (isAppFile(f.name)) {
       good.push(f);
       if (/意见/.test(f.name)) badNames.push(f.name + '（名称含“意见”，疑似选到了修改意见文档）');
     } else {
-      badNames.push(f.name + '（非 .docx）');
+      badNames.push(f.name + '（非 .docx / 数字 PDF）');
     }
   });
   return { good: good, badNames: badNames };
@@ -335,9 +383,9 @@ function renderAppChips() {
   var el = $('appName');
   if (!el) return;
   el.innerHTML = pickedApps.map(function (f, i) {
-    var bad = !isDocx(f.name);
+    var bad = !isAppFile(f.name);
     var warnOp = /意见/.test(f.name);
-    var hint = bad ? '非 .docx' : (warnOp ? '名称含“意见”' : '');
+    var hint = bad ? '非 .docx/.pdf' : (isPdf(f.name) ? '数字PDF·转Word后修改' : (warnOp ? '名称含“意见”' : ''));
     return chip(f.name, bad || warnOp, hint, 'app', i);
   }).join('');
 }
@@ -345,7 +393,9 @@ function renderOpChips() {
   var el = $('opNames');
   if (!el) return;
   el.innerHTML = pickedOps.map(function (f, i) {
-    return chip(f.name, false, '', 'op', i);
+    var k = opExtKind(f.name);
+    var hint = !k ? '不支持' : (k === 'image' ? '图片·Gemini识字' : (k === 'excel' ? 'Excel' : ''));
+    return chip(f.name, !k, hint, 'op', i);
   }).join('');
 }
 function clearPicked() {
@@ -875,8 +925,10 @@ $('submitBtn').onclick = function () {
   if (audit.badNames.length) { errEl.textContent = '申报书栏存在无效选择：' + audit.badNames.join('；'); return; }
   var appFs = audit.good;
   var opFs = pickedOps.slice();
-  if (!appFs.length) { errEl.textContent = '请选择申报书 .docx'; return; }
+  if (!appFs.length) { errEl.textContent = '请选择申报书 .docx 或数字版 PDF'; return; }
   if (!opFs.length) { errEl.textContent = '请至少选择一份修改意见文档'; return; }
+  var badOps = opFs.filter(function (f) { return !isOpFile(f.name); }).map(function (f) { return f.name; });
+  if (badOps.length) { errEl.textContent = '意见栏存在不支持的类型：' + badOps.join('；'); return; }
   var multi = appFs.length > 1;
   $('submitBtn').disabled = true; $('submitBtn').textContent = '上传中…';
   var reads = appFs.map(fileToB64).concat(opFs.map(fileToB64));
@@ -1102,8 +1154,121 @@ function initUserBox() {
   });
 }
 
+/* ---------- 意见反馈 ---------- */
+var fbFiles = [];
+function fbStatusLabel(st) {
+  if (st === 'done') return '已处理';
+  if (st === 'read') return '已读';
+  return '待处理';
+}
+function setFbMsg(ok, text) {
+  var el = $('fbMsg');
+  if (!el) return;
+  el.className = ok ? 'err ok' : 'err';
+  el.textContent = text || '';
+}
+function revokeFbUrls() {
+  fbFiles.forEach(function (x) { if (x.url) URL.revokeObjectURL(x.url); });
+}
+function renderFbThumbs() {
+  var box = $('fbThumbs');
+  if (!box) return;
+  box.innerHTML = fbFiles.map(function (f, i) {
+    return '<div class="fb-thumb"><img src="' + escAttr(f.url) + '" alt=""><button type="button" class="chip-x" data-i="' + i + '" title="移除">×</button></div>';
+  }).join('');
+}
+function openFb() {
+  var mask = $('fbMask');
+  if (!mask) return;
+  mask.hidden = false;
+  setFbMsg(false, '');
+  loadMyFeedback();
+}
+function closeFb() {
+  var mask = $('fbMask');
+  if (mask) mask.hidden = true;
+}
+function loadMyFeedback() {
+  var box = $('fbMine');
+  if (!box) return;
+  fetch('/api/feedback').then(readJson).then(function (res) {
+    var items = (res && res.items) || [];
+    if (!items.length) { box.textContent = '暂无反馈'; return; }
+    box.innerHTML = items.map(function (it) {
+      var imgs = (it.files || []).map(function (f) {
+        return '<a href="' + escAttr(f.url) + '" target="_blank" rel="noopener"><img src="' + escAttr(f.url) + '" alt="' + escAttr(f.name) + '"></a>';
+      }).join('');
+      return '<div class="fb-item"><div class="fb-meta"><span class="fb-st ' + escAttr(it.status || 'new') + '">' + esc(fbStatusLabel(it.status)) + '</span><span>' + esc(it.createdAt) + '</span></div>' +
+        (it.content ? '<div class="fb-body">' + esc(it.content) + '</div>' : '') +
+        (imgs ? '<div class="fb-imgs">' + imgs + '</div>' : '') +
+        (it.reply
+          ? '<div class="fb-reply"><span class="fb-rp-meta">管理员回复' + (it.replyAt ? ' · ' + esc(it.replyAt) : '') + '</span><span class="fb-rp-text">' + esc(it.reply) + '</span></div>'
+          : '') +
+        '</div>';
+    }).join('');
+  }).catch(function (err) {
+    box.textContent = '加载失败：' + (err && err.message || err);
+  });
+}
+function submitFeedback() {
+  var btn = $('fbSubmitBtn');
+  var text = ($('fbContent') && $('fbContent').value || '').trim();
+  if (!text && !fbFiles.length) { setFbMsg(false, '请填写内容或上传截图'); return; }
+  if (btn) btn.disabled = true;
+  setFbMsg(false, '提交中…');
+  var fd = new FormData();
+  fd.append('content', text);
+  fbFiles.forEach(function (x) { fd.append('files', x.file, x.file.name); });
+  fetch('/api/feedback', { method: 'POST', body: fd }).then(readJson).then(function () {
+    if ($('fbContent')) $('fbContent').value = '';
+    revokeFbUrls();
+    fbFiles = [];
+    renderFbThumbs();
+    if ($('fbFiles')) $('fbFiles').value = '';
+    setFbMsg(true, '已提交，管理员可在后台查看');
+    loadMyFeedback();
+  }).catch(function (err) {
+    setFbMsg(false, '提交失败：' + (err && err.message || err));
+  }).then(function () { if (btn) btn.disabled = false; });
+}
+function initFeedback() {
+  var open = $('fbOpenBtn'), mask = $('fbMask'), close = $('fbCloseBtn');
+  var input = $('fbFiles'), thumbs = $('fbThumbs'), sub = $('fbSubmitBtn');
+  if (!open || !mask) return;
+  open.onclick = function () { openFb(); };
+  if (close) close.onclick = closeFb;
+  mask.addEventListener('click', function (ev) { if (ev.target === mask) closeFb(); });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && mask && !mask.hidden) closeFb();
+  });
+  if (input) input.addEventListener('change', function () {
+    var added = Array.prototype.slice.call(this.files || []);
+    this.value = '';
+    added.forEach(function (f) {
+      if (!/^image\//i.test(f.type) && !/\.(jpe?g|png|gif|webp)$/i.test(f.name)) return;
+      if (f.size > 8 * 1024 * 1024) { setFbMsg(false, '超过 8MB：' + f.name); return; }
+      var key = f.name + ':' + f.size + ':' + f.lastModified;
+      if (fbFiles.some(function (x) { return x.key === key; })) return;
+      if (fbFiles.length >= 8) { setFbMsg(false, '最多 8 张图片'); return; }
+      fbFiles.push({ file: f, key: key, url: URL.createObjectURL(f) });
+    });
+    renderFbThumbs();
+  });
+  if (thumbs) thumbs.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('.chip-x') : null;
+    if (!btn) return;
+    var i = parseInt(btn.getAttribute('data-i'), 10);
+    if (isNaN(i) || !fbFiles[i]) return;
+    if (fbFiles[i].url) URL.revokeObjectURL(fbFiles[i].url);
+    fbFiles.splice(i, 1);
+    renderFbThumbs();
+  });
+  if (sub) sub.onclick = submitFeedback;
+}
+
 loadConfig();
 initUserBox();
+initFeedback();
 refreshList();
 setInterval(refreshList, 3000);
 /* ---------- 计划编辑器（模型出计划 → 人工修订 → 确认写入） ---------- */

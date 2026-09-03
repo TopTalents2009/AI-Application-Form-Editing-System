@@ -1,9 +1,12 @@
 """OpenAI 兼容 Chat 封装（httpx 异步），默认流式"""
 from __future__ import annotations
-import json, re, asyncio
+import json, re, asyncio, time
 import httpx
 from urllib.parse import urlparse
-from .config import LLM_TIMEOUT_DEFAULT, LLM_CONNECT_TIMEOUT, LLM_TEMPERATURE, LLM_RETRIES, LLM_STREAM, llm_api_base, resolve_llm
+from .config import (
+    LLM_TIMEOUT_DEFAULT, LLM_CONNECT_TIMEOUT, LLM_TEMPERATURE, LLM_RETRIES, LLM_STREAM,
+    llm_api_base, resolve_llm, httpx_trust_env, catalog_entries,
+)
 
 FENCE = chr(96) * 3
 
@@ -87,13 +90,35 @@ async def _read_sse(resp: httpx.Response) -> tuple[str, dict]:
             pass
     return "".join(parts), usage
 
-async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIMEOUT_DEFAULT, model=None):
+def _explain(e: Exception, url: str, timeout_s: float) -> LlmError:
+    host = urlparse(url).hostname or ""
+    where = host or "模型服务"
+    if isinstance(e, (asyncio.TimeoutError, httpx.TimeoutException)):
+        return LlmError(f"LLM 调用超时（{int(timeout_s)}s，{where}）")
+    if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadError)):
+        inner = (str(e) or "").strip() or type(e).__name__
+        return LlmError(f"无法连接 {where}：{inner}")
+    msg = (str(e) or "").strip() or type(e).__name__
+    low = msg.lower()
+    if "accountoverdue" in low or "overdue balance" in low:
+        return LlmError("火山账户欠费（AccountOverdueError），请到火山引擎控制台充值后再调用")
+    if msg.startswith("HTTP 401") or "invalid token" in low or "incorrect api key" in low:
+        return LlmError("密钥无效或未授权（HTTP 401）")
+    if msg.startswith("HTTP 502") or msg.startswith("HTTP 503") or msg.startswith("HTTP 504"):
+        extra = msg.split(":", 1)[-1].strip()
+        return LlmError(f"{where} 返回 {msg[:8].strip()}" + ("（空响应）" if not extra else "：" + extra[:180]))
+    if isinstance(e, LlmError):
+        return e
+    return LlmError(type(e).__name__ + ": " + msg[:300])
+
+
+async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIMEOUT_DEFAULT, model=None, retries=None, apply_profile_timeout: bool = True):
     try:
         prof = resolve_llm(model)
     except ValueError as e:
         raise LlmError(str(e))
     url = llm_api_base(prof["baseUrl"]) + "/chat/completions"
-    if prof.get("timeoutSec"):
+    if apply_profile_timeout and prof.get("timeoutSec"):
         timeout_s = float(prof["timeoutSec"])
     use_stream = bool(prof.get("stream")) if "stream" in prof else bool(LLM_STREAM)
     headers = {
@@ -105,10 +130,12 @@ async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIME
     with_effort = bool(prof.get("reasoningEffort"))
     with_json = bool(json_mode)
     with_stream_opts = True
-    host = urlparse(url).hostname or ""
-    trust = not (host in ("127.0.0.1", "localhost", "::1"))
+    trust = httpx_trust_env()
     timeout = httpx.Timeout(timeout_s, connect=LLM_CONNECT_TIMEOUT)
-    for attempt in range(1, LLM_RETRIES + 1):
+    n_try = int(retries) if retries is not None else LLM_RETRIES
+    if n_try < 1:
+        n_try = 1
+    for attempt in range(1, n_try + 1):
         payload = {"model": prof["model"], "messages": messages, "temperature": LLM_TEMPERATURE, "stream": use_stream}
         if use_stream and with_stream_opts:
             payload["stream_options"] = {"include_usage": True}
@@ -133,9 +160,6 @@ async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIME
                     usage = data.get("usage") or {}
             return {"content": content or "", "usage": usage or {}}
         except Exception as e:  # noqa: BLE001
-            if isinstance(e, (asyncio.TimeoutError, httpx.TimeoutException)):
-                last_err = LlmError(f"LLM 调用超时（{int(timeout_s)}s）")
-                break
             last_err = e
             m = str(e)
             if with_effort and m.startswith("HTTP 400") and re.search("reason|thinking|effort|未知|unknown|unexpected|invalid", m, re.I):
@@ -150,10 +174,61 @@ async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIME
             if use_stream and m.startswith("HTTP 400") and re.search("stream", m, re.I):
                 use_stream = False
                 continue
+            if isinstance(e, (asyncio.TimeoutError, httpx.TimeoutException)):
+                break
             if m.startswith("HTTP 4") and "HTTP 429" not in m:
                 break
             await asyncio.sleep(5 * min(attempt, 2))
-    raise last_err or LlmError("LLM 调用失败")
+    raise _explain(last_err or LlmError("LLM 调用失败"), url, timeout_s)
+
+
+async def probe_models(model_id=None) -> dict:
+    """对已配置模型发一条极短 chat，返回不含密钥的连通性结果。"""
+    want = str(model_id or "").strip()
+    rows = catalog_entries()
+    if want:
+        hit = [p for p in rows if p.get("id") == want]
+        if not hit:
+            from .config import model_family
+            fam = model_family(want)
+            hit = [p for p in rows if model_family(p.get("id") or "") == fam]
+        rows = hit
+    if not rows:
+        return {"ok": False, "error": "没有可检测的模型", "results": []}
+    out = []
+    for p in rows:
+        item = {
+            "id": p.get("id") or "",
+            "label": p.get("label") or p.get("id") or "",
+            "ok": False,
+            "ms": 0,
+            "error": "",
+            "detail": "",
+        }
+        if not p.get("ready"):
+            item["error"] = "未配置密钥或请求地址"
+            out.append(item)
+            continue
+        t0 = time.monotonic()
+        try:
+            r = await chat(
+                [{"role": "user", "content": "只回复一个字：通"}],
+                json_mode=False,
+                timeout_s=25,
+                model=p.get("id"),
+                retries=1,
+                apply_profile_timeout=False,
+            )
+            item["ms"] = int((time.monotonic() - t0) * 1000)
+            text = (r.get("content") or "").strip()
+            item["ok"] = True
+            item["detail"] = ("已连通，回复「" + text[:24] + "」") if text else "已连通"
+        except Exception as e:
+            item["ms"] = int((time.monotonic() - t0) * 1000)
+            item["ok"] = False
+            item["error"] = str(_explain(e, llm_api_base(p.get("baseUrl") or "") + "/chat/completions", 25))[:240]
+        out.append(item)
+    return {"ok": all(x.get("ok") for x in out), "results": out}
 
 def extract_json(text: str):
     s = str(text or "").strip()

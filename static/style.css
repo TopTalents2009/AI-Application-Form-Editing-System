@@ -207,6 +207,68 @@ select {
 .cfg-status.ok { color: var(--ok); }
 .cfg-status.bad { color: var(--bad); }
 .cfg-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.fb-mask {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(16, 32, 64, .45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 48px 16px 28px; overflow: auto;
+}
+.fb-mask[hidden] { display: none !important; }
+.fb-modal {
+  width: 100%; max-width: 680px; background: #fff; border-radius: 16px;
+  box-shadow: 0 24px 60px -18px rgba(16,32,64,.5); padding: 20px 22px 18px;
+}
+.fb-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.fb-head h2 { margin: 0; font-size: 17px; flex: 1; }
+.fb-hint { margin: 0 0 10px; font-size: 12.5px; color: var(--sub); line-height: 1.6; }
+.fb-ta {
+  width: 100%; min-height: 110px; resize: vertical; padding: 10px 12px;
+  border: 1px solid #d7deea; border-radius: 10px; font-family: inherit; font-size: 13.5px;
+  line-height: 1.6; color: var(--ink);
+}
+.fb-ta:focus { outline: none; border-color: var(--brand2); }
+.fb-drop { margin-top: 10px; padding: 12px 14px; }
+.fb-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.fb-thumb {
+  position: relative; width: 84px; height: 84px; border-radius: 10px; overflow: hidden;
+  border: 1px solid #e4e9f2; background: #f6f8fc; flex-shrink: 0;
+}
+.fb-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fb-thumb .chip-x {
+  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; line-height: 20px;
+  background: rgba(255,255,255,.92); color: #5b6577;
+}
+.fb-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.fb-sub { margin: 18px 0 8px; font-size: 14px; }
+.fb-list { display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow: auto; }
+.fb-item {
+  border: 1px solid #e6ebf4; border-radius: 12px; padding: 10px 12px; background: #fbfcfe;
+}
+.fb-item .fb-meta { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--sub); margin-bottom: 6px; flex-wrap: wrap; }
+.fb-item .fb-body { font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+.fb-item .fb-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.fb-item .fb-imgs a { width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid #e4e9f2; display: block; }
+.fb-item .fb-imgs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fb-st { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.fb-st.new { color: #b26a00; background: #fdf3e2; }
+.fb-st.read { color: #2450a4; background: #e9f0fc; }
+.fb-st.done { color: #188038; background: #e7f5ec; }
+.fb-reply { margin-top: 9px; padding: 8px 11px; background: #f0f6ff; border-left: 3px solid #3b74d6; border-radius: 8px; font-size: 13px; line-height: 1.6; color: #1c2c4f; word-break: break-word; }
+.fb-reply .fb-rp-meta { display: block; font-size: 11.5px; font-weight: 700; color: var(--brand); margin-bottom: 3px; }
+.fb-reply .fb-rp-text { white-space: pre-wrap; }
+.fb-reply-box { display: flex; gap: 8px; margin-top: 9px; align-items: center; }
+.fb-reply-box .fb-reply-input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid #d7deea; border-radius: 8px; font-family: inherit; font-size: 13px; color: var(--ink); box-sizing: border-box; }
+.fb-reply-box .fb-reply-input:focus { outline: none; border-color: var(--brand2); }
+.fb-reply-none { font-size: 12px; color: #98a2b6; }
+.nav-count {
+  display: inline-flex; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px;
+  border-radius: 999px; background: #c5221f; color: #fff; font-size: 11px; font-weight: 700;
+  align-items: center; justify-content: center;
+}
+.probe-box { margin-top: 8px; font-size: 12.5px; line-height: 1.65; color: var(--sub); }
+.probe-box .p-ok { color: var(--ok); }
+.probe-box .p-bad { color: var(--bad); }
+.probe-box .p-row { margin: 2px 0; word-break: break-word; }
 #cfgMsg.ok { color: var(--ok); }
 @media (max-width: 560px) {
   .cfg-toolbar, .cfg-grid { grid-template-columns: 1fr; }
@@ -266,6 +328,7 @@ button.primary {
 button.primary:hover { transform: translateY(-1px); box-shadow: 0 10px 22px -8px rgba(36,80,164,.6); }
 button.primary:disabled { opacity: .55; cursor: wait; transform: none; }
 .err { color: var(--bad); font-size: 13px; }
+.err.ok { color: var(--ok); }
 
 /* ---------- table ---------- */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }

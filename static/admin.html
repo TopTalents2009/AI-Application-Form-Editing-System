@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py37">
+<link rel="stylesheet" href="/public/style.css?v=py42">
 <style>
 :root{ --nav-w:216px; }
 *{box-sizing:border-box}
@@ -58,7 +58,7 @@
   font-size:13.5px;font-weight:600;color:#46506a;background:none;font-family:inherit;
   transition:background .15s,color .15s;
 }
-.nav-item .ni{font-size:16px;width:22px;text-align:center}
+.nav-item .ni{width:17px;height:17px;flex-shrink:0}
 .nav-item:hover{background:#f0f5fd;color:var(--brand)}
 .nav-item.active{
   background:linear-gradient(120deg,#2450a4,#3b74d6);color:#fff;
@@ -102,6 +102,8 @@ table.tbl td.ops{overflow:visible;white-space:nowrap}
 .mono{font-family:Consolas,monospace}
 .mini{font-size:12px;padding:4px 10px;border:1px solid #d7deea;background:#fff;border-radius:8px;cursor:pointer;font-family:inherit}
 .mini:hover{border-color:var(--brand2);background:#f0f6ff}
+.mini.active{border-color:var(--brand2);background:#e9f0fc;color:var(--brand);font-weight:700}
+.fb-item .fb-meta{align-items:center}
 
 /* ===== 新建任务 ===== */
 .newtask-hero{
@@ -171,6 +173,10 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 .msg{font-size:13px;margin:0 0 12px;min-height:16px}
 .msg.ok{color:var(--ok)}
 .msg.bad{color:var(--bad)}
+.cfg-save-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;padding-top:12px;border-top:1px dashed #e4eaf3}
+.cfg-save-msg{font-size:12.5px;font-weight:600;min-width:0}
+.cfg-save-msg.ok{color:var(--ok)}
+.cfg-save-msg.bad{color:var(--bad)}
 
 /* ===== 系统信息 ===== */
 .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
@@ -226,7 +232,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 
       <!-- 任务总览 -->
       <section class="content-sec" id="sec-overview">
-        <h2 class="sec-title">任务总览</h2>
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>任务总览</h2>
         <p class="sec-desc">全部任务与批次的运行情况（管理员可见全部数据）</p>
         <div class="stat-grid" id="statGrid">
           <div class="stat" style="--sc:#2450a4"><div class="sn" id="stTotal">—</div><div class="sl">任务总数</div></div>
@@ -252,7 +258,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 
       <!-- 新建任务 -->
       <section class="content-sec" id="sec-newtask">
-        <h2 class="sec-title">新建任务</h2>
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M12 5v14M5 12h14"/></svg>新建任务</h2>
         <p class="sec-desc">任务在主系统中创建，管理员与普通用户使用同一入口</p>
         <div class="newtask-hero">
           <h3>上传申报书 + 修改意见，一键生成编辑计划</h3>
@@ -260,7 +266,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
           <a class="btn-open" href="/" target="_blank" rel="noopener">打开主系统新建任务</a>
         </div>
         <div class="steps">
-          <div class="step"><b>上传文件</b><span>选择本批次全部申报书（.docx）与区域修改意见文件</span></div>
+          <div class="step"><b>上传文件</b><span>选择本批次全部申报书（.docx 或数字 PDF）与区域修改意见文件</span></div>
           <div class="step"><b>配对确认</b><span>核对编号 / 姓名自动匹配结果，处理未配对条款</span></div>
           <div class="step"><b>生成计划</b><span>Grok / Gemini / 火山 按章并发，人工逐条核对采用</span></div>
           <div class="step"><b>确认落盘</b><span>确认后写入 Word，下载成品、对照表与遗留事项</span></div>
@@ -269,7 +275,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 
       <!-- 人员信息 -->
       <section class="content-sec" id="sec-users">
-        <h2 class="sec-title">人员信息</h2>
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>人员信息</h2>
         <p class="sec-desc">管理本系统账号：角色、状态、密码与删除（每页保护最后一名管理员）</p>
         <div class="acard">
           <div class="msg" id="msg"></div>
@@ -284,27 +290,46 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
         </div>
       </section>
 
+      <!-- 用户反馈 -->
+      <section class="content-sec" id="sec-feedback">
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>用户反馈</h2>
+        <p class="sec-desc">普通用户在主页面提交的意见与截图，可标为已读 / 已处理</p>
+        <div class="acard">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+            <button type="button" class="mini fb-filter active" data-st="">全部</button>
+            <button type="button" class="mini fb-filter" data-st="new">待处理</button>
+            <button type="button" class="mini fb-filter" data-st="read">已读</button>
+            <button type="button" class="mini fb-filter" data-st="done">已处理</button>
+            <span class="msg" id="fbAdminMsg" style="margin:0"></span>
+          </div>
+          <div id="fbAdminList">加载中…</div>
+        </div>
+      </section>
+
       <!-- 模型配置 -->
       <section class="content-sec" id="sec-config">
-        <h2 class="sec-title">模型配置</h2>
-        <p class="sec-desc">修改模型接入参数（密钥留空表示不修改）；普通用户在主系统只能查看</p>
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>模型配置</h2>
+        <p class="sec-desc">每张卡片可单独保存（只改该卡）；顶部「保存全部配置」一次保存全部模型、人才库与默认采用模型；密钥留空表示不修改</p>
         <div class="acard">
           <h3>默认采用</h3>
-          <div class="kv"><span class="k">分类与「修改后」默认模型</span>
+          <div class="kv"><span class="k">分类与「修改后」默认模型（改这里需点顶部「保存全部配置」生效）</span>
             <span class="v"><select id="classifyModel" class="role-sel" style="min-width:220px"></select></span>
           </div>
         </div>
         <div id="cfgCards"></div>
-        <div style="display:flex;gap:10px;align-items:center">
-          <button type="button" class="btn-save" id="cfgSave">保存配置</button>
+        <div id="poolCfgCard"></div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button type="button" class="btn-save" id="cfgSave">保存全部配置</button>
           <button type="button" class="mini" id="cfgRestore">恢复默认配置</button>
+          <button type="button" class="mini" id="cfgProbe">检测连通性</button>
           <span class="msg" id="cfgMsg" style="margin:0"></span>
         </div>
+        <div id="probeBox" class="probe-box" hidden></div>
       </section>
 
       <!-- 系统信息 -->
       <section class="content-sec" id="sec-system">
-        <h2 class="sec-title">系统信息</h2>
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>系统信息</h2>
         <p class="sec-desc">运行版本与各组件配置状态（不展示密钥与内网地址）</p>
         <div class="info-grid">
           <div class="acard" style="margin-bottom:0">
@@ -327,16 +352,30 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     <!-- 右侧菜单 -->
     <nav class="sidenav">
       <div class="nav-cap">控制台菜单</div>
-      <button type="button" class="nav-item active" data-sec="overview">任务总览</button>
-      <button type="button" class="nav-item" data-sec="newtask">新建任务</button>
-      <button type="button" class="nav-item" data-sec="users">人员信息</button>
-      <button type="button" class="nav-item" data-sec="config">模型配置</button>
-      <button type="button" class="nav-item" data-sec="system">系统信息</button>
+      <button type="button" class="nav-item active" data-sec="overview"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>任务总览</button>
+      <button type="button" class="nav-item" data-sec="newtask"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>新建任务</button>
+      <button type="button" class="nav-item" data-sec="users"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>人员信息</button>
+      <button type="button" class="nav-item" data-sec="feedback"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>用户反馈<span class="nav-count" id="fbBadge" hidden></span></button>
+      <button type="button" class="nav-item" data-sec="config"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型配置</button>
+      <button type="button" class="nav-item" data-sec="system"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>系统信息</button>
       <div class="nav-foot">本地单机服务<br>原件只读 · 严禁编造数据</div>
     </nav>
 
   </div>
 </div>
+
+  <!-- 自动刷新控件：按当前查看区块定时局部刷新，模型配置页不会自动刷新 -->
+  <div id="arBar" style="position:fixed;right:10px;bottom:10px;z-index:70;display:flex;gap:6px;align-items:center;background:#fff;border:1px solid #e9edf5;border-radius:10px;padding:5px 9px;box-shadow:0 8px 20px -12px rgba(16,32,64,.35);font-size:11.5px;color:#5b6577">
+    <span id="arDot" style="width:7px;height:7px;border-radius:50%;background:#188038;flex-shrink:0"></span>
+    <select id="arSec" title="自动刷新间隔" class="role-sel" style="padding:1px 2px;font-size:11.5px;max-width:64px">
+      <option value="15">15s</option>
+      <option value="30" selected>30s</option>
+      <option value="60">1m</option>
+      <option value="120">2m</option>
+    </select>
+    <span id="arLeft" style="color:#2450a4;font-weight:700;text-align:right">30s 后刷新</span>
+    <button type="button" class="mini" id="arPause" style="font-size:11.5px;padding:2px 7px">暂停</button>
+  </div>
 
 <script>
 (function () {
@@ -347,12 +386,113 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     failed: ['st-failed', '失败'], matching: ['st-running', '配对中']
   };
   function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function escAttr(s) { return esc(s).replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function badge(st) {
     var m = STATUS[st] || ['st-pending', st || '未知'];
     return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
   }
   var msg = document.getElementById('msg');
   function say(ok, t) { msg.className = 'msg ' + (ok ? 'ok' : 'bad'); msg.textContent = t; setTimeout(function () { if (msg.textContent === t) msg.textContent = ''; }, 4000); }
+
+  /* ===== 自动刷新 ===== */
+  var arSecSel = document.getElementById('arSec');
+  var arDot = document.getElementById('arDot');
+  var arLeftEl = document.getElementById('arLeft');
+  var arPauseBtn = document.getElementById('arPause');
+  var arEnabled = true;
+  var arLeft = 30;
+  var arCount = null;
+  var arItems = [
+    { key: 'overview', sec: document.getElementById('sec-overview'), load: function () { loadOverview(); } },
+    { key: 'users', sec: document.getElementById('sec-users'), load: function () { loadUsers(); } },
+    { key: 'feedback', sec: document.getElementById('sec-feedback'), load: function () { loadFeedback(); } },
+    { key: 'system', sec: document.getElementById('sec-system'), load: function () { loadSystem(); } }
+  ];
+  function arInView(el) {
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    return r.bottom > 0 && r.top < vh;
+  }
+  function arBusyTyping() {
+    var a = document.activeElement;
+    return !!(a && a.tagName && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName));
+  }
+  function arHasDraft() {
+    var box = document.getElementById('fbAdminList');
+    if (!box) return false;
+    var ins = box.querySelectorAll('.fb-reply-input');
+    for (var i = 0; i < ins.length; i++) {
+      if ((ins[i].value || '').trim()) return true;
+    }
+    return false;
+  }
+  function arHasUsersDraft() {
+    var ins = document.querySelectorAll('#tbody input.reset-pw');
+    for (var i = 0; i < ins.length; i++) {
+      if ((ins[i].value || '').trim()) return true;
+    }
+    return false;
+  }
+  function refreshFbBadge() {
+    fetch('/api/feedback/unread').then(function (r) { return r.json(); }).then(function (res) {
+      setFbBadge(res && res.ok ? (res.unread || 0) : 0);
+    }).catch(function () {});
+  }
+  function arTick() {
+    if (!arEnabled || arBusyTyping()) return;
+    arItems.forEach(function (it) {
+      if (!arInView(it.sec)) return;
+      if (it.key === 'feedback' && arHasDraft()) return;
+      if (it.key === 'users' && arHasUsersDraft()) return;
+      it.load();
+    });
+    refreshFbBadge();
+  }
+  function setArRunning(on) {
+    if (arPauseBtn) arPauseBtn.textContent = on ? '暂停' : '继续';
+    if (arDot) arDot.style.background = on ? '#188038' : '#c5221f';
+  }
+  function arShowLeft() {
+    if (!arLeftEl) return;
+    arLeftEl.textContent = arEnabled ? (arLeft > 0 ? arLeft : 0) + 's 后刷新' : '已暂停';
+  }
+  function arCountdownTick() {
+    if (!arEnabled) { arShowLeft(); return; }
+    arLeft--;
+    if (arLeft <= 0) {
+      arLeftEl.textContent = '刷新中…';
+      arTick();
+      var sec = arSecSel ? parseInt(arSecSel.value, 10) : 30;
+      if (!sec || sec < 5) sec = 30;
+      arLeft = sec;
+    }
+    arShowLeft();
+  }
+  function arStartCount() {
+    if (arCount) clearInterval(arCount);
+    var sec = arSecSel ? parseInt(arSecSel.value, 10) : 30;
+    if (!sec || sec < 5) sec = 30;
+    arLeft = sec;
+    arShowLeft();
+    arCount = setInterval(arCountdownTick, 1000);
+  }
+  function initAutoRefresh() {
+    if (!arSecSel) return;
+    refreshFbBadge();
+    arSecSel.addEventListener('change', function () {
+      arEnabled = true;
+      setArRunning(true);
+      arStartCount();
+    });
+    if (arPauseBtn) arPauseBtn.addEventListener('click', function () {
+      arEnabled = !arEnabled;
+      setArRunning(arEnabled);
+      arShowLeft();
+    });
+    setArRunning(true);
+    arStartCount();
+  }
 
   /* ===== 菜单：锚点滚动 + 滚动高亮 ===== */
   var items = Array.prototype.slice.call(document.querySelectorAll('.nav-item'));
@@ -392,8 +532,10 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     whoEl.title = who;
     loadOverview();
     loadUsers();
+    loadFeedback();
     loadSystem();
     loadConfig();
+    initAutoRefresh();
   }).catch(function () {});
 
   /* ===== 任务总览 ===== */
@@ -467,7 +609,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
         var href = '/api/tasks/' + encodeURIComponent(tid) + '/files?dir=output&name=' + encodeURIComponent(o.name);
         return '<li><span class="fn" title="' + esc(o.name) + '">' + esc(o.name) + '</span>' +
           '<span class="fs">' + fmtSize(o.size) + '</span>' +
-          '<a class="dl" href="' + href + '" download>下载</a></li>';
+          '<a class="dl" href="' + href + '" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;vertical-align:-2px;margin-right:3px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>下载</a></li>';
       }).join('');
       box.innerHTML = '<div class="fh">产出文件 · ' + files.length + ' 个</div><ul>' + lis + '</ul>';
     }).catch(function (e) {
@@ -615,6 +757,116 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       kv('批次存储', totals.batches + ' 个批次');
   }
 
+  /* ===== 用户反馈 ===== */
+  var fbFilter = '';
+  var fbMsgEl = document.getElementById('fbAdminMsg');
+  function sayFb(ok, t) {
+    if (!fbMsgEl) return;
+    fbMsgEl.className = 'msg ' + (ok ? 'ok' : 'bad');
+    fbMsgEl.textContent = t;
+    setTimeout(function () { if (fbMsgEl.textContent === t) fbMsgEl.textContent = ''; }, 4000);
+  }
+  function fbLabel(st) {
+    if (st === 'done') return '已处理';
+    if (st === 'read') return '已读';
+    return '待处理';
+  }
+  function setFbBadge(n) {
+    var b = document.getElementById('fbBadge');
+    if (!b) return;
+    if (n > 0) { b.hidden = false; b.textContent = n > 99 ? '99+' : String(n); }
+    else { b.hidden = true; b.textContent = ''; }
+  }
+  function loadFeedback() {
+    fetch('/api/feedback').then(function (r) { return r.json(); }).then(function (res) {
+      var items = (res && res.items) || [];
+      setFbBadge(res && res.unread ? res.unread : 0);
+      var box = document.getElementById('fbAdminList');
+      var shown = fbFilter ? items.filter(function (it) { return it.status === fbFilter; }) : items;
+      if (!shown.length) { box.innerHTML = '<div class="files-muted">暂无反馈</div>'; return; }
+      box.innerHTML = shown.map(function (it) {
+        var who = esc(it.realName || it.username || '') + (it.department ? ' · ' + esc(it.department) : '') + (it.username ? '（' + esc(it.username) + '）' : '');
+        var imgs = (it.files || []).map(function (f) {
+          return '<a href="' + esc(f.url) + '" target="_blank" rel="noopener"><img src="' + esc(f.url) + '" alt="' + esc(f.name) + '"></a>';
+        }).join('');
+        var ops = '';
+        if (it.status === 'new') ops += '<button type="button" class="mini" data-act="read" data-id="' + it.id + '">标为已读</button>';
+        if (it.status !== 'done') ops += '<button type="button" class="mini" data-act="done" data-id="' + it.id + '">已处理</button>';
+        ops += '<button type="button" class="mini" data-act="del" data-id="' + it.id + '">删除</button>';
+        var replyHtml = '';
+        if (it.reply) {
+          replyHtml += '<div class="fb-reply"><span class="fb-rp-meta">管理员回复' + (it.replyAt ? ' · ' + esc(it.replyAt) : '') + '</span><span class="fb-rp-text">' + esc(it.reply) + '</span></div>';
+        }
+        replyHtml += '<div class="fb-reply-box">' +
+          '<input type="text" class="fb-reply-input" maxlength="4000" value="' + escAttr(it.reply || '') + '" placeholder="填写处理情况，回复给提交者…">' +
+          '<button type="button" class="mini" data-act="reply-send" data-id="' + it.id + '">' + (it.reply ? '更新回复' : '发送回复') + '</button>' +
+          '</div>';
+        return '<div class="fb-item">' +
+          '<div class="fb-meta"><span class="fb-st ' + esc(it.status || 'new') + '">' + esc(fbLabel(it.status)) + '</span>' +
+          '<span>' + who + '</span><span>' + esc(it.createdAt) + '</span>' +
+          '<span style="margin-left:auto;display:flex;gap:6px">' + ops + '</span></div>' +
+          (it.content ? '<div class="fb-body">' + esc(it.content) + '</div>' : '<div class="fb-body" style="color:#98a2b6">（无文字，仅截图）</div>') +
+          (imgs ? '<div class="fb-imgs">' + imgs + '</div>' : '') +
+          replyHtml +
+          '</div>';
+      }).join('');
+    }).catch(function (e) {
+      document.getElementById('fbAdminList').textContent = '加载失败：' + (e.message || '');
+    });
+  }
+  document.querySelectorAll('.fb-filter').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      fbFilter = btn.getAttribute('data-st') || '';
+      document.querySelectorAll('.fb-filter').forEach(function (b) { b.classList.toggle('active', b === btn); });
+      loadFeedback();
+    });
+  });
+  document.getElementById('fbAdminList').addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('button[data-act]') : null;
+    if (!btn) return;
+    var id = btn.getAttribute('data-id');
+    var act = btn.getAttribute('data-act');
+    if (act === 'del') {
+      if (!confirm('删除这条反馈？图片会一并删除。')) return;
+      fetch('/api/feedback/' + id, { method: 'DELETE' })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+        .then(function (res) {
+          if (!res.ok) { sayFb(false, (res.data && res.data.detail) || '删除失败'); return; }
+          sayFb(true, '已删除');
+          loadFeedback();
+        });
+      return;
+    }
+    if (act === 'reply-send') {
+      var box = btn.closest ? btn.closest('.fb-item') : null;
+      var input = box ? box.querySelector('.fb-reply-input') : null;
+      var text = input ? input.value.trim() : '';
+      if (!text) { sayFb(false, '请先填写回复内容'); return; }
+      btn.disabled = true;
+      fetch('/api/feedback/' + id + '/reply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply: text })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+        .then(function (res) {
+          if (!res.ok) { sayFb(false, (res.data && res.data.detail) || '回复失败'); }
+          else { sayFb(true, '✓ 已回复，提交者可查看'); }
+          loadFeedback();
+        })
+        .finally(function () { if (btn) btn.disabled = false; });
+      return;
+    }
+    var st = act === 'done' ? 'done' : 'read';
+    fetch('/api/feedback/' + id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: st })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { sayFb(false, (res.data && res.data.detail) || '更新失败'); return; }
+        sayFb(true, st === 'done' ? '已标记处理' : '已标为已读');
+        loadFeedback();
+      });
+  });
+
   /* ===== 模型配置 ===== */
   var cfgData = null;
   var cfgMsg = document.getElementById('cfgMsg');
@@ -628,6 +880,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
   }
 
   function renderConfig(cfg) {
+    cfgData = cfg;
     var ed = cfg.edit || {};
     var fams = [
       { key: 'grok', name: 'Grok' },
@@ -637,62 +890,173 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     var wrap = document.getElementById('cfgCards');
     wrap.innerHTML = '';
     fams.forEach(function (f) {
-      var m = ed[f.key] || {};
-      var card = document.createElement('div');
-      card.className = 'acard';
-      card.innerHTML =
-        '<h3>' + esc(m.label || f.name) + ' <span class="cfg-tag" title="' + esc(m.id || '') + '">' + esc(m.id || '') + '</span>' +
-          '<span style="margin-left:auto;font-size:12px;font-weight:600;color:' + (m.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (m.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-        '<div class="cfg-grid">' +
-          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="' + f.key + '" data-k="baseUrl" value="' + esc(m.baseUrl || '') + '" placeholder="OpenAI 兼容接口地址"></div></div>' +
-          '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="' + f.key + '" data-k="apiKey" value="" placeholder="' + (m.hasKey ? '••••••••（已配置）' : '填入密钥') + '"></div></div>' +
-          '<div class="f-row"><label>超时（秒）</label><div class="inp"><input type="number" min="30" max="900" data-f="' + f.key + '" data-k="timeoutSec" value="' + esc(m.timeoutSec || '') + '"></div></div>' +
-          (f.key === 'grok'
-            ? '<div class="f-row"><label>推理强度</label><div class="inp"><select data-f="grok" data-k="reasoningEffort" class="role-sel" style="width:100%;height:46px;padding:0 10px">' +
-                ['low', 'medium', 'high'].map(function (v) { return '<option value="' + v + '"' + ((m.reasoningEffort || 'medium') === v ? ' selected' : '') + '>' + v + '</option>'; }).join('') +
-              '</select></div></div>'
-            : '<div class="f-row"><label>流式</label><div class="chk"><input type="checkbox" data-f="' + f.key + '" data-k="stream"' + (m.stream ? ' checked' : '') + '> 使用流式输出</div></div>'
-          ) +
-        '</div>';
-      wrap.appendChild(card);
+      wrap.appendChild(buildModelCard(f, ed));
     });
-    /* 默认模型下拉：三个模型的 id + 当前默认 */
+    bindModelIdChange(fams, ed);
+    renderClassifySelect(fams, ed);
+    renderPoolCard(ed);
+  }
+
+  function collectFields(key, root) {
+    var p = {};
+    (root || document).querySelectorAll('[data-f="' + key + '"]').forEach(function (el) {
+      var k = el.getAttribute('data-k');
+      if (k === 'apiKey') { if (el.value.trim()) p.apiKey = el.value.trim(); }
+      else if (k === 'stream') p.stream = el.checked;
+      else if (k === 'timeoutSec') { var n = parseInt(el.value, 10); if (n > 0) p.timeoutSec = n; }
+      else if (k === 'id') { if (el.value.trim()) p.id = el.value.trim(); }
+      else if (k === 'baseUrl') p.baseUrl = el.value.trim();
+      else p[k] = el.value;
+    });
+    return p;
+  }
+
+  function postConfig(payload) {
+    return fetch('/api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); });
+  }
+
+  function cardMsg(el, ok, t) {
+    if (!el) return;
+    el.className = 'cfg-save-msg ' + (ok ? 'ok' : 'bad');
+    el.textContent = t;
+    if (ok) setTimeout(function () { if (el.textContent === t) el.textContent = ''; }, 4000);
+  }
+
+  function buildModelCard(f, ed) {
+    var m = ed[f.key] || {};
+    var card = document.createElement('div');
+    card.className = 'acard';
+    card.innerHTML =
+      '<h3>' + esc(m.label || f.name) +
+        '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (m.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (m.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
+      '<div class="cfg-grid">' +
+        '<div class="f-row span2"><label>模型 ID</label><div class="inp"><input data-f="' + f.key + '" data-k="id" data-orig="' + esc(m.id || '') + '" value="' + esc(m.id || '') + '" placeholder="模型标识，修改后默认采用下拉自动跟随"></div></div>' +
+        '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="' + f.key + '" data-k="baseUrl" value="' + esc(m.baseUrl || '') + '" placeholder="OpenAI 兼容接口地址"></div></div>' +
+        '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="' + f.key + '" data-k="apiKey" value="" placeholder="' + (m.hasKey ? '••••••••（已配置）' : '填入密钥') + '"></div></div>' +
+        '<div class="f-row"><label>超时（秒）</label><div class="inp"><input type="number" min="30" max="900" data-f="' + f.key + '" data-k="timeoutSec" value="' + esc(m.timeoutSec || '') + '"></div></div>' +
+        (f.key === 'grok'
+          ? '<div class="f-row"><label>推理强度</label><div class="inp"><select data-f="grok" data-k="reasoningEffort" class="role-sel" style="width:100%;height:46px;padding:0 10px">' +
+              ['low', 'medium', 'high'].map(function (v) { return '<option value="' + v + '"' + ((m.reasoningEffort || 'medium') === v ? ' selected' : '') + '>' + v + '</option>'; }).join('') +
+            '</select></div></div>'
+          : '<div class="f-row"><label>流式</label><div class="chk"><input type="checkbox" data-f="' + f.key + '" data-k="stream"' + (m.stream ? ' checked' : '') + '> 使用流式输出</div></div>'
+        ) +
+      '</div>' +
+      '<div class="cfg-save-row">' +
+        '<button type="button" class="mini cfg-save-one">保存本模型</button>' +
+        '<span class="cfg-save-msg"></span>' +
+      '</div>';
+    var btn = card.querySelector('.cfg-save-one');
+    if (btn) btn.addEventListener('click', function () { saveOneModel(f.key, card); });
+    return card;
+  }
+
+  function saveOneModel(famKey, card) {
+    var btn = card.querySelector('.cfg-save-one');
+    var msg = card.querySelector('.cfg-save-msg');
+    var ed = cfgData.edit || {};
+    if (btn) btn.disabled = true;
+    cardMsg(msg, false, '');
+    var payload = {};
+    payload[famKey] = collectFields(famKey, card);
+    var idInp = card.querySelector('[data-k="id"]');
+    var curId = idInp ? idInp.value.trim() : (ed[famKey] || {}).id || '';
+    if (curId && ed.classifyModel === curId) payload.classifyModel = curId;
+    postConfig(payload).then(function (res) {
+      if (res.ok && res.data && res.data.version) {
+        cardMsg(msg, true, '✓ 已保存');
+        var got = res.data.edit || {};
+        for (var k in got) ed[k] = got[k];
+        var hk = !!(ed[famKey] || {}).hasKey;
+        var dot = card.querySelector('.keydot');
+        if (dot) { dot.style.color = hk ? 'var(--ok)' : 'var(--bad)'; dot.textContent = '● ' + (hk ? '密钥已配置' : '未配置密钥'); }
+      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
+      if (btn) btn.disabled = false;
+    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
+  }
+
+  function bindModelIdChange(fams, ed) {
+    document.querySelectorAll('#cfgCards input[data-k="id"]').forEach(function (inp) {
+      inp.addEventListener('change', function () {
+        var v = inp.value.trim();
+        if (!v) return;
+        if (ed.classifyModel === inp.getAttribute('data-orig')) ed.classifyModel = v;
+        renderClassifySelect(fams, ed);
+      });
+    });
+  }
+
+  function renderClassifySelect(fams, ed) {
     var sel = document.getElementById('classifyModel');
     var opts = [];
     fams.forEach(function (f) {
       var m = ed[f.key] || {};
-      if (m.id) opts.push([m.id, (m.label || f.key) + ' · ' + m.id]);
+      var id = m.id || '';
+      var inp = document.querySelector('#cfgCards input[data-f="' + f.key + '"][data-k="id"]');
+      if (inp && inp.value.trim()) id = inp.value.trim();
+      if (id) opts.push([id, (m.label || f.key) + ' · ' + id]);
     });
     sel.innerHTML = opts.map(function (o) {
       return '<option value="' + esc(o[0]) + '"' + (ed.classifyModel === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
     }).join('');
   }
 
+  function renderPoolCard(ed) {
+    var box = document.getElementById('poolCfgCard');
+    if (!box) return;
+    var p = ed.pool || {};
+    var ready = !!p.configured;
+    box.innerHTML =
+      '<div class="acard">' +
+        '<h3>人才库 / 企业库 API ' +
+          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (p.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
+        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">生成计划时按申报书编号 / 姓名 / 企业统一社会信用代码检索外部只读人才库与企业库补齐空缺字段；密钥仅存本机 config.json，界面不回显。Base URL / 检索模式留空 = 不修改。</p>' +
+        '<div class="cfg-grid">' +
+          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="pool" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://192.168.x.x:8087"></div></div>' +
+          '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="pool" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-API-KEY') + '"></div></div>' +
+          '<div class="f-row"><label>检索模式</label><div class="inp"><input data-f="pool" data-k="mode" value="' + esc(p.mode || 'all') + '" placeholder="all"></div></div>' +
+          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已就绪 · 检索时参与' : '未配置 · 跳过检索，缺数据写遗留') + '</div></div>' +
+        '</div>' +
+        '<div class="cfg-save-row">' +
+          '<button type="button" class="mini cfg-save-one">保存人才库配置</button>' +
+          '<span class="cfg-save-msg"></span>' +
+        '</div>' +
+      '</div>';
+    var btn = box.querySelector('.cfg-save-one');
+    if (btn) btn.addEventListener('click', function () { savePoolConfig(box); });
+  }
+
+  function savePoolConfig(card) {
+    var btn = card.querySelector('.cfg-save-one');
+    var msg = card.querySelector('.cfg-save-msg');
+    var ed = cfgData.edit || {};
+    if (btn) btn.disabled = true;
+    cardMsg(msg, false, '');
+    postConfig({ pool: collectFields('pool', card) }).then(function (res) {
+      if (res.ok && res.data && res.data.version) {
+        cardMsg(msg, true, '✓ 已保存');
+        var got = res.data.edit || {};
+        for (var k in got) ed[k] = got[k];
+        var p = ed.pool || {};
+        var dot = card.querySelector('.keydot');
+        if (dot) { dot.style.color = p.hasKey ? 'var(--ok)' : 'var(--bad)'; dot.textContent = '● ' + (p.hasKey ? '密钥已配置' : '未配置密钥'); }
+      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
+      if (btn) btn.disabled = false;
+    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
+  }
+
   document.getElementById('cfgSave').addEventListener('click', function () {
     var btn = this;
     btn.disabled = true;
-    function famPayload(key) {
-      var p = {};
-      document.querySelectorAll('[data-f="' + key + '"]').forEach(function (el) {
-        var k = el.getAttribute('data-k');
-        if (k === 'apiKey') { if (el.value.trim()) p.apiKey = el.value.trim(); }
-        else if (k === 'stream') p.stream = el.checked;
-        else if (k === 'timeoutSec') { var n = parseInt(el.value, 10); if (n > 0) p.timeoutSec = n; }
-        else if (k === 'baseUrl') p.baseUrl = el.value.trim();
-        else p[k] = el.value;
-      });
-      return p;
-    }
     var payload = {
-      grok: famPayload('grok'),
-      gemini: famPayload('gemini'),
-      doubao: famPayload('doubao'),
+      grok: collectFields('grok'),
+      gemini: collectFields('gemini'),
+      doubao: collectFields('doubao'),
+      pool: collectFields('pool', document.getElementById('poolCfgCard')),
       classifyModel: document.getElementById('classifyModel').value
     };
-    fetch('/api/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-    .then(function (res) {
+    postConfig(payload).then(function (res) {
       if (res.ok && res.data && res.data.version) { sayCfg(true, '✓ 配置已保存'); cfgData = res.data; renderConfig(res.data); }
       else sayCfg(false, (res.data && res.data.detail) || '保存失败');
       btn.disabled = false;
@@ -707,6 +1071,39 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       if (res.ok && res.data && res.data.version) { sayCfg(true, '✓ 已恢复默认'); cfgData = res.data; renderConfig(res.data); }
       else sayCfg(false, (res.data && res.data.detail) || '恢复失败');
     });
+  });
+
+  document.getElementById('cfgProbe').addEventListener('click', function () {
+    var btn = this;
+    var box = document.getElementById('probeBox');
+    btn.disabled = true;
+    box.hidden = false;
+    box.innerHTML = '<div class="p-row">正在检测 Grok / Gemini / 火山…</div>';
+    fetch('/api/config/probe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        var data = res.data || {};
+        if (!res.ok) {
+          box.innerHTML = '<div class="p-row p-bad">' + esc((data.detail) || '检测失败') + '</div>';
+          sayCfg(false, (data.detail) || '检测失败');
+          btn.disabled = false;
+          return;
+        }
+        var rows = data.results || [];
+        box.innerHTML = rows.map(function (r) {
+          var ms = r.ms ? (' · ' + (r.ms / 1000).toFixed(1) + 's') : '';
+          if (r.ok) return '<div class="p-row p-ok">● ' + esc(r.label || r.id) + ' 已连通' + ms + (r.detail ? '（' + esc(r.detail) + '）' : '') + '</div>';
+          return '<div class="p-row p-bad">● ' + esc(r.label || r.id) + ' 失败' + ms + '：' + esc(r.error || '未知错误') + '</div>';
+        }).join('') || '<div class="p-row p-bad">' + esc(data.error || '没有可检测的模型') + '</div>';
+        var n = rows.filter(function (r) { return r.ok; }).length;
+        sayCfg(!!data.ok, n + '/' + rows.length + ' 个模型连通');
+        btn.disabled = false;
+      })
+      .catch(function (e) {
+        box.innerHTML = '<div class="p-row p-bad">' + esc(e.message || '检测失败') + '</div>';
+        sayCfg(false, '检测失败：' + (e.message || ''));
+        btn.disabled = false;
+      });
   });
 
   document.getElementById('logoutBtn').addEventListener('click', function () {

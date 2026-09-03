@@ -10,6 +10,7 @@ from .routes import batches as batches_routes
 from .routes import client_extract as client_extract_routes
 from .routes import auth as auth_routes
 from .routes import admin as admin_routes
+from .routes import feedback as feedback_routes
 
 runner = TaskStore()
 batches = BatchStore(runner=runner)
@@ -58,6 +59,7 @@ app.include_router(batches_router)
 app.include_router(client_extract_router)
 app.include_router(auth_routes.router)
 app.include_router(admin_routes.router)
+app.include_router(feedback_routes.router)
 
 @app.get("/api/config")
 def api_config():
@@ -92,6 +94,23 @@ def api_config_restore(request: Request):
         return restore_default_config()
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+@app.post("/api/config/probe")
+async def api_config_probe(request: Request):
+    """登录用户可检测已配置模型是否能真正完成一次 chat。不返回密钥。"""
+    from fastapi import HTTPException
+    u = getattr(request.state, "user", None)
+    if not u:
+        raise HTTPException(401, "未登录")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    from .llm import probe_models
+    return await probe_models(body.get("model"))
 
 @app.get("/api/pool/health")
 async def api_pool_health():

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import pymysql
 from pymysql.cursors import DictCursor
+from pymysql.err import OperationalError
 from .config import load_config
 
 BOOTSTRAP_ADMIN = "admin"
@@ -86,6 +87,49 @@ def init_db() -> dict:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS feedback (
+                  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  user_id INT UNSIGNED NOT NULL,
+                  content TEXT NOT NULL,
+                  status ENUM('new','read','done') NOT NULL DEFAULT 'new',
+                  reply TEXT NULL,
+                  reply_by VARCHAR(32) NULL,
+                  reply_at DATETIME NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at DATETIME NULL,
+                  PRIMARY KEY (id),
+                  KEY idx_fb_user (user_id),
+                  KEY idx_fb_status (status),
+                  KEY idx_fb_created (created_at),
+                  CONSTRAINT fk_fb_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS feedback_files (
+                  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  feedback_id INT UNSIGNED NOT NULL,
+                  stored_name VARCHAR(180) NOT NULL,
+                  orig_name VARCHAR(180) NOT NULL,
+                  mime VARCHAR(80) NOT NULL,
+                  size INT UNSIGNED NOT NULL,
+                  PRIMARY KEY (id),
+                  KEY idx_fbfile (feedback_id),
+                  CONSTRAINT fk_fbfile FOREIGN KEY (feedback_id) REFERENCES feedback (id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            # 兼容旧库：feedback 已有表时补上管理员回复相关列
+            for _coldef in ("reply TEXT NULL", "reply_by VARCHAR(32) NULL", "reply_at DATETIME NULL"):
+                try:
+                    cur.execute("ALTER TABLE feedback ADD COLUMN " + _coldef)
+                except OperationalError as e:
+                    if e.args and e.args[0] == 1060:
+                        continue
+                    raise
             cur.execute("SELECT COUNT(*) AS n FROM users")
             n = int((cur.fetchone() or {}).get("n") or 0)
             if n == 0:

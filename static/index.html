@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py40">
+<link rel="stylesheet" href="/public/style.css?v=py44">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -28,6 +28,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     <a id="adminLink" class="tbtn" href="/admin" style="display:none">用户管理</a>
     <button type="button" class="tbtn" id="logoutBtn">退出登录</button>
   </div>
+  <button type="button" class="tbtn" id="fbOpenBtn">意见反馈</button>
   <a class="tbtn" href="/client-extract" target="_blank" rel="noopener">客户端年龄改写</a>
   <div class="live"><span class="dot"></span><span id="liveStatus">服务运行中</span></div>
 </header>
@@ -40,11 +41,11 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     <h2>新建任务</h2>
 
     <div class="field">
-      <label class="flabel">① 申报书（.docx）</label>
+      <label class="flabel">① 申报书（.docx / 数字 PDF/可多选）</label>
       <label class="drop" for="appFile">
-        <input type="file" id="appFile" accept=".docx" multiple>
-        <span class="dz-main">点击选择申报书文件（可多选）</span>
-        <span class="dz-sub">可多次追加；点文件右侧 × 移除。多本时按编号/姓名匹配意见</span>
+        <input type="file" id="appFile" accept=".docx,.pdf" multiple>
+        <span class="dz-main">点击选择申报书文件</span>
+        <span class="dz-sub">Word 或可复制文字的PDF；可多次追加，点 × 移除</span>
       </label>
       <div class="chips" id="appName"></div>
     </div>
@@ -52,16 +53,16 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     <div class="field">
       <label class="flabel">② 修改意见文档（可多选）</label>
       <label class="drop" for="opFiles">
-        <input type="file" id="opFiles" accept=".docx,.wps,.txt,.md" multiple>
+        <input type="file" id="opFiles" accept=".docx,.wps,.txt,.md,.xlsx,.xlsm,.xls,.csv,.jpg,.jpeg,.png,.webp,.gif,.tif,.tiff,.bmp,image/*" multiple>
         <span class="dz-main">点击选择意见文档</span>
-        <span class="dz-sub">支持 docx / wps / txt / md，可多次追加；点 × 移除</span>
+        <span class="dz-sub">Word / Excel / 图片/ txt / md，可多次追加；点 × 移除</span>
       </label>
       <div class="chips" id="opNames"></div>
     </div>
 
     <div class="field">
       <label class="flabel">模型配置</label>
-      <p class="cfg-hint">下拉菜单选择要修改配置的模型（Grok / Gemini / 火山）；另选默认采用（分类与「修改后」）。生成意见同时调用三个已配置模型。</p>
+      <p class="cfg-hint">下拉菜单选择要修改配置的模型；另选默认采用（分类与「修改后」）。</p>
       <div class="cfg-toolbar">
         <div class="cfg-dd-col">
           <span class="cfg-mini">编辑配置</span>
@@ -77,8 +78,10 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         <button type="button" id="cfgSaveBtn" class="ghost">保存配置</button>
         <button type="button" id="cfgDefaultBtn" class="ghost">保存为默认</button>
         <button type="button" id="cfgRestoreBtn" class="ghost">恢复默认</button>
+        <button type="button" id="cfgProbeBtn" class="ghost">检测连通性</button>
         <span id="cfgMsg" class="err"></span>
       </div>
+      <div id="probeBox" class="probe-box" hidden></div>
     </div>
 
     <div class="actions">
@@ -162,6 +165,29 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 
 <footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据 · v2.3</footer>
 
-<script src="/public/app.js?v=py40"></script>
+<div id="fbMask" class="fb-mask" hidden>
+  <div class="fb-modal" role="dialog" aria-labelledby="fbTitle">
+    <div class="fb-head">
+      <h2 id="fbTitle">意见反馈</h2>
+      <button type="button" class="ghost" id="fbCloseBtn">关闭</button>
+    </div>
+    <p class="fb-hint">描述使用中的问题或建议，可附截图。管理员会在后台看到。</p>
+    <textarea id="fbContent" class="fb-ta" rows="5" maxlength="4000" placeholder="请填写反馈内容…"></textarea>
+    <label class="drop fb-drop" for="fbFiles">
+      <input type="file" id="fbFiles" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" multiple>
+      <span class="dz-main">点击选择图片（可多选，最多 8 张）</span>
+      <span class="dz-sub">jpg / png / gif / webp，单张不超过 8MB；点缩略图 × 移除</span>
+    </label>
+    <div class="fb-thumbs" id="fbThumbs"></div>
+    <div class="fb-actions">
+      <button type="button" class="primary" id="fbSubmitBtn">提交反馈</button>
+      <span id="fbMsg" class="err"></span>
+    </div>
+    <h3 class="fb-sub">我提交的反馈</h3>
+    <div id="fbMine" class="fb-list">暂无反馈</div>
+  </div>
+</div>
+
+<script src="/public/app.js?v=py44"></script>
 </body>
 </html>

@@ -406,9 +406,8 @@ async def fetch_upstream(priv: dict):
         if pool_host and urlparse(url).hostname == pool_host and cfg.get("poolApiKey"):
             headers = {"X-API-KEY": cfg["poolApiKey"]}
     timeout = httpx.Timeout(120.0, connect=8.0)
-    host = urlparse(url).hostname or ""
-    trust = host not in ("127.0.0.1", "localhost", "::1")
-    async with httpx.AsyncClient(timeout=timeout, trust_env=trust, follow_redirects=True) as client:
+    from .config import httpx_trust_env
+    async with httpx.AsyncClient(timeout=timeout, trust_env=httpx_trust_env(), follow_redirects=True) as client:
         r = await client.get(url, headers=headers)
     if r.status_code == 409:
         raise P.PapersError("NOT_READY", "附件尚未生成", 409)

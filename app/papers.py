@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, re, asyncio
 from urllib.parse import urlparse
 import httpx
-from .config import load_config
+from .config import load_config, httpx_trust_env
 
 PREFIX = "/api/v1"
 _lock = asyncio.Lock()
@@ -42,8 +42,7 @@ def _client_timeout(read: float = 30.0):
 
 
 def _trust_env(url: str) -> bool:
-    host = urlparse(url).hostname or ""
-    return host not in ("127.0.0.1", "localhost", "::1")
+    return httpx_trust_env()
 
 
 def _err_from_body(status: int, text: str) -> PapersError:

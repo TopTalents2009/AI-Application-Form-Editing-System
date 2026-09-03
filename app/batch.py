@@ -1,13 +1,12 @@
 ﻿"""批次处理：提取 → 匹配 → LLM仲裁 → ready；start 时逐书派生任务"""
 from __future__ import annotations
-import asyncio, base64, json, os, re, secrets, shutil, time
+import asyncio, base64, json, os, re, secrets, time
 from pathlib import Path
-from .config import BATCHES_DIR, SCRIPTS_DIR, PYEXE, load_config, LLM_TIMEOUT_MATCH, atomic_replace, resolve_llm
+from .config import BATCHES_DIR, load_config, LLM_TIMEOUT_MATCH, atomic_replace, resolve_llm
 from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
-
-PYENV = dict(os.environ, PYTHONIOENCODING="utf-8")
-ALLOWED = (".docx", ".wps", ".txt", ".md")
+from .opinion_extract import ALLOWED_OPINION_EXT, ensure_txt as extract_to_txt
+from .pdf_app import ALLOWED_APP_EXT, ensure_app_docx, sniff_pdf, work_docx_name
 
 def _rid(): return "b" + format(int(time.time() * 1000), "x") + "-" + secrets.token_hex(3)
 def _sanitize(name): 
@@ -54,30 +53,25 @@ class BatchStore:
             except Exception:
                 pass
 
-    async def _ensure_txt(self, src: Path, out: Path) -> bool:
-        ext = _ext(str(src))
-        if ext in (".txt", ".md"):
-            shutil.copyfile(src, out); return True
-        proc = await asyncio.create_subprocess_exec(PYEXE, str(SCRIPTS_DIR / "sb_extract.py"), str(src), str(out), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=PYENV)
-        await proc.communicate()
-        return proc.returncode == 0
-
     async def create(self, body, owner: str = None) -> dict:
         apps = body.get("apps") or []; ops = body.get("opinions") or []
         if not apps: raise ValueError("至少上传一份申报书")
         for a in apps:
-            if _ext(_sanitize(a.get("name", ""))) != ".docx":
-                raise ValueError("申报书必须为 .docx: " + str(a.get("name")))
+            if _ext(_sanitize(a.get("name", ""))) not in ALLOWED_APP_EXT:
+                raise ValueError("申报书必须为 .docx 或数字版 .pdf: " + str(a.get("name")))
         if not ops: raise ValueError("至少上传一份意见文档")
         for o in ops:
-            if _ext(_sanitize(o.get("name", ""))) not in ALLOWED:
-                raise ValueError("意见类型不支持: " + str(o.get("name")))
+            if _ext(_sanitize(o.get("name", ""))) not in ALLOWED_OPINION_EXT:
+                raise ValueError("意见类型不支持（Word / Excel / 图片 / txt / md）: " + str(o.get("name")))
         bid = _rid(); d = self.bdir(bid)
         (d / "input").mkdir(parents=True, exist_ok=True)
         app_names = []
         for a in apps:
             n = _sanitize(a["name"])
-            (d / "input" / n).write_bytes(base64.b64decode(a.get("dataB64") or ""))
+            raw = base64.b64decode(a.get("dataB64") or "")
+            if _ext(n) == ".pdf":
+                sniff_pdf(raw, n)
+            (d / "input" / n).write_bytes(raw)
             app_names.append(n)
         op_names = []
         for o in ops:
@@ -105,23 +99,43 @@ class BatchStore:
         try:
             txt_dir = Path(b["dir"]) / "txt"; txt_dir.mkdir(parents=True, exist_ok=True)
             app_texts, op_texts = {}, {}
+            conv_dir = Path(b["dir"]) / "converted"
+            conv_dir.mkdir(parents=True, exist_ok=True)
             for n in b["apps"]:
+                src = Path(b["dir"]) / "input" / n
                 out = txt_dir / (Path(n).stem + ".txt")
-                if await self._ensure_txt(Path(b["dir"]) / "input" / n, out):
+                try:
+                    if _ext(n) == ".pdf":
+                        docx = conv_dir / work_docx_name(n)
+                        engine = await ensure_app_docx(src, docx)
+                        self.log(b, "数字 PDF 已转为 Word " + n + " → " + docx.name + "（" + str(engine) + "）")
+                        await extract_to_txt(docx, out)
+                    else:
+                        await extract_to_txt(src, out)
                     app_texts[n] = out.read_text(encoding="utf-8")
-                else:
-                    self.log(b, "提取失败 " + n)
+                except Exception as e:
+                    b["status"] = "failed"
+                    b["error"] = "申报书「" + n + "」提取失败：" + str(e)[:240]
+                    self.log(b, b["error"])
+                    self.persist(b)
+                    return
             for n in b["opinions"]:
                 out = txt_dir / (Path(n).stem + ".txt")
-                if await self._ensure_txt(Path(b["dir"]) / "input" / n, out):
+                try:
+                    await extract_to_txt(Path(b["dir"]) / "input" / n, out)
                     op_texts[n] = out.read_text(encoding="utf-8")
-                else:
-                    self.log(b, "提取失败 " + n)
+                except Exception as e:
+                    self.log(b, "提取失败 " + n + ": " + str(e)[:200])
+            if not op_texts:
+                b["status"] = "failed"
+                b["error"] = "意见文档全部提取失败（Excel 无法解析，或图片需 Gemini 识字失败）"
+                self.persist(b)
+                return
             # 内容级校验：每本上传的书必须真的像已填写申报书
             for n in b["apps"]:
                 tx = app_texts.get(n, "")
                 if not M.is_app_content(tx):
-                    reason = "无法提取正文，可能不是 Word(.docx) 申报书" if not tx else "不像一份已填写的申报书（正文过短、疑似未填写模板或缺封面关键字段）"
+                    reason = "无法提取正文，可能不是 Word/.数字PDF 申报书" if not tx else "不像一份已填写的申报书（正文过短、疑似未填写模板或缺封面关键字段）"
                     b["status"] = "failed"
                     b["error"] = "文件「" + n + "」" + reason + "。请确认没有把意见文档、空白模板或其它文件误选进申报书栏。"
                     self.persist(b); return

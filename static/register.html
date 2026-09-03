@@ -4,114 +4,133 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>注册 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py37">
+<link rel="stylesheet" href="/public/style.css?v=py41">
 <style>
-.auth-page{min-height:100vh;display:grid;grid-template-columns:minmax(420px,46%) 1fr}
-
-/* ========== 左侧品牌区 ========== */
-.brand{
-  position:relative;overflow:hidden;color:#fff;
-  background:linear-gradient(150deg,#0e1d40 0%,#16306b 45%,#2450a4 100%);
-  display:flex;flex-direction:column;justify-content:space-between;
-  padding:52px 56px;
+/* ========== 全屏星空背景 + 粒子 ========== */
+.auth-page{
+  position:relative;min-height:100vh;overflow:hidden;
+  background:linear-gradient(160deg,#050a1c 0%,#0a1a45 38%,#123a7a 72%,#0b2c63 100%);
+  background-size:180% 180%;
+  animation:gradient-flow 20s ease infinite;
 }
-.brand::before,.brand::after{
-  content:"";position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;pointer-events:none;
+@keyframes gradient-flow{0%,100%{background-position:0% 0%}50%{background-position:100% 100%}}
+.auth-page::before,.auth-page::after{
+  content:"";position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none;
 }
-.brand::before{width:520px;height:520px;background:#3b74d6;top:-180px;right:-140px;animation:drift 14s ease-in-out infinite alternate}
-.brand::after{width:420px;height:420px;background:#4f8ae8;bottom:-160px;left:-120px;opacity:.35;animation:drift 18s ease-in-out infinite alternate-reverse}
+.auth-page::before{width:560px;height:560px;background:#2b4fb0;top:-220px;right:-120px;opacity:.45;animation:drift 18s ease-in-out infinite alternate}
+.auth-page::after{width:480px;height:480px;background:#14508a;bottom:-200px;left:-100px;opacity:.4;animation:drift 22s ease-in-out infinite alternate-reverse}
+.auth-page .glow2{position:absolute;border-radius:50%;filter:blur(70px);pointer-events:none;
+  width:360px;height:360px;background:#6a4fb0;top:40%;left:38%;opacity:.18;animation:drift 26s ease-in-out infinite alternate}
 @keyframes drift{to{transform:translate(-40px,34px) scale(1.08)}}
-.brand-grid{
-  position:absolute;inset:0;pointer-events:none;opacity:.5;
-  background-image:radial-gradient(rgba(255,255,255,.14) 1px,transparent 1px);
-  background-size:26px 26px;
-  -webkit-mask-image:linear-gradient(160deg,rgba(0,0,0,.8),transparent 62%);
-          mask-image:linear-gradient(160deg,rgba(0,0,0,.8),transparent 62%);
+#particles-bg{position:absolute;inset:0;z-index:0}
+
+/* ========== 内容网格 ========== */
+.auth-grid{
+  position:relative;z-index:1;max-width:1280px;margin:0 auto;min-height:100vh;
+  display:grid;grid-template-columns:minmax(400px,46%) 1fr;
 }
-.brand>*{position:relative;z-index:1}
+.brand{
+  display:flex;flex-direction:column;justify-content:space-between;
+  padding:52px 48px 48px 56px;color:#fff;
+  background:linear-gradient(95deg, rgba(6,14,38,.5), rgba(6,14,38,.18) 60%, transparent 100%);
+}
 .brand-head{display:flex;align-items:center;gap:14px}
 .brand-logo{
-  width:52px;height:52px;border-radius:15px;font-size:20px;font-weight:700;
-  background:rgba(255,255,255,.14);backdrop-filter:blur(6px);
+  width:52px;height:52px;border-radius:15px;font-size:22px;font-weight:700;
+  background:rgba(255,255,255,.12);backdrop-filter:blur(6px);
   display:flex;align-items:center;justify-content:center;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),0 8px 24px -8px rgba(0,0,0,.5);
 }
 .brand-head h1{margin:0;font-size:20px;letter-spacing:1px}
-.brand-head p{margin:3px 0 0;font-size:12.5px;opacity:.68;letter-spacing:.5px}
+.brand-head p{margin:3px 0 0;font-size:12.5px;opacity:.55;letter-spacing:.5px}
 .brand-body{max-width:400px}
 .brand-body h2{margin:0 0 14px;font-size:30px;line-height:1.35;font-weight:700;letter-spacing:.5px}
 .brand-body h2 em{font-style:normal;background:linear-gradient(90deg,#9cc2ff,#e4eeff);-webkit-background-clip:text;background-clip:text;color:transparent}
-.brand-body>p{margin:0;font-size:14px;line-height:1.9;color:rgba(255,255,255,.72)}
+.brand-body>p{margin:0;font-size:14px;line-height:1.9;color:rgba(255,255,255,.62)}
 .feat{list-style:none;margin:30px 0 0;padding:0;display:grid;gap:14px}
-.feat li{display:flex;gap:12px;align-items:flex-start;font-size:13.5px;line-height:1.6;color:rgba(255,255,255,.88)}
+.feat li{display:flex;gap:12px;align-items:flex-start;font-size:13.5px;line-height:1.6;color:rgba(255,255,255,.85)}
 .feat .fi{
-  flex-shrink:0;width:34px;height:34px;border-radius:10px;font-size:15px;
-  background:rgba(255,255,255,.12);backdrop-filter:blur(4px);
+  flex-shrink:0;width:34px;height:34px;border-radius:10px;font-weight:700;font-size:14px;color:#bcd4ff;
+  background:rgba(255,255,255,.1);backdrop-filter:blur(4px);
   display:flex;align-items:center;justify-content:center;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.2);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);
 }
 .feat b{display:block;font-size:13.5px;color:#fff}
-.feat span{color:rgba(255,255,255,.62);font-size:12.5px}
-.brand-foot{font-size:12px;color:rgba(255,255,255,.45);letter-spacing:.4px}
+.feat span{color:rgba(255,255,255,.52);font-size:12.5px}
+.brand-foot{font-size:12px;color:rgba(255,255,255,.38);letter-spacing:.4px}
 
-/* ========== 右侧表单区 ========== */
-.form-side{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:40px 32px;position:relative;
-  background:
-    radial-gradient(900px 320px at 100% -60px, rgba(59,116,214,.10), transparent 62%),
-    radial-gradient(700px 300px at 0% 110%, rgba(59,116,214,.08), transparent 60%),
-    #f6f8fc;
+/* ========== 表单侧（暗色玻璃卡） ========== */
+.form-side{display:flex;align-items:center;justify-content:center;padding:44px 36px}
+.form-box{
+  width:100%;max-width:400px;
+  background:rgba(10,20,45,.5);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:20px;padding:30px 30px;
+  box-shadow:0 8px 20px rgba(0,0,0,.25),0 30px 70px -18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.08);
+  animation:rise .55s cubic-bezier(.22,1,.36,1) both;
 }
-.form-box{width:100%;max-width:396px;animation:rise .5s ease both}
-@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-.form-box h2{margin:0 0 8px;font-size:26px;font-weight:700;color:var(--ink)}
-.form-box .sub{margin:0 0 28px;font-size:13.5px;color:var(--sub)}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.form-box h2{margin:0 0 8px;font-size:26px;font-weight:700;color:#fff}
+.form-box .sub{margin:0 0 26px;font-size:13.5px;color:rgba(222,235,255,.65)}
 .f-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
 .f-grid .span2{grid-column:1 / -1}
-.f-row{margin-bottom:16px}
-.f-row label{display:block;font-size:13px;font-weight:600;color:#3c465a;margin-bottom:8px}
+.f-row{margin-bottom:16px;animation:field-in .5s cubic-bezier(.22,1,.36,1) both}
+.f-grid .f-row:nth-child(1){animation-delay:.08s}
+.f-grid .f-row:nth-child(2){animation-delay:.13s}
+.f-grid .f-row:nth-child(3){animation-delay:.18s}
+.f-grid .f-row:nth-child(4){animation-delay:.23s}
+.f-grid .f-row:nth-child(5){animation-delay:.28s}
+@keyframes field-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.f-row label{display:block;font-size:13px;font-weight:600;color:#b6c9ef;margin-bottom:8px}
 .inp{position:relative;display:flex;align-items:center}
 .inp .in-ic{
-  position:absolute;left:13px;font-size:15px;color:#93a0b8;pointer-events:none;
+  position:absolute;left:14px;width:17px;height:17px;color:#6d84b5;pointer-events:none;
   transition:color .18s;
 }
 .inp input{
-  width:100%;height:46px;padding:0 14px 0 14px;
-  font-size:14px;font-family:inherit;color:var(--ink);
-  background:#fff;border:1.5px solid #dde4f0;border-radius:12px;
+  width:100%;height:46px;padding:0 14px 0 40px;
+  font-size:14px;font-family:inherit;color:#fff;
+  background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.16);border-radius:12px;
   outline:none;transition:border-color .18s, box-shadow .18s, background .18s;
 }
 .inp.has-eye input{padding-right:44px}
-.inp input::placeholder{color:#a8b2c5}
-.inp input:hover{border-color:#c3cfe8}
+.inp input::placeholder{color:rgba(255,255,255,.32)}
+.inp input:hover{border-color:rgba(255,255,255,.3)}
 .inp input:focus{
-  border-color:var(--brand2);
-  box-shadow:0 0 0 4px rgba(59,116,214,.13);
+  background:rgba(255,255,255,.12);
+  border-color:#5b8fe8;
+  box-shadow:0 0 0 4px rgba(91,143,232,.22);
 }
-.inp input:focus~.in-ic{color:var(--brand2)}
+.inp input:focus~.in-ic{color:#8ab4ff}
 .eye{
-  position:absolute;right:6px;height:32px;padding:0 10px;border:none;background:none;
-  border-radius:9px;cursor:pointer;font-size:12px;line-height:1;color:#5b6577;
+  position:absolute;right:8px;width:32px;height:32px;border:none;background:none;
+  border-radius:9px;cursor:pointer;color:#8aa0cf;
   display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;
 }
-.eye:hover{background:#eef3fb;color:var(--brand2)}
+.eye:hover{background:rgba(255,255,255,.12);color:#cfe1ff}
+.eye svg{width:17px;height:17px}
+.ic-eye-off{display:none}
+.eye.off .ic-eye{display:none}
+.eye.off .ic-eye-off{display:block}
 .form-err{
   display:none;align-items:flex-start;gap:8px;
-  margin:0 0 16px;padding:10px 13px;
-  font-size:13px;line-height:1.5;color:var(--bad);
-  background:#fdf1f0;border:1px solid #f5d3d1;border-radius:10px;
+  margin:0 0 14px;padding:10px 13px;
+  font-size:13px;line-height:1.5;color:#ffb0ad;
+  background:rgba(230,60,60,.12);border:1px solid rgba(240,100,100,.3);border-radius:10px;
 }
 .form-err.show{display:flex;animation:shake .4s ease}
 @keyframes shake{20%{transform:translateX(-5px)}40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}
 .btn-reg{
   width:100%;height:48px;margin-top:4px;border:none;border-radius:12px;cursor:pointer;
   font-size:15px;font-weight:700;font-family:inherit;letter-spacing:6px;text-indent:6px;color:#fff;
-  background:linear-gradient(120deg,#2450a4,#3b74d6);
-  box-shadow:0 10px 22px -8px rgba(36,80,164,.55);
-  transition:transform .15s, box-shadow .2s, filter .2s;
+  background:linear-gradient(120deg,#2450a4,#3b74d6,#5b8fe8);
+  background-size:200% 200%;
+  box-shadow:0 10px 24px -6px rgba(80,140,230,.5);
+  transition:transform .15s, box-shadow .2s;
+  animation:gradient-flow 6s ease infinite;
 }
-.btn-reg:hover{transform:translateY(-1px);box-shadow:0 14px 26px -8px rgba(36,80,164,.6);filter:saturate(1.08)}
+.btn-reg:hover{transform:translateY(-1px);box-shadow:0 14px 28px -6px rgba(80,140,230,.65)}
 .btn-reg:active{transform:translateY(0)}
 .btn-reg:disabled{opacity:.6;cursor:wait;transform:none}
 .btn-reg .spin{
@@ -120,121 +139,171 @@
   animation:spin .7s linear infinite;
 }
 @keyframes spin{to{transform:rotate(360deg)}}
-.form-foot{margin-top:24px;font-size:13.5px;color:var(--sub);text-align:center}
-.form-foot a{color:var(--brand);font-weight:700;text-decoration:none}
-.form-foot a:hover{text-decoration:underline}
-.side-foot{margin-top:28px;font-size:12px;color:#9aa4b8;text-align:center}
+.form-foot{margin-top:22px;font-size:13.5px;color:rgba(210,225,255,.6);text-align:center}
+.form-foot a{color:#8ab4ff;font-weight:700;text-decoration:none}
+.form-foot a:hover{text-decoration:underline;color:#a9c8ff}
+.side-foot{margin-top:26px;font-size:12px;color:rgba(210,225,255,.4);text-align:center}
 .pw-meter{display:flex;gap:5px;margin-top:8px;height:4px}
-.pw-meter i{flex:1;background:#e3e9f4;border-radius:99px;transition:background .25s}
-.pw-meter.s1 i:nth-child(1){background:var(--bad)}
-.pw-meter.s2 i:nth-child(-n+2){background:var(--warn)}
-.pw-meter.s3 i:nth-child(-n+3){background:#4c96e8}
-.pw-meter.s4 i:nth-child(-n+4){background:var(--ok)}
-.pw-tip{margin-top:6px;font-size:12px;color:#93a0b8}
+.pw-meter i{flex:1;background:rgba(255,255,255,.14);border-radius:99px;transition:background .25s}
+.pw-meter.s1 i:nth-child(1){background:#e0524e}
+.pw-meter.s2 i:nth-child(-n+2){background:#e0a04e}
+.pw-meter.s3 i:nth-child(-n+3){background:#6aa8ee}
+.pw-meter.s4 i:nth-child(-n+4){background:#4cd08c}
+.pw-tip{margin-top:6px;font-size:12px;color:rgba(210,225,255,.5)}
 
-/* ========== 响应式 ========== */
+/* ========== 响应式 / 无动效偏好 ========== */
 @media (max-width:900px){
-  .auth-page{grid-template-columns:1fr}
+  .auth-grid{grid-template-columns:1fr;padding:0 16px}
   .brand{display:none}
   .f-grid{grid-template-columns:1fr}
   .f-grid .span2{grid-column:auto}
   .mobile-brand{display:flex!important}
 }
 .mobile-brand{
-  display:none;align-items:center;gap:12px;margin:0 0 26px;padding:14px 18px;
-  border-radius:14px;color:#fff;background:linear-gradient(120deg,#14264f,#2450a4);
+  display:none;align-items:center;gap:12px;margin:0 0 22px;padding:13px 16px;
+  border-radius:14px;color:#fff;
+  background:rgba(255,255,255,.1);backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.14);
 }
-.mobile-brand .brand-logo{width:40px;height:40px;font-size:20px;border-radius:11px}
+.mobile-brand .brand-logo{width:40px;height:40px;font-size:17px;border-radius:11px}
 .mobile-brand h1{margin:0;font-size:16px}
-.mobile-brand p{margin:2px 0 0;font-size:11.5px;opacity:.7}
+.mobile-brand p{margin:2px 0 0;font-size:11.5px;opacity:.6}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
 </style>
 </head>
 <body>
 <div class="auth-page">
+  <div id="particles-bg"></div>
+  <div class="glow2"></div>
 
-  <aside class="brand">
-    <div class="brand-grid"></div>
-    <div class="brand-head">
-      <div class="brand-logo">申</div>
-      <div>
-        <h1>申报书智能修改系统</h1>
-        <p>AI APPLICATION FORM EDITING SYSTEM</p>
-      </div>
-    </div>
-    <div class="brand-body">
-      <h2>加入我们，<br><em>让申报书修改更高效</em></h2>
-      <p>注册一个账号，即可批量配对修改意见与申报书，生成可人工确认的编辑计划，并保持原文版式写入 Word。</p>
-      <ul class="feat">
-        <li><span class="fi">1</span><div><b>批量配对 · 按编号匹配</b><span>一次上传整个批次的申报书与意见</span></div></li>
-        <li><span class="fi">2</span><div><b>计划可编辑 · 人工确认</b><span>逐条核对修改前 / 修改后再落盘</span></div></li>
-        <li><span class="fi">3</span><div><b>成品与对照表齐备</b><span>修改后 Word、逐条对照表、遗留事项</span></div></li>
-      </ul>
-    </div>
-    <div class="brand-foot">本地单机服务 · 原件只读 · 严禁编造数据 · v2.3</div>
-  </aside>
-
-  <main class="form-side">
-    <div class="form-box">
-      <div class="mobile-brand">
+  <div class="auth-grid">
+    <aside class="brand">
+      <div class="brand-head">
         <div class="brand-logo">申</div>
         <div>
           <h1>申报书智能修改系统</h1>
           <p>AI APPLICATION FORM EDITING SYSTEM</p>
         </div>
       </div>
-      <h2>创建账号</h2>
-      <p class="sub">填写以下信息完成注册，注册后自动登录</p>
+      <div class="brand-body">
+        <h2>加入我们，<br><em>让申报书修改更高效</em></h2>
+        <p>注册一个账号，即可批量配对修改意见与申报书，生成可人工确认的编辑计划，并保持原文版式写入 Word。</p>
+        <ul class="feat">
+          <li><span class="fi">1</span><div><b>批量配对 · 按编号匹配</b><span>一次上传整个批次的申报书与意见</span></div></li>
+          <li><span class="fi">2</span><div><b>计划可编辑 · 人工确认</b><span>逐条核对修改前 / 修改后再落盘</span></div></li>
+          <li><span class="fi">3</span><div><b>成品与对照表齐备</b><span>修改后 Word、逐条对照表、遗留事项</span></div></li>
+        </ul>
+      </div>
+      <div class="brand-foot">本地单机服务 · 原件只读 · 严禁编造数据 · v2.3</div>
+    </aside>
 
-      <form id="regForm" autocomplete="off">
-        <div class="f-grid">
-          <div class="f-row span2">
-            <label for="username">用户名</label>
-            <div class="inp">
-              <input type="text" id="username" required maxlength="32" placeholder="3–32 位字母、数字或下划线">
-              </div>
-          </div>
-          <div class="f-row">
-            <label for="realName">真实姓名</label>
-            <div class="inp">
-              <input type="text" id="realName" required maxlength="32" placeholder="2–32 字">
-              </div>
-          </div>
-          <div class="f-row">
-            <label for="department">部门</label>
-            <div class="inp">
-              <input type="text" id="department" required maxlength="64" placeholder="所在部门">
-              </div>
-          </div>
-          <div class="f-row span2">
-            <label for="password">密码</label>
-            <div class="inp has-eye">
-              <input type="password" id="password" required maxlength="64" placeholder="6–64 位">
-              <button type="button" class="eye" data-for="password" tabindex="-1">显示</button>
-            </div>
-            <div class="pw-meter" id="pwMeter"><i></i><i></i><i></i><i></i></div>
-            <div class="pw-tip" id="pwTip">建议混合字母、数字与符号</div>
-          </div>
-          <div class="f-row span2">
-            <label for="confirmPassword">确认密码</label>
-            <div class="inp has-eye">
-              <input type="password" id="confirmPassword" required maxlength="64" placeholder="再次输入密码">
-              <button type="button" class="eye" data-for="confirmPassword" tabindex="-1">显示</button>
-            </div>
+    <main class="form-side">
+      <div class="form-box">
+        <div class="mobile-brand">
+          <div class="brand-logo">申</div>
+          <div>
+            <h1>申报书智能修改系统</h1>
+            <p>AI APPLICATION FORM EDITING SYSTEM</p>
           </div>
         </div>
+        <h2>创建账号</h2>
+        <p class="sub">填写以下信息完成注册，注册后自动登录</p>
 
-        <div class="form-err" id="errBox"><span id="err"></span></div>
-        <button type="submit" class="btn-reg" id="submitBtn">注 册</button>
-      </form>
+        <form id="regForm" autocomplete="off">
+          <div class="f-grid">
+            <div class="f-row span2">
+              <label for="username">用户名</label>
+              <div class="inp">
+                <input type="text" id="username" required maxlength="32" placeholder="3–32 位字母、数字或下划线">
+                <svg class="in-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              </div>
+            </div>
+            <div class="f-row">
+              <label for="realName">真实姓名</label>
+              <div class="inp">
+                <input type="text" id="realName" required maxlength="32" placeholder="2–32 字">
+                <svg class="in-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M14 8h4M14 12h4M6 16h12"/></svg>
+              </div>
+            </div>
+            <div class="f-row">
+              <label for="department">部门</label>
+              <div class="inp">
+                <input type="text" id="department" required maxlength="64" placeholder="所在部门">
+                <svg class="in-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/></svg>
+              </div>
+            </div>
+            <div class="f-row span2">
+              <label for="password">密码</label>
+              <div class="inp has-eye">
+                <input type="password" id="password" required maxlength="64" placeholder="6–64 位">
+                <svg class="in-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <button type="button" class="eye" data-for="password" tabindex="-1">
+                  <svg class="ic-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="ic-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+                </button>
+              </div>
+              <div class="pw-meter" id="pwMeter"><i></i><i></i><i></i><i></i></div>
+              <div class="pw-tip" id="pwTip">建议混合字母、数字与符号</div>
+            </div>
+            <div class="f-row span2">
+              <label for="confirmPassword">确认密码</label>
+              <div class="inp has-eye">
+                <input type="password" id="confirmPassword" required maxlength="64" placeholder="再次输入密码">
+                <svg class="in-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                <button type="button" class="eye" data-for="confirmPassword" tabindex="-1">
+                  <svg class="ic-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg class="ic-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
 
-      <p class="form-foot">已有账号？<a href="/login">返回登录</a></p>
-      <p class="side-foot">注册信息仅用于系统内部账号管理</p>
-    </div>
-  </main>
+          <div class="form-err" id="errBox"><span id="err"></span></div>
+          <button type="submit" class="btn-reg" id="submitBtn">注 册</button>
+        </form>
 
+        <p class="form-foot">已有账号？<a href="/login">返回登录</a></p>
+        <p class="side-foot">注册信息仅用于系统内部账号管理</p>
+      </div>
+    </main>
+  </div>
 </div>
+<script src="/public/vendor/tsparticles.bundle.min.js"></script>
 <script>
 (function () {
+  /* 全屏星空粒子：仅未开启"减少动效"时加载；交互只有悬停排斥 */
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduced && window.tsParticles) {
+    tsParticles.load('particles-bg', {
+      fpsLimit: 60,
+      detectRetina: true,
+      background: { color: 'transparent' },
+      interactivity: {
+        events: {
+          onHover: { enable: true, mode: 'repulse' },
+          resize: true
+        },
+        modes: { repulse: { distance: 130, duration: 0.4 } }
+      },
+      particles: {
+        color: { value: ['#ffffff', '#bcd4ff', '#7fa9f0'] },
+        links: { color: '#7fa9f0', distance: 160, enable: true, opacity: 0.12, width: 0.8 },
+        move: { enable: true, speed: 0.5, direction: 'none', outModes: { default: 'bounce' }, random: true, straight: false },
+        number: { density: { enable: true, area: 700 }, value: 90 },
+        opacity: {
+          value: { min: 0.15, max: 0.8 },
+          animation: { enable: true, speed: 0.3, minimumValue: 0.05, sync: false }
+        },
+        size: {
+          value: { min: 0.8, max: 2.6 },
+          animation: { enable: true, speed: 1.2, minimumValue: 0.5, sync: false }
+        }
+      }
+    });
+  }
+
   var form = document.getElementById('regForm');
   var err = document.getElementById('err');
   var errBox = document.getElementById('errBox');
@@ -249,13 +318,13 @@
     btn.textContent = '注 册';
   }
 
-  /* 密码可见切换 */
+  /* 密码可见切换（SVG 图标切换） */
   Array.prototype.forEach.call(document.querySelectorAll('.eye'), function (b) {
     b.addEventListener('click', function () {
       var pw = document.getElementById(b.getAttribute('data-for'));
       var show = pw.type === 'password';
       pw.type = show ? 'text' : 'password';
-      b.textContent = show ? '隐藏' : '显示';
+      b.classList.toggle('off', show);
     });
   });
 

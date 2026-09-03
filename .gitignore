@@ -8,6 +8,7 @@ config.default.json
 tasks/
 batches/
 client_inbox/
+feedback/
 
 # python
 __pycache__/
@@ -16,6 +17,11 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+
+# local machine notes / credentials (do not publish)
+MySQL连接信息.txt
+副高级职位.txt
+人才库外部只读-API使用说明.md
 
 # local one-off tests
 _test_*.py

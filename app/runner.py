@@ -5,6 +5,8 @@ from pathlib import Path
 from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_llm, compare_model_profiles, model_family, COMPARE_FAMS, OPINION_FIELDS, fam_tag
 from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
+from .opinion_extract import ALLOWED_OPINION_EXT, ensure_txt as extract_to_txt
+from .pdf_app import ALLOWED_APP_EXT, ensure_app_docx, sniff_pdf, work_docx_name
 from .pool import lookup_for_app, format_pool_prompt, save_snapshot
 from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block
 from .report_docx import write_compare_docx
@@ -13,7 +15,6 @@ from .form_reqs import extract_form_requirements, check_text_limits, check_repla
 SECTION_FILES = {"基本信息": "basic-info.md", "教育": "education.md", "工作": "work.md", "论文": "papers.md", "项目": "projects.md"}
 SECTION_ORDER = ["基本信息", "教育", "工作", "论文", "项目", "其他"]
 TERMINAL = {"done", "failed"}
-ALLOWED_OPINION_EXT = {".docx", ".wps", ".txt", ".md"}
 PYENV = dict(os.environ, PYTHONIOENCODING="utf-8")
 RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -180,16 +181,19 @@ class TaskStore:
             raise ValueError("未知引擎: " + engine)
         prof = resolve_llm(model_id)
         apps = body.get("app"); ops = body.get("opinions") or []
-        if not isinstance(apps, dict) or ext_of(sanitize(apps.get("name", ""))) != ".docx":
-            raise ValueError("申报书必须为 .docx")
+        if not isinstance(apps, dict) or ext_of(sanitize(apps.get("name", ""))) not in ALLOWED_APP_EXT:
+            raise ValueError("申报书必须为 .docx 或数字版 .pdf")
         if not ops: raise ValueError("至少上传一份意见文档")
         for o in ops:
             if ext_of(sanitize(o.get("name", ""))) not in ALLOWED_OPINION_EXT:
-                raise ValueError("意见类型不支持: " + str(o.get("name")))
+                raise ValueError("意见类型不支持（Word / Excel / 图片 / txt / md）: " + str(o.get("name")))
         tid = rid(); d = self.tdir(tid)
         (d / "input").mkdir(parents=True, exist_ok=True)
         aname = sanitize(apps["name"])
-        (d / "input" / aname).write_bytes(__import__("base64").b64decode(apps.get("dataB64") or ""))
+        raw = __import__("base64").b64decode(apps.get("dataB64") or "")
+        if ext_of(aname) == ".pdf":
+            sniff_pdf(raw, aname)
+        (d / "input" / aname).write_bytes(raw)
         op_names = []
         for o in ops:
             n = sanitize(o["name"])
@@ -197,7 +201,8 @@ class TaskStore:
             op_names.append(n)
         t = {"id": tid, "dir": str(d), "engine": engine, "model": prof["id"], "modelLabel": prof["label"],
              "status": "queued", "createdAt": now_str(),
-             "app": {"name": aname, "no": app_no_of(aname)}, "opinions": [{"name": n} for n in op_names],
+             "app": {"name": aname, "no": app_no_of(aname), "workDocx": work_docx_name(aname)},
+             "opinions": [{"name": n} for n in op_names],
              "log": [], "outputs": [], "deliverables": [], "hasReport": False, "error": None, "finishedAt": None}
         if owner:
             t["owner"] = str(owner)
@@ -249,16 +254,29 @@ class TaskStore:
         work = Path(t["dir"]) / "work"
         work_input, txt_dir, out_dir, tmp_dir = work / "input", work / "txt", work / "output", work / "tmp"
         for d2 in (work_input, txt_dir, out_dir, tmp_dir): d2.mkdir(parents=True, exist_ok=True)
+        app_name = (t.get("app") or {}).get("name") or ""
+        work_docx = work_docx_name(app_name)
+        t.setdefault("app", {})["workDocx"] = work_docx
         for f in os.listdir(input_dir):
             shutil.copyfile(input_dir / f, work_input / f)  # 沙盒内副本，原件不动
             ext = ext_of(f)
             stem = f[: -len(ext)] if ext else f
             target = txt_dir / (stem + ".txt")
-            if ext in (".txt", ".md"):
-                shutil.copyfile(input_dir / f, target); continue
-            so, se, rc = await self._py([SCRIPTS_DIR / "sb_extract.py", input_dir / f, target])
-            if rc != 0: self.log(t, "提取失败 " + f + ": " + (se or so)[:200])
-            else: self.log(t, "已提取 " + f + " → txt/" + target.name)
+            try:
+                if f == app_name and ext == ".pdf":
+                    engine = await ensure_app_docx(work_input / f, work_input / work_docx)
+                    self.log(t, "数字 PDF 已转为 Word 工作稿 " + work_docx + "（" + str(engine) + "）")
+                    await extract_to_txt(work_input / work_docx, target)
+                else:
+                    await extract_to_txt(work_input / f, target)
+                self.log(t, "已提取 " + f + " → txt/" + target.name)
+            except Exception as e:
+                msg = str(e)[:240]
+                self.log(t, "提取失败 " + f + ": " + msg)
+                if f != app_name:
+                    raise ValueError("意见「" + f + "」提取失败：" + msg)
+                raise ValueError("申报书「" + f + "」提取失败：" + msg)
+        self.persist(t)
 
     async def _py(self, args, timeout=120):
         proc = await asyncio.create_subprocess_exec(PYEXE, *[str(a) for a in args],
@@ -352,7 +370,8 @@ class TaskStore:
     async def generate_plan(self, t):
         texts = self.read_prepared_texts(t)
         if not M.is_app_content(texts["appText"]):
-            raise ValueError("所选文件不像一份已填写的申报书（正文过短/未填写模板/缺封面关键字段），请检查是否选错文件")
+            extra = "。数字 PDF 转换后表格可能丢失，建议改传 Word（.docx）" if ext_of((t.get("app") or {}).get("name")) == ".pdf" else ""
+            raise ValueError("所选文件不像一份已填写的申报书（正文过短/未填写模板/缺封面关键字段），请检查是否选错文件" + extra)
         self.log(t, "使用模型 " + str(t.get("modelLabel") or t.get("model") or "默认"))
         self.log(t, "意见按章节分类中…")
         blocks = self.collect_opinion_blocks(texts)
@@ -746,8 +765,13 @@ class TaskStore:
 
             out_dir = Path(t["dir"]) / "work" / "output"; out_dir.mkdir(parents=True, exist_ok=True)
             stem = stem_of(t["app"]["name"])
+            src_docx = Path(t["dir"]) / "work" / "input" / work_docx_name((t.get("app") or {}).get("workDocx") or t["app"]["name"])
+            if src_docx.suffix.lower() != ".docx" or not src_docx.exists():
+                src_docx = Path(t["dir"]) / "work" / "input" / work_docx_name(t["app"]["name"])
+            if not src_docx.exists():
+                raise ValueError("没有可用于落盘的 Word 工作稿（数字 PDF 需先转换成 .docx）")
             out_docx = out_dir / (stem + "_修改后.docx"); bak_docx = out_dir / (stem + "_备份.docx")
-            so, se, rc = await self._py([SCRIPTS_DIR / "apply_edits.py", Path(t["dir"]) / "work" / "input" / t["app"]["name"], out_docx, bak_docx, plan_path], timeout=300)
+            so, se, rc = await self._py([SCRIPTS_DIR / "apply_edits.py", src_docx, out_docx, bak_docx, plan_path], timeout=300)
             if rc != 0:
                 t["status"] = "failed"; t["error"] = "编辑执行器失败：" + (se or so or "rc!=0")[:400]; return
 

@@ -4,7 +4,7 @@ import json, re, asyncio
 from pathlib import Path
 from urllib.parse import urlparse
 import httpx
-from .config import load_config, FILL_MARK
+from .config import load_config, FILL_MARK, httpx_trust_env
 from . import matcher as M
 
 PREFIX = "/api/external-read/v1"
@@ -43,8 +43,7 @@ def _client_timeout():
 
 
 def _trust_env(url: str) -> bool:
-    host = urlparse(url).hostname or ""
-    return host not in ("127.0.0.1", "localhost", "::1")
+    return httpx_trust_env()
 
 
 async def _get(path: str, params: dict | None = None) -> dict:
