@@ -91,6 +91,14 @@ def create_router(runner):
         except ValueError as e:
             raise HTTPException(400, str(e))
 
+    @router.post("/api/tasks/{tid}/retry")
+    def retry_task(tid: str, request: Request):
+        _guard_task(request, runner.get(tid))
+        try:
+            return {"id": runner.replan(tid)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
     @router.get("/api/tasks/{tid}/ext-files/{fid}")
     async def task_ext_file(tid: str, fid: str, request: Request):
         t = _guard_task(request, runner.get(tid))

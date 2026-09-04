@@ -62,9 +62,12 @@ app.include_router(admin_routes.router)
 app.include_router(feedback_routes.router)
 
 @app.get("/api/config")
-def api_config():
-    from .config import editor_config
-    return editor_config()
+def api_config(request: Request):
+    from .config import editor_config, frontend_config
+    u = getattr(request.state, "user", None) or {}
+    if u.get("role") == "admin":
+        return editor_config()
+    return frontend_config()
 
 def _require_admin(request: Request):
     u = getattr(request.state, "user", None)
@@ -110,7 +113,11 @@ async def api_config_probe(request: Request):
     if not isinstance(body, dict):
         body = {}
     from .llm import probe_models
-    return await probe_models(body.get("model"))
+    from .config import model_family
+    mid = body.get("model")
+    if (u or {}).get("role") != "admin":
+        mid = mid if model_family(str(mid or "")) == "gemini" else "gemini"
+    return await probe_models(mid)
 
 @app.get("/api/pool/health")
 async def api_pool_health():

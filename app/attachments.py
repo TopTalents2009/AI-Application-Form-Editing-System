@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import httpx
 from .config import load_config
 from . import papers as P
+from . import pool as POOL
 
 NEED_RE = re.compile(
     r"缺|缺少|缺失|未上传|未提供|未附|请补充|须补充|需补充|请上传|补交|补传|补齐|不清晰|"
@@ -19,14 +20,27 @@ KINDS = [
     {"id": "work_proof", "label": "工作证明", "keys": ("工作证明", "工作经历证明", "在职证明", "任职证明")},
     {"id": "intent", "label": "意向协议", "keys": ("意向协议", "意向书", "引进协议", "合同意向")},
     {"id": "equity", "label": "股权证明", "keys": ("股权证明", "企业股权")},
-    {"id": "paper", "label": "论文全文", "keys": ("论文全文", "论文pdf", "论文 pdf", "论文PDF", "论文附件", "论文材料", "论文扫描", "代表性论著", "需附全文")},
+    {"id": "paper", "label": "论文全文", "keys": ("论文全文", "论文pdf", "论文 pdf", "论文PDF", "论文附件", "论文材料", "论文扫描", "代表性论著", "需附全文", "科研成果")},
+    {"id": "photo", "label": "证件照", "keys": ("证件照", "一寸照", "白底照")},
+    {"id": "sign", "label": "电子签", "keys": ("电子签", "电子签名", "签字扫描", "签名扫描")},
+    {"id": "project", "label": "项目证明", "keys": ("项目证明", "项目材料", "项目扫描")},
 ]
+KIND_POOL_ID = {
+    "passport": "passport",
+    "id_doc": "passport",
+    "education": "edu",
+    "work_proof": "work",
+    "paper": "research",
+    "photo": "photo",
+    "sign": "sign",
+    "project": "project",
+}
 
 URL_KEYS = ("url", "file_url", "download_url", "pdf_url", "href", "link", "path", "file_path", "download")
 NAME_KEYS = ("filename", "file_name", "name", "title", "title_zh", "原始文件名", "文件名", "附件名称")
 KIND_KEYS = ("kind", "type", "category", "doc_type", "附件类型", "材料类型", "label", "分类")
 ID_KEYS = ("file_id", "fileId", "id", "attachment_id")
-PAPER_PATH = re.compile(r"paper|publication|论著|论文|pdf", re.I)
+PAPER_PATH = re.compile(r"paper|publication|论著|论文|著作|科研成果", re.I)
 EXT_OK = re.compile(r"\.(pdf|docx?|jpe?g|png|tif{1,2}|webp|zip)$", re.I)
 
 
@@ -117,6 +131,10 @@ def _walk_files(obj, path="", depth=0, acc=None):
 
 
 def _match_kind(file_item: dict, kind: dict) -> bool:
+    pk = str(file_item.get("poolKind") or "")
+    mapped = KIND_POOL_ID.get(kind["id"])
+    if pk and mapped:
+        return pk == mapped
     blob = " ".join(str(file_item.get(k) or "") for k in ("filename", "title", "kind_raw", "path", "doi"))
     if kind["id"] == "paper":
         if PAPER_PATH.search(blob) or file_item.get("doi"):
@@ -142,6 +160,65 @@ def _pool_files(snap: dict) -> list:
         seen.add(key)
         out.append(it)
     return out
+
+
+async def _talent_pack_files(snap: dict, app_no: str) -> tuple[list, list]:
+    acc, notes = [], []
+    if not load_config().get("poolConfigured"):
+        return acc, notes
+    ids = _attach_ids(snap, app_no)
+    if not ids:
+        notes.append("无法确定人才编号，未查人才库附件包")
+        return acc, notes
+    last_err = ""
+    for aid in ids:
+        try:
+            pack = await POOL.talent_files_detail(aid)
+        except POOL.PoolError as e:
+            last_err = "人才库附件包 attach_id=" + aid + "：" + e.code + " " + e.message
+            notes.append(last_err)
+            if e.code in ("NOT_CONFIGURED", "AUTH", "INVALID_API_KEY", "SCOPE_DENIED", "FORBIDDEN"):
+                break
+            continue
+        if not pack:
+            last_err = "人才库附件包 attach_id=" + aid + " 无文件"
+            notes.append(last_err)
+            continue
+        req_by_name = {}
+        for it in ((pack.get("required") or {}).get("items") or []):
+            if not isinstance(it, dict):
+                continue
+            hit = str(it.get("hit") or "").strip()
+            if hit:
+                req_by_name[hit] = it
+        n = 0
+        for f in pack.get("files") or []:
+            if not isinstance(f, dict) or str(f.get("type") or "file") == "dir":
+                continue
+            name = str(f.get("name") or "").strip()
+            rel = str(f.get("rel_path") or "").strip()
+            if not name or not rel:
+                continue
+            req = req_by_name.get(name) or {}
+            acc.append({
+                "url": POOL.talent_file_url(aid, rel),
+                "filename": name,
+                "title": name,
+                "kind_raw": str(req.get("label") or ""),
+                "file_id": rel,
+                "path": rel,
+                "doi": "",
+                "poolKind": str(req.get("id") or ""),
+            })
+            n += 1
+        if n:
+            notes.append("人才库附件包 attach_id=" + aid + " 共 " + str(n) + " 个文件")
+            break
+        last_err = "人才库附件包 attach_id=" + aid + " 列表为空"
+        notes.append(last_err)
+    if not acc and last_err and last_err not in notes:
+        notes.append(last_err)
+    return acc, notes
 
 
 def _attach_ids(snap: dict, app_no: str) -> list:
@@ -193,10 +270,12 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
     labels = [k["label"] for k in needed]
     result["needed"] = labels
     if not needed:
-        result["summary"] = "修改意见未点名缺失附件"
+        result["summary"] = "修改意见未提到缺失附件"
         return result
 
-    pool_files = _pool_files(snap)
+    pack_files, pack_notes = await _talent_pack_files(snap, app_no)
+    result["notes"] = list(result.get("notes") or []) + pack_notes
+    pool_files = pack_files + _pool_files(snap)
     known_urls = {str(v.get("url") or "") for v in (result.get("private") or {}).values() if v}
     by_kind = {lab: [] for lab in labels}
     for it in result.get("items") or []:
@@ -331,7 +410,7 @@ def leftover_lines(result: dict) -> list:
 
 def format_attach_prompt(result: dict) -> str:
     if not result or not result.get("needed"):
-        return "（修改意见未点名缺失护照/学历证明/论文全文等附件）"
+        return "（修改意见未提到缺失附件）"
     lines = ["## 缺失附件检索结果", "意见点名：" + "、".join(result.get("needed") or [])]
     items = result.get("items") or []
     if items:
@@ -382,6 +461,12 @@ def public_plan_block(result: dict) -> dict:
         "items": [{k: it.get(k) for k in ("id", "kind", "source", "filename", "title", "download", "found", "note")} for it in (result.get("items") or [])],
         "notes": result.get("notes") or [],
     }
+
+
+def public_attach_hit(result: dict) -> dict:
+    block = public_plan_block(result)
+    block["found"] = len(block.get("items") or [])
+    return block
 
 
 async def fetch_upstream(priv: dict):

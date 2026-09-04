@@ -6,9 +6,9 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.default.json"
 FILL_MARK = "填入"
-APP_VERSION = "2.3"
+APP_VERSION = "2.4"
 
-LLM_TEMPERATURE = 0.3
+LLM_TEMPERATURE = 0.1
 LLM_RETRIES = 4
 LLM_CONNECT_TIMEOUT = 15.0
 LLM_TIMEOUT_DEFAULT = 900.0
@@ -155,7 +155,7 @@ _MODEL_LABELS = {
 }
 DOUBAO_BASE = "https://ark.cn-beijing.volces.com/api/v3"
 DOUBAO_ID = "doubao-seed-2-0-mini-260428"
-COMPARE_FAMS = ("grok", "gemini", "doubao")
+COMPARE_FAMS = ("gemini",)
 FAM_TAGS = {"grok": "Grok", "gemini": "Gemini", "doubao": "火山"}
 OPINION_FIELDS = {"grok": "opinionGrok", "gemini": "opinionGemini", "doubao": "opinionDoubao"}
 
@@ -188,12 +188,14 @@ def engine_label() -> str:
     return ("大模型直连 · " + cfg["model"]) if cfg["configured"] else " 未配置：请填写 config.json"
 
 def _effort_for(mid: str, cfg: dict, explicit=None) -> str:
-    if explicit is not None:
+    if explicit is not None and str(explicit).strip():
         e = str(explicit or "").lower()
         return e if e in ("low", "medium", "high") else ""
     m = str(mid or "")
     if _SKIP_MODEL.search(m) or re.search(r"non-reasoning", m, re.I):
         return ""
+    if re.search(r"gemini", m, re.I):
+        return "medium"
     if re.search(r"grok-4|reasoning|multi-agent", m, re.I):
         return cfg.get("reasoningEffort") or "medium"
     return ""
@@ -274,6 +276,14 @@ def catalog_entries() -> list:
             except (TypeError, ValueError):
                 timeout = 0.0
         ready = bool(base and key) and FILL_MARK not in base
+        temp = None
+        if raw.get("temperature") not in (None, ""):
+            try:
+                temp = float(raw.get("temperature"))
+            except (TypeError, ValueError):
+                temp = None
+        if temp is None and model_family(mid) == "gemini":
+            temp = LLM_TEMPERATURE
         rows.append({
             "id": mid,
             "model": mid,
@@ -283,6 +293,7 @@ def catalog_entries() -> list:
             "reasoningEffort": _effort_for(mid, cfg, effort),
             "stream": stream,
             "timeoutSec": timeout,
+            "temperature": temp,
             "ready": ready,
         })
 
@@ -295,6 +306,21 @@ def catalog_entries() -> list:
 def llm_profiles() -> list:
     """可选模型（含密钥，仅后端使用）。"""
     return [p for p in catalog_entries() if p.get("ready")]
+
+def resolve_gemini(model_id=None) -> dict:
+    """计划与分类只用 Gemini；其它模型 id 会被忽略。"""
+    mid = str(model_id or "").strip()
+    if mid and model_family(mid) == "gemini":
+        try:
+            return resolve_llm(mid)
+        except ValueError:
+            pass
+    pair = compare_model_profiles()
+    g = pair.get("gemini") or {}
+    if g.get("ready") and g.get("id"):
+        return resolve_llm(g["id"])
+    raise ValueError("未配置 Gemini：请在管理后台填写 Gemini 地址和密钥")
+
 
 def resolve_llm(model_id=None) -> dict:
     cfg = load_config()
@@ -315,15 +341,21 @@ def resolve_llm(model_id=None) -> dict:
 def public_models() -> list:
     cfg = load_config()
     default_id = cfg.get("model") or ""
+    if model_family(default_id) != "gemini":
+        default_id = ""
     out = []
     for p in catalog_entries():
+        if model_family(p["id"]) != "gemini":
+            continue
         out.append({
             "id": p["id"],
             "label": p["label"],
-            "family": model_family(p["id"]),
+            "family": "gemini",
             "ready": bool(p.get("ready")),
             "default": p["id"] == default_id,
         })
+    if out and not any(m.get("default") for m in out):
+        out[0]["default"] = True
     return out
 
 def public_config() -> dict:
@@ -459,7 +491,8 @@ def _merge_gemini(raw: dict, gemini: dict):
         "baseUrl": "https://cdn.12ai.org/v1",
         "stream": True,
         "timeoutSec": 300,
-        "reasoningEffort": "",
+        "reasoningEffort": "medium",
+        "temperature": LLM_TEMPERATURE,
     }
     if gemini.get("id"):
         entry["id"] = str(gemini.get("id") or "").strip() or entry.get("id") or "gemini-3.7-flash"
@@ -476,7 +509,17 @@ def _merge_gemini(raw: dict, gemini: dict):
     if gemini.get("timeoutSec") not in (None, ""):
         entry["timeoutSec"] = _as_int(gemini.get("timeoutSec"), 300) or 300
     if gemini.get("reasoningEffort") is not None:
-        entry["reasoningEffort"] = str(gemini.get("reasoningEffort") or "")
+        e = str(gemini.get("reasoningEffort") or "").lower()
+        entry["reasoningEffort"] = e if e in ("low", "medium", "high") else "medium"
+    else:
+        entry["reasoningEffort"] = entry.get("reasoningEffort") or "medium"
+    if gemini.get("temperature") not in (None, ""):
+        try:
+            entry["temperature"] = float(gemini.get("temperature"))
+        except (TypeError, ValueError):
+            entry["temperature"] = LLM_TEMPERATURE
+    elif entry.get("temperature") in (None, ""):
+        entry["temperature"] = LLM_TEMPERATURE
     if idx is None:
         models.append(entry)
     else:
@@ -579,17 +622,28 @@ def editor_config() -> dict:
         stream = bool(p.get("stream")) if p else default_stream
         if not p:
             stream = default_stream
-        return {
+        effort = p.get("reasoningEffort") or ""
+        if not effort and fam == "grok":
+            effort = cfg.get("reasoningEffort") or "medium"
+        if fam == "gemini":
+            effort = effort or "medium"
+        temp = p.get("temperature")
+        if fam == "gemini" and temp in (None, ""):
+            temp = LLM_TEMPERATURE
+        out = {
             "id": p.get("id") or fallback_id,
             "label": p.get("label") or fallback_label,
             "family": fam,
             "baseUrl": base,
             "hasKey": bool(key),
-            "reasoningEffort": p.get("reasoningEffort") or (cfg.get("reasoningEffort") if fam == "grok" else ""),
+            "reasoningEffort": effort,
             "stream": stream,
             "timeoutSec": timeout,
             "ready": bool(p.get("ready")),
         }
+        if fam == "gemini":
+            out["temperature"] = temp
+        return out
 
     grok = pack("grok", "grok-4.6", "Grok", False, LLM_TIMEOUT_DEFAULT)
     gemini = pack("gemini", "gemini-3.7-flash", "Gemini", True, 300)
@@ -604,8 +658,30 @@ def editor_config() -> dict:
             "mode": cfg.get("poolMode") or "all",
             "configured": bool(cfg.get("poolConfigured")),
         },
-        "classifyModel": cfg.get("model") or grok["id"],
+        "classifyModel": (cfg.get("model") if model_family(cfg.get("model") or "") == "gemini" else "") or gemini["id"],
         "hasDefault": DEFAULT_CONFIG_PATH.exists(),
     }
-    pub["configured"] = bool(grok.get("ready") or gemini.get("ready") or doubao.get("ready") or cfg.get("configured"))
+    pub["configured"] = bool(gemini.get("ready") or grok.get("ready") or doubao.get("ready") or cfg.get("configured"))
     return pub
+
+
+def frontend_config() -> dict:
+    """用户前端：只暴露 Gemini，不含 Grok / 火山接入参数。"""
+    full = editor_config()
+    gem = ((full.get("edit") or {}).get("gemini")) or {}
+    models = public_models()
+    default_id = next((m["id"] for m in models if m.get("default")), gem.get("id") or "")
+    edit = {
+        "gemini": gem,
+        "classifyModel": default_id,
+        "hasDefault": bool((full.get("edit") or {}).get("hasDefault")),
+    }
+    return {
+        "version": full.get("version") or APP_VERSION,
+        "configured": bool(gem.get("ready") or full.get("configured")),
+        "configError": full.get("configError") or "",
+        "models": models,
+        "engines": [{"id": m["id"], "label": m["label"]} for m in models] or [{"id": default_id, "label": "Gemini"}],
+        "llm": {"model": default_id},
+        "edit": edit,
+    }

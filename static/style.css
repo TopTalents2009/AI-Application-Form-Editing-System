@@ -348,6 +348,7 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 #taskTable .namecell.open { align-items: flex-start; }
 #taskTable .col-st { padding-right: 8px; }
 #taskTable .col-act { text-align: right; padding-left: 4px; }
+#taskTable .col-act button + button { margin-left: 6px; }
 thead th {
   text-align: left; padding: 9px 10px; color: var(--sub); font-weight: 600;
   background: #f7f9fc; border-bottom: 1px solid var(--line);
@@ -361,6 +362,18 @@ td .tname {
   display: block; flex: 1; min-width: 0; max-width: none;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.mode-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  padding: 1px 7px;
+  border-radius: 4px;
+  line-height: 1.5;
+  font-family: Consolas, "Segoe UI", sans-serif;
+}
+.mode-QM { background: #e8f1ff; color: #1d5cc0; }
+.mode-HJ { background: #fff3e0; color: #c45c12; }
 .empty { color: #98a1b3; font-size: 13px; text-align: center; padding: 26px 0 10px; }
 .empty::before { content: "🗂️ "; }
 
@@ -394,7 +407,7 @@ button.mini:hover { border-color: var(--brand2); background: #f0f6ff; }
 }
 .book-pager.hidden { display: none; }
 .page-mid { flex: 1; min-width: 0; text-align: center; }
-.page-title { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-title { display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-sub { font-size: 12px; color: var(--sub); margin-top: 2px; }
 .book-pager button { flex-shrink: 0; }
 .book-pager button:disabled { opacity: .4; cursor: not-allowed; }
@@ -578,8 +591,11 @@ button.ghost:hover { border-color: var(--brand2); color: var(--brand); }
 .delbtn:hover { background:#f9d7d4; }
 .addrow { margin-top:8px; }
 .lo-ta { width:100%; min-height:70px; font-size:12.5px; padding:8px 10px; border:1px solid #d7dfeb; border-radius:8px; font-family:inherit; resize:vertical; }
-.att-box { margin:10px 0 12px; padding:8px 12px; background:#f6faf4; border:1px solid #d5e6d4; border-radius:8px; }
-.att-h { font-size:12.5px; color:#2f6b38; font-weight:600; margin-bottom:4px; }
+.att-box { margin:10px 0 12px; padding:10px 12px; background:#f6faf4; border:1px solid #d5e6d4; border-radius:8px; }
+.att-h { font-size:13px; color:#2f6b38; font-weight:600; margin-bottom:6px; }
 .att-ul { margin:0; padding-left:18px; font-size:12.5px; line-height:1.8; }
 .att-ul em { font-style:normal; color:#7a8699; font-size:11.5px; }
 .att-k { display:inline-block; min-width:4.5em; color:#33415e; }
+.att-empty { font-size:12.5px; color:#7a8699; }
+.att-miss { font-size:12.5px; color:#8a5a2b; }
+#doneAttBox { margin-top:4px; }

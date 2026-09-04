@@ -8,7 +8,7 @@ from .llm import chat, LlmError
 
 PYENV = dict(os.environ, PYTHONIOENCODING="utf-8")
 
-WORD_EXT = {".docx", ".wps"}
+WORD_EXT = {".docx", ".docm", ".wps"}
 TEXT_EXT = {".txt", ".md"}
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff", ".bmp"}
@@ -49,12 +49,20 @@ def is_opinion_ext(name: str) -> bool:
     return ext_of(name) in ALLOWED_OPINION_EXT
 
 
+_SKIP_CELL = re.compile(r"^(True|False|#REF!|#VALUE!|#N/A|#DIV/0!|#NAME\?)$", re.I)
+
+
 def _cell_str(v) -> str:
     if v is None:
         return ""
+    if isinstance(v, bool):
+        return ""
     if isinstance(v, float) and v == int(v):
         return str(int(v))
-    return str(v).strip()
+    s = str(v).strip()
+    if not s or _SKIP_CELL.match(s):
+        return ""
+    return s
 
 
 def _rows_to_text(title: str, rows) -> str:
@@ -62,6 +70,8 @@ def _rows_to_text(title: str, rows) -> str:
     n = 0
     for row in rows or []:
         cells = [_cell_str(c) for c in (row or [])]
+        while cells and not cells[0]:
+            cells.pop(0)
         while cells and not cells[-1]:
             cells.pop()
         if not any(cells):

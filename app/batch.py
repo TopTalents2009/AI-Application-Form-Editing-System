@@ -2,11 +2,13 @@
 from __future__ import annotations
 import asyncio, base64, json, os, re, secrets, time
 from pathlib import Path
-from .config import BATCHES_DIR, load_config, LLM_TIMEOUT_MATCH, atomic_replace, resolve_llm
+from .config import BATCHES_DIR, load_config, LLM_TIMEOUT_MATCH, atomic_replace, resolve_gemini
 from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
+from .form_kind import classify as classify_form
 from .opinion_extract import ALLOWED_OPINION_EXT, ensure_txt as extract_to_txt
-from .pdf_app import ALLOWED_APP_EXT, ensure_app_docx, sniff_pdf, work_docx_name
+from .pdf_app import ALLOWED_APP_EXT, APP_EXT_HINT, ensure_app_docx, sniff_pdf, work_docx_name
+from .inline_opinions import NO_OPINION_MSG, extract_inline_opinion_text, split_inline_units
 
 def _rid(): return "b" + format(int(time.time() * 1000), "x") + "-" + secrets.token_hex(3)
 def _sanitize(name): 
@@ -58,8 +60,7 @@ class BatchStore:
         if not apps: raise ValueError("至少上传一份申报书")
         for a in apps:
             if _ext(_sanitize(a.get("name", ""))) not in ALLOWED_APP_EXT:
-                raise ValueError("申报书必须为 .docx 或数字版 .pdf: " + str(a.get("name")))
-        if not ops: raise ValueError("至少上传一份意见文档")
+                raise ValueError("申报书必须为 " + APP_EXT_HINT + ": " + str(a.get("name")))
         for o in ops:
             if _ext(_sanitize(o.get("name", ""))) not in ALLOWED_OPINION_EXT:
                 raise ValueError("意见类型不支持（Word / Excel / 图片 / txt / md）: " + str(o.get("name")))
@@ -83,7 +84,7 @@ class BatchStore:
         if eng and eng != "api" and not model_id:
             model_id = eng
         try:
-            prof = resolve_llm(model_id)
+            prof = resolve_gemini(model_id)
         except ValueError:
             prof = {"id": "", "label": ""}
         b = {"id": bid, "dir": str(d), "status": "extracting", "createdAt": now_str(),
@@ -126,19 +127,86 @@ class BatchStore:
                     op_texts[n] = out.read_text(encoding="utf-8")
                 except Exception as e:
                     self.log(b, "提取失败 " + n + ": " + str(e)[:200])
+            if not b["opinions"]:
+                inline_ops = {}
+                for n in b["apps"]:
+                    src = Path(b["dir"]) / "input" / n
+                    if _ext(n) == ".pdf":
+                        cand = conv_dir / work_docx_name(n)
+                        if cand.exists():
+                            src = cand
+                    text, n_cmt = extract_inline_opinion_text(src)
+                    if not text:
+                        self.log(b, "申报书「" + n + "」" + NO_OPINION_MSG)
+                        continue
+                    op_name = Path(n).stem + "（标注意见）.txt"
+                    (txt_dir / op_name).write_text(text, encoding="utf-8")
+                    op_texts[op_name] = text
+                    inline_ops[n] = (op_name, text, n_cmt)
+                    self.log(b, "申报书「" + n + "」标注栏 " + str(n_cmt) + " 条")
+                if not inline_ops:
+                    b["status"] = "failed"
+                    b["error"] = NO_OPINION_MSG
+                    self.persist(b)
+                    return
+                app_kinds = {}
+                for n in b["apps"]:
+                    tx = app_texts.get(n, "")
+                    if not M.is_app_content(tx):
+                        reason = "无法提取正文，可能不是 Word / Excel / 数字PDF 申报书" if not tx else "不像一份已填写的申报书（正文过短、疑似未填写模板或缺封面关键字段）"
+                        b["status"] = "failed"
+                        b["error"] = "文件「" + n + "」" + reason + "。请确认没有把意见文档、空白模板或其它文件误选进申报书栏。"
+                        self.persist(b)
+                        return
+                    kind = classify_form(tx, n)
+                    if kind:
+                        app_kinds[n] = kind
+                b["appKinds"] = app_kinds
+                profiles = [M.extract_book_profile(n, app_texts[n]) for n in b["apps"] if n in app_texts]
+                books = []
+                for p in profiles:
+                    n = p["file"]
+                    matched = []
+                    if n in inline_ops:
+                        op_name, text, _n_cmt = inline_ops[n]
+                        units = split_inline_units(text) or ([text] if text.strip() else [])
+                        for bi, blk in enumerate(units):
+                            matched.append({
+                                "opName": op_name, "blockIdx": bi,
+                                "head": (blk.split("\n")[0] if blk else "")[:50],
+                                "excerpt": " ".join(blk.split())[:180],
+                                "text": blk, "score": 100, "evidence": "申报书标注栏",
+                            })
+                    books.append({
+                        "file": p["file"], "name": p["nameFull"], "ent": p["ent"],
+                        "nums": p["nums"], "matched": matched,
+                    })
+                b["match"] = {"books": books, "unmatched": [], "shared": [], "genericPool": []}
+                b["status"] = "ready"
+                hit = sum(1 for x in books if x["matched"])
+                self.log(b, "未上传意见文档，已按各书标注栏配对 " + str(hit) + " 本")
+                self.persist(b)
+                return
             if not op_texts:
                 b["status"] = "failed"
                 b["error"] = "意见文档全部提取失败（Excel 无法解析，或图片需 Gemini 识字失败）"
                 self.persist(b)
                 return
             # 内容级校验：每本上传的书必须真的像已填写申报书
+            app_kinds = {}
             for n in b["apps"]:
                 tx = app_texts.get(n, "")
                 if not M.is_app_content(tx):
-                    reason = "无法提取正文，可能不是 Word/.数字PDF 申报书" if not tx else "不像一份已填写的申报书（正文过短、疑似未填写模板或缺封面关键字段）"
+                    reason = "无法提取正文，可能不是 Word / Excel / 数字PDF 申报书" if not tx else "不像一份已填写的申报书（正文过短、疑似未填写模板或缺封面关键字段）"
                     b["status"] = "failed"
                     b["error"] = "文件「" + n + "」" + reason + "。请确认没有把意见文档、空白模板或其它文件误选进申报书栏。"
                     self.persist(b); return
+                kind = classify_form(tx, n)
+                if kind:
+                    app_kinds[n] = kind
+            b["appKinds"] = app_kinds
+            if app_kinds:
+                self.log(b, "申报书模板：" + "；".join(n + "=" + k for n, k in app_kinds.items()))
             b["status"] = "matching"; self.persist(b)
             profiles = [M.extract_book_profile(n, app_texts[n]) for n in b["apps"] if n in app_texts]
             result = M.match_batch(profiles, [{"name": n, "text": t} for n, t in op_texts.items()])
@@ -239,8 +307,12 @@ class BatchStore:
                 for g in (match.get("genericPool") or []):
                     segs.append({"name": _sanitize(Path(g["opName"]).stem) + "__g" + str(g["blockIdx"]) + ".txt",
                                  "content": "【通用规范条款 | 来源: " + g["opName"] + "】" + chr(10) + _seg_body(g)})
+            app_payload = {"name": book["file"], "dataB64": base64.b64encode((Path(b["dir"]) / "input" / book["file"]).read_bytes()).decode()}
+            kind = str((b.get("appKinds") or {}).get(book["file"]) or "")
+            if kind:
+                app_payload["mode"] = kind
             payload = {"engine": "api", "model": b.get("model") or "", "batchId": bid,
-                       "app": {"name": book["file"], "dataB64": base64.b64encode((Path(b["dir"]) / "input" / book["file"]).read_bytes()).decode()},
+                       "app": app_payload,
                        "opinions": [{"name": s["name"], "dataB64": base64.b64encode(s["content"].encode("utf-8")).decode()} for s in segs]}
             t = self.runner.create(payload, owner=b.get("owner"))
             self.runner.enqueue(t["id"])

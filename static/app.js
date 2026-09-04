@@ -31,6 +31,20 @@ function ensurePoll() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(pollDetail, 1500);
 }
+function retryTask(id, btn) {
+  if (!id) return Promise.reject(new Error("任务不存在"));
+  if (btn) btn.disabled = true;
+  return fetch("/api/tasks/" + id + "/retry", { method: "POST" }).then(readJson).then(function () {
+    if (String(currentDetail) === String(id)) {
+      resetPlanView();
+      ensurePoll();
+      pollDetail();
+    }
+    refreshList();
+  }).finally(function () {
+    if (btn) btn.disabled = false;
+  });
+}
 
 /* ---------- model config ---------- */
 var currentCfg = null;
@@ -40,13 +54,9 @@ var OP_EMPTY = '（该模型未给出对应修改）';
 var OP_LEGACY = '（该任务生成时尚未做多模型对照）';
 function modelList(cfg) {
   var e = cfg && cfg.edit;
-  var rows = [];
-  if (e && e.grok) rows.push(e.grok);
-  if (e && e.gemini) rows.push(e.gemini);
-  if (e && e.doubao) rows.push(e.doubao);
-  if (rows.length) return rows;
-  if (cfg && cfg.models && cfg.models.length) return cfg.models;
-  return (cfg && cfg.engines) || [];
+  if (e && e.gemini) return [e.gemini];
+  var rows = (cfg && cfg.models) || (cfg && cfg.engines) || [];
+  return rows.filter(function (m) { return modelFamily(m.id || m.label) === 'gemini'; });
 }
 function modelFamily(id) {
   var s = String(id || '');
@@ -93,22 +103,21 @@ function cfgField(id, label, value, extra) {
 }
 function hydrateDraft(cfg) {
   var e = (cfg && cfg.edit) || {};
-  cfgDraft.grok = Object.assign({ id: 'grok-4.6', label: 'Grok', timeoutSec: 900, stream: false }, e.grok || {});
-  cfgDraft.gemini = Object.assign({ id: 'gemini-3.7-flash', label: 'Gemini', timeoutSec: 300, stream: true }, e.gemini || {});
-  cfgDraft.doubao = Object.assign({
-    id: 'doubao-seed-2-0-mini-260428',
-    label: '火山',
-    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+  cfgDraft.gemini = Object.assign({
+    id: 'gemini-3.7-flash',
+    label: 'Gemini',
     timeoutSec: 300,
-    stream: true
-  }, e.doubao || {});
-  cfgDraft.classifyModel = e.classifyModel || (e.grok && e.grok.id) || 'grok-4.6';
-  if (!cfgEditId) cfgEditId = cfgDraft.classifyModel || cfgDraft.grok.id;
+    stream: true,
+    reasoningEffort: 'medium',
+    temperature: 0.1
+  }, e.gemini || {});
+  cfgDraft.classifyModel = e.classifyModel || cfgDraft.gemini.id || 'gemini-3.7-flash';
+  if (!cfgEditId) cfgEditId = cfgDraft.gemini.id;
 }
 function readFormIntoDraft() {
   if (!$('cfgId')) return;
-  var fam = modelFamily(cfgEditId);
-  var d = Object.assign({}, cfgDraft[fam] || {});
+  var fam = 'gemini';
+  var d = Object.assign({}, cfgDraft.gemini || {});
   d.id = ($('cfgId').value || '').trim();
   d.baseUrl = ($('cfgBase').value || '').trim();
   var key = ($('cfgKey') && $('cfgKey').value || '').trim();
@@ -117,32 +126,29 @@ function readFormIntoDraft() {
   d.timeoutSec = Number($('cfgTimeout') && $('cfgTimeout').value) || d.timeoutSec || 0;
   d.stream = !!( $('cfgStream') && $('cfgStream').checked );
   if ($('cfgEffort')) d.reasoningEffort = $('cfgEffort').value;
+  if ($('cfgTemp')) d.temperature = Number($('cfgTemp').value);
   cfgDraft[fam] = d;
   cfgEditId = d.id || cfgEditId;
 }
 function renderCfgForm() {
   var form = $('cfgForm');
   if (!form) return;
-  var fam = modelFamily(cfgEditId);
-  var d = cfgDraft[fam] || {};
-  var title = d.label || (fam === 'gemini' ? 'Gemini' : (fam === 'doubao' ? '火山' : 'Grok'));
+  var d = cfgDraft.gemini || {};
+  var title = d.label || 'Gemini';
   var html = '<div class="cfg-block' + (d.ready ? '' : ' warn') + '"><h3>' + esc(title) + ' 接入参数</h3><div class="cfg-grid">';
   html += cfgField('cfgId', '模型 id', d.id || '');
-  if (fam === 'grok') {
-    html += cfgField('cfgEffort', '思考长度', d.reasoningEffort || 'medium', {
-      type: 'select',
-      options: [['low', '短（low）'], ['medium', '中（medium）'], ['high', '长（high）']]
-    });
-  } else {
-    html += cfgField('cfgTimeout', '超时（秒）', d.timeoutSec || 300, { type: 'number' });
-  }
+  html += cfgField('cfgEffort', '思考强度', d.reasoningEffort || 'medium', {
+    type: 'select',
+    options: [['low', '短（low）'], ['medium', '中（medium）'], ['high', '长（high）']]
+  });
+  html += cfgField('cfgTimeout', '超时（秒）', d.timeoutSec || 300, { type: 'number' });
   html += cfgField('cfgBase', '请求地址', d.baseUrl || '', { span2: true });
   html += cfgField('cfgKey', '密钥', '', {
     span2: true,
     type: 'password',
     placeholder: d.hasKey ? '已配置，留空则保持不变' : '未配置，请填写密钥'
   });
-  if (fam === 'grok') html += cfgField('cfgTimeout', '超时（秒）', d.timeoutSec || 900, { type: 'number' });
+  html += cfgField('cfgTemp', '温度', d.temperature == null ? 0.1 : d.temperature, { type: 'number' });
   html += cfgField('cfgStream', '流式', !!d.stream, { type: 'checkbox' });
   html += '</div><div class="cfg-status ' + (d.ready ? 'ok' : 'bad') + '">' +
     (d.ready ? '已就绪' : '未配置：保存前请填写请求地址和密钥') + '</div></div>';
@@ -261,7 +267,9 @@ function restoreCfg() {
 function renderProbe(res) {
   var box = $('probeBox');
   if (!box) return;
-  var rows = (res && res.results) || [];
+  var rows = ((res && res.results) || []).filter(function (r) {
+    return /gemini/i.test(String(r.id || r.label || ''));
+  });
   if (!rows.length) {
     box.hidden = false;
     box.innerHTML = '<div class="p-row p-bad">' + esc((res && res.error) || '没有可检测的模型') + '</div>';
@@ -277,7 +285,7 @@ function renderProbe(res) {
 function probeModels() {
   var btn = $('cfgProbeBtn');
   var box = $('probeBox');
-  if (box) { box.hidden = false; box.innerHTML = '<div class="p-row">正在检测 Grok / Gemini / 火山…</div>'; }
+  if (box) { box.hidden = false; box.innerHTML = '<div class="p-row">正在检测 Gemini…</div>'; }
   if (btn) btn.disabled = true;
   setCfgMsg(false, '');
   fetch('/api/config/probe', {
@@ -342,12 +350,13 @@ function chip(name, bad, hint, kind, idx) {
   }
 function isDocx(name) { return /\.docx$/i.test(String(name || '')); }
 function isPdf(name) { return /\.pdf$/i.test(String(name || '')); }
-function isAppFile(name) { return isDocx(name) || isPdf(name); }
+function isAppFile(name) { return /\.(docx|docm|wps|xlsx|xlsm|xls|pdf)$/i.test(String(name || '')); }
+function isEditedOut(name) { return /_修改后\.(docx|docm|wps|xlsx|xlsm|xls)$/i.test(String(name || '')); }
 function opExtKind(name) {
   var n = String(name || '');
   if (/\.(jpe?g|png|webp|gif|tiff?|bmp)$/i.test(n)) return 'image';
   if (/\.(xlsx|xlsm|xls|csv)$/i.test(n)) return 'excel';
-  if (/\.(docx|wps)$/i.test(n)) return 'word';
+  if (/\.(docx|docm|wps)$/i.test(n)) return 'word';
   if (/\.(txt|md)$/i.test(n)) return 'text';
   return '';
 }
@@ -359,7 +368,7 @@ function auditAppFiles(fileList) {
       good.push(f);
       if (/意见/.test(f.name)) badNames.push(f.name + '（名称含“意见”，疑似选到了修改意见文档）');
     } else {
-      badNames.push(f.name + '（非 .docx / 数字 PDF）');
+      badNames.push(f.name + '（非 Word / Excel / 数字 PDF）');
     }
   });
   return { good: good, badNames: badNames };
@@ -385,7 +394,7 @@ function renderAppChips() {
   el.innerHTML = pickedApps.map(function (f, i) {
     var bad = !isAppFile(f.name);
     var warnOp = /意见/.test(f.name);
-    var hint = bad ? '非 .docx/.pdf' : (isPdf(f.name) ? '数字PDF·转Word后修改' : (warnOp ? '名称含“意见”' : ''));
+    var hint = bad ? '非 Word/Excel/PDF' : (isPdf(f.name) ? '数字PDF·转Word后修改' : (warnOp ? '名称含“意见”' : ''));
     return chip(f.name, bad || warnOp, hint, 'app', i);
   }).join('');
 }
@@ -514,8 +523,30 @@ function asSib(t) {
   return {
     id: t.id,
     status: t.status,
-    appName: (typeof t.app === 'string' ? t.app : (t.app && t.app.name) || t.appName || '')
+    appName: (typeof t.app === 'string' ? t.app : (t.app && t.app.name) || t.appName || ''),
+    mode: formModeOf(t)
   };
+}
+function formModeOf(t) {
+  if (!t) return '';
+  var m = String(t.mode || (t.app && t.app.mode) || '').toUpperCase();
+  return (m === 'QM' || m === 'HJ') ? m : '';
+}
+function modeBadge(mode) {
+  var m = String(mode || '').toUpperCase();
+  if (m !== 'QM' && m !== 'HJ') return '';
+  return '<span class="mode-tag mode-' + m + '">' + m + '</span>';
+}
+function modeBadges(modes) {
+  var seen = {}, html = '';
+  (modes || []).forEach(function (m) {
+    m = String(m || '').toUpperCase();
+    if ((m === 'QM' || m === 'HJ') && !seen[m]) {
+      seen[m] = true;
+      html += modeBadge(m);
+    }
+  });
+  return html;
 }
 function rowKey(row) {
   if (row.batchId) return 'b:' + row.batchId;
@@ -524,7 +555,7 @@ function rowKey(row) {
 function booksOf(row) {
   if (row && row.books && row.books.length) return row.books;
   if (row && row.sibs && row.sibs.length) return row.sibs.map(asSib);
-  if (row && row.kind === 'task') return [{ id: row.id, appName: row.name, status: row.status }];
+  if (row && row.kind === 'task') return [{ id: row.id, appName: row.name, status: row.status, mode: row.mode || '' }];
   return [];
 }
 function paintNameCell(tr, row) {
@@ -540,13 +571,14 @@ function paintNameCell(tr, row) {
   if (row.count > 1) {
     lis = '<ul class="tbooks' + (open ? '' : ' hidden') + '">';
     books.forEach(function (b, i) {
-      lis += '<li data-i="' + i + '"><span class="tbook-name" title="' + escAttr(b.appName || '') + '">' + esc(b.appName || '未命名') + '</span>';
+      lis += '<li data-i="' + i + '">' + modeBadge(b.mode) + '<span class="tbook-name" title="' + escAttr(b.appName || '') + '">' + esc(b.appName || '未命名') + '</span>';
       if (b.status) lis += '<span class="badge st-' + escAttr(b.status) + '">' + esc(statusText(b.status)) + '</span>';
       lis += '</li>';
     });
     lis += '</ul>';
   }
-  td.innerHTML = '<div class="namecell' + (open ? ' open' : '') + '"><span class="tname" title="' + escAttr(row.title || row.name || '') + '">' + esc(row.name || '') + '</span>' + extra + lis + '</div>';
+  var rowModes = (row.modes && row.modes.length) ? row.modes : (books.map(function (b) { return b.mode; }).concat([row.mode]));
+  td.innerHTML = '<div class="namecell' + (open ? ' open' : '') + '">' + modeBadges(rowModes) + '<span class="tname" title="' + escAttr(row.title || row.name || '') + '">' + esc(row.name || '') + '</span>' + extra + lis + '</div>';
   var btn = td.querySelector('.tcount-btn');
   var tname = td.querySelector('.tname');
   function toggle(ev) {
@@ -593,6 +625,40 @@ function openBookFromRow(row, i) {
   updatePager();
   if (row.id) showDetail(row.id);
 }
+function failedIdsOf(row) {
+  if (!row) return [];
+  if (row.kind === 'task' && row.status === 'failed' && row.id) return [row.id];
+  var sibs = row.sibs || row.books || [];
+  return sibs.filter(function (t) { return t && t.id && t.status === 'failed'; }).map(function (t) { return t.id; });
+}
+function actHtml(row) {
+  var h = '<button type="button" class="mini" data-act="view">查看</button>';
+  var n = failedIdsOf(row).length;
+  if (n) h += '<button type="button" class="mini" data-act="retry">' + (n > 1 ? '重试失败 ' + n + ' 本' : '重试') + '</button>';
+  return h;
+}
+function bindRowAct(tr) {
+  var cell = tr.querySelector('.col-act');
+  if (!cell) return;
+  cell.onclick = function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('button') : null;
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    var row = tr._row;
+    if (btn.getAttribute('data-act') === 'retry') {
+      var ids = failedIdsOf(row);
+      if (!ids.length) return;
+      if (!confirm(ids.length > 1 ? ('将重试 ' + ids.length + ' 本失败的申报书，确定？') : '将重新跑一遍该任务，确定？')) return;
+      btn.disabled = true;
+      Promise.all(ids.map(function (id) { return retryTask(id); }))
+        .catch(function (e) { alert(e.message || String(e)); })
+        .finally(function () { btn.disabled = false; refreshList(); });
+      return;
+    }
+    openListRow(row);
+  };
+}
 function renderRow(row, tb) {
   var tr = document.createElement('tr');
   tr.setAttribute('data-key', rowKey(row));
@@ -601,9 +667,9 @@ function renderRow(row, tb) {
     '<td class="col-time">' + esc(row.createdAt) + '</td>' +
     '<td class="col-name"></td>' +
     '<td class="col-st"><span class="badge st-' + escAttr(row.status) + '">' + esc(statusText(row.status)) + '</span></td>' +
-    '<td class="col-act"><button type="button" class="mini">查看</button></td>';
+    '<td class="col-act">' + actHtml(row) + '</td>';
   paintNameCell(tr, row);
-  tr.querySelector('.col-act button').onclick = function () { openListRow(tr._row); };
+  bindRowAct(tr);
   if (tb) tb.appendChild(tr);
   return tr;
 }
@@ -620,6 +686,12 @@ function updateRow(tr, row) {
     var tx = statusText(row.status);
     if (badge.className !== cls) badge.className = cls;
     if (badge.textContent !== tx) badge.textContent = tx;
+  }
+  var act = tr.querySelector('.col-act');
+  var html = actHtml(row);
+  if (act && act.innerHTML !== html) {
+    act.innerHTML = html;
+    bindRowAct(tr);
   }
 }
 function patchList(tb, rows) {
@@ -682,6 +754,7 @@ function buildListRows(tasks, batches) {
   (batches || []).forEach(function (b) {
     if (grouped[b.id] && grouped[b.id].length) return;
     var apps = b.apps || [];
+    var kinds = b.appKinds || {};
     rows.push({
       kind: 'batch-pending',
       createdAt: b.createdAt,
@@ -689,7 +762,8 @@ function buildListRows(tasks, batches) {
       name: apps[0] || '批次',
       title: apps.join('、'),
       count: apps.length,
-      books: apps.map(function (n) { return { id: '', appName: n, status: b.status }; }),
+      books: apps.map(function (n) { return { id: '', appName: n, status: b.status, mode: kinds[n] || '' }; }),
+      modes: apps.map(function (n) { return kinds[n] || ''; }),
       batchId: b.id
     });
   });
@@ -710,6 +784,7 @@ function buildListRows(tasks, batches) {
       title: sibs.map(function (x) { return x.app && x.app.name; }).join('、'),
       count: sibs.length,
       books: sibs.map(asSib),
+      modes: sibs.map(formModeOf),
       sibs: sibs,
       batchId: bid,
       id: first.id
@@ -724,6 +799,8 @@ function buildListRows(tasks, batches) {
       name: t.app && t.app.name,
       title: t.app && t.app.name,
       count: 1,
+      mode: formModeOf(t),
+      modes: [formModeOf(t)],
       id: t.id
     });
   });
@@ -787,7 +864,7 @@ function lnClass(msg) {
 }
 function renderDetail(t) {
   if (currentSiblings) {
-    currentSiblings.forEach(function (s) { if (s.id === t.id) { s.status = t.status; if (t.app && t.app.name) s.appName = t.app.name; } });
+    currentSiblings.forEach(function (s) { if (s.id === t.id) { s.status = t.status; if (t.app && t.app.name) s.appName = t.app.name; if (formModeOf(t)) s.mode = formModeOf(t); } });
     var idx = -1;
     currentSiblings.forEach(function (s, i) { if (s.id === t.id) idx = i; });
     if (idx >= 0) currentPage = idx;
@@ -796,10 +873,23 @@ function renderDetail(t) {
   renderStepper(t.status);
   $('detailId').textContent = t.id;
   var errLine = t.error ? '<br>错误：<span style="color:#c5221f">' + esc(t.error) + '</span>' : '';
+  var retryLine = t.status === 'failed'
+    ? '　<button type="button" class="mini" id="retryTaskBtn">重试</button><span id="retryErr" class="err"></span>'
+    : '';
   $('detailMeta').innerHTML =
     '状态：<b>' + statusText(t.status) + '</b>　·　创建：' + t.createdAt +
     (t.model ? '　·　模型：' + esc(t.modelLabel || t.model) : '') +
-    (t.finishedAt ? '　·　结束：' + t.finishedAt : '') + errLine;
+    (t.finishedAt ? '　·　结束：' + t.finishedAt : '') + errLine + retryLine;
+  var retryBtn = $('retryTaskBtn');
+  if (retryBtn) {
+    retryBtn.onclick = function () {
+      var errEl = $('retryErr');
+      if (errEl) errEl.textContent = '';
+      retryTask(t.id, retryBtn).catch(function (e) {
+        if (errEl) errEl.textContent = e.message || String(e);
+      });
+    };
+  }
 
   renderPlanSection(t);
   var box = $('logBox');
@@ -814,6 +904,7 @@ function renderDetail(t) {
   var shown = (t.deliverables && t.deliverables.length) ? t.deliverables : (t.outputs || []);
   var ul = $('outList');
   ul.innerHTML = '';
+  renderDoneAttachments(t);
   shown.forEach(function (o) {
     var ic = '';
     var li = document.createElement('li');
@@ -883,7 +974,8 @@ function updatePager() {
   el.classList.remove('hidden');
   var i = currentPage;
   var s = currentSiblings[i] || {};
-  $('pageTitle').textContent = s.appName || s.id || '';
+  var titleEl = $('pageTitle');
+  titleEl.innerHTML = modeBadge(s.mode) + '<span>' + esc(s.appName || s.id || '') + '</span>';
   $('pageInfo').textContent = '第 ' + (i + 1) + ' / ' + currentSiblings.length + ' 本　' + statusText(s.status);
   $('pagePrev').disabled = i <= 0;
   $('pageNext').disabled = i >= currentSiblings.length - 1;
@@ -925,8 +1017,7 @@ $('submitBtn').onclick = function () {
   if (audit.badNames.length) { errEl.textContent = '申报书栏存在无效选择：' + audit.badNames.join('；'); return; }
   var appFs = audit.good;
   var opFs = pickedOps.slice();
-  if (!appFs.length) { errEl.textContent = '请选择申报书 .docx 或数字版 PDF'; return; }
-  if (!opFs.length) { errEl.textContent = '请至少选择一份修改意见文档'; return; }
+  if (!appFs.length) { errEl.textContent = '请选择申报书 Word / Excel 或数字版 PDF'; return; }
   var badOps = opFs.filter(function (f) { return !isOpFile(f.name); }).map(function (f) { return f.name; });
   if (badOps.length) { errEl.textContent = '意见栏存在不支持的类型：' + badOps.join('；'); return; }
   var multi = appFs.length > 1;
@@ -990,7 +1081,7 @@ function renderMatch(b) {
       var badge = '<span class="badge st-' + ts.status + '">' + statusText(ts.status) + '</span>';
       h += '<div class="mrow" style="border-top:none"><span class="mtxt"><b>' + esc(ts.app) + '</b>　' + badge;
       (ts.deliverables || []).forEach(function (o) {
-        if (o.name.endsWith('_修改后.docx') || o.name.indexOf('对照表') >= 0 || o.name.indexOf('遗留') >= 0) {
+        if (isEditedOut(o.name) || o.name.indexOf('对照表') >= 0 || o.name.indexOf('遗留') >= 0) {
           h += ' <a href="/api/tasks/' + ts.id + '/files?dir=output&name=' + encodeURIComponent(o.name) + '" style="color:#1462ae">' + esc(o.name) + '</a>';
         }
       });
@@ -1007,8 +1098,14 @@ function renderMatch(b) {
   var books = (b.match && b.match.books) || [];
   var html = '';
   var totalBlocks = 0;
+  var unmatchedBooks = 0;
   books.forEach(function (bk) {
-    if (!bk.matched.length) return;
+    if (!bk.matched.length) {
+      unmatchedBooks++;
+      html += '<div class="mbook"><div class="mbook-h"><span>' + esc(bk.file) + '</span><span class="cnt">跳过</span></div><div class="mlist">';
+      html += '<div class="mrow" style="border-top:none"><span class="mtxt"><span class="msrc">未匹配到修改意见，将跳过，不使用通用条款、不创建任务</span></span></div></div></div>';
+      return;
+    }
     totalBlocks += bk.matched.length;
     html += '<div class="mbook"><div class="mbook-h"><span>' + esc(bk.file) + '</span><span class="cnt">' + bk.matched.length + ' 块</span></div><div class="mlist">';
     bk.matched.forEach(function (mm) {
@@ -1017,7 +1114,7 @@ function renderMatch(b) {
     });
     html += '</div></div>';
   });
-  if (!totalBlocks) html = '<div class="empty">没有任何自动配对结果</div>';
+  if (!totalBlocks && !unmatchedBooks) html = '<div class="empty">没有任何自动配对结果</div>';
   $('matchBooks').innerHTML = html;
   var shared = (b.match && b.match.shared) || [];
   var sh = '';
@@ -1307,7 +1404,19 @@ function renderPlanSection(t) {
     if (curPlanTaskId !== String(t.id)) return;
     el.setAttribute('data-tid', '');
     if (t.status === 'failed' && String(e.message || '').indexOf('尚未生成') >= 0) {
-      el.classList.add('hidden'); el.innerHTML = ''; curPlanTaskId = null;
+      el.classList.remove('hidden');
+      el.setAttribute('data-tid', 'fail:' + t.id);
+      el.innerHTML = '<div class="pnote">计划尚未生成' + (t.error ? '：' + esc(t.error) : '。') +
+        ' 可重试，将从预处理开始重新跑一遍。</div>' +
+        '<div class="actions"><button type="button" class="primary" id="failRetryBtn">重试此任务</button><span id="planErr" class="err"></span></div>';
+      el.querySelector('#failRetryBtn').onclick = function () {
+        var btn = this;
+        var errEl = el.querySelector('#planErr');
+        if (errEl) errEl.textContent = '';
+        retryTask(t.id, btn).catch(function (e2) {
+          if (errEl) errEl.textContent = e2.message || String(e2);
+        });
+      };
       return;
     }
     el.innerHTML = '<div class="empty">计划载入失败：' + esc(e.message) + '</div>';
@@ -1324,6 +1433,61 @@ function appNoOf(name) {
     nums.push(m[0]);
   }
   return nums.join('/');
+}
+
+function missingAttHtml(att) {
+  att = att || {};
+  var needed = att.needed || [];
+  var items = att.items || [];
+  var h = '<div class="att-box"><div class="att-h">缺失附件下载</div>';
+  if (!needed.length) {
+    h += '<div class="att-empty">修改意见未提到缺失附件</div></div>';
+    return h;
+  }
+  var by = {};
+  items.forEach(function (it) {
+    var k = it.kind || '附件';
+    (by[k] || (by[k] = [])).push(it);
+  });
+  h += '<ul class="att-ul">';
+  needed.forEach(function (lab) {
+    var hits = by[lab] || [];
+    if (lab === '论文全文') {
+      Object.keys(by).forEach(function (k) {
+        if (k !== lab && String(k).indexOf('论文') >= 0) hits = hits.concat(by[k]);
+      });
+    }
+    if (hits.length) {
+      hits.forEach(function (it) {
+        var src = it.source === 'papers' ? '论文系统' : '人才库';
+        h += '<li><span class="att-k">' + esc(it.kind || lab) + '</span> <a class="dl" href="' + escAttr(it.download || '') + '">' + esc(it.filename || it.title || '下载') + '</a> <em>' + esc(src) + '</em></li>';
+      });
+    } else {
+      h += '<li class="att-miss"><span class="att-k">' + esc(lab) + '</span> 人才库未检索到可下载文件</li>';
+    }
+  });
+  h += '</ul></div>';
+  return h;
+}
+
+function renderDoneAttachments(t) {
+  var box = $('doneAttBox');
+  if (!box) return;
+  if (t.status !== 'done') {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    box.removeAttribute('data-tid');
+    return;
+  }
+  var att = t.attachHit || {};
+  box.classList.remove('hidden');
+  box.innerHTML = missingAttHtml(att);
+  if ((att.items && att.items.length) || box.getAttribute('data-tid') === String(t.id)) return;
+  box.setAttribute('data-tid', String(t.id));
+  fetch('/api/tasks/' + t.id + '/plan').then(function (r) { return r.ok ? r.json() : null; }).then(function (plan) {
+    if (!plan || !currentDetail || String(currentDetail.id) !== String(t.id)) return;
+    box.innerHTML = missingAttHtml(plan.attachments || att);
+  }).catch(function () {});
 }
 
 function buildPlanEditor(el, t, plan) {
@@ -1346,23 +1510,15 @@ function buildPlanEditor(el, t, plan) {
   var loLines = (plan.leftovers || []).join('\n');
 
   var poolSum = (plan && plan.pool && plan.pool.summary) || (t.poolHit && (t.poolHit.talent || t.poolHit.enterprise) && ('人才 ' + (t.poolHit.talent || '无') + '；企业 ' + (t.poolHit.enterprise || '无'))) || '';
-  var att = (plan && plan.attachments) || {};
-  var attItems = att.items || [];
+  var att = (plan && plan.attachments) || t.attachHit || {};
   var attSum = att.summary || (t.attachHit && t.attachHit.summary) || '';
-  var h = '<div class="pnote">源文件申报书编号 <b class="pno">' + esc(appNo || '未识别') + '</b>　' + esc(t.app && t.app.name || '') +
+  var h = '<div class="pnote">源文件申报书编号 <b class="pno">' + esc(appNo || '未识别') + '</b>　' + modeBadge(formModeOf(t)) + esc(t.app && t.app.name || '') +
     (poolSum ? '<br>库内检索：' + esc(poolSum) : '') +
     (attSum ? '<br>缺附件检索：' + esc(attSum) : '') +
-    '<br>Grok、Gemini、火山已分别生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>为短摘要；三列修改意见为各模型给出的改写；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（默认可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。</div>';
-  if (attItems.length) {
-    h += '<div class="att-box"><div class="att-h">已检索到的附件（点击下载）</div><ul class="att-ul">';
-    attItems.forEach(function (it) {
-      var src = it.source === 'papers' ? '论文系统' : '人才库';
-      h += '<li><span class="att-k">' + esc(it.kind || '附件') + '</span> <a class="dl" href="' + escAttr(it.download || '') + '">' + esc(it.filename || it.title || '下载') + '</a> <em>' + esc(src) + (it.title && it.title !== it.filename ? ' · ' + it.title : '') + '</em></li>';
-    });
-    h += '</ul></div>';
-  }
-  h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:12%">修改前（定位用，勿改）</th><th style="width:14%">Grok修改意见</th><th style="width:14%">Gemini修改意见</th><th style="width:14%">火山修改意见</th><th style="width:16%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
+    '<br>Gemini 已生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>为短摘要；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。</div>';
+  h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:18%">修改前（定位用，勿改）</th><th style="width:22%">Gemini修改意见</th><th style="width:22%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
   h += '<button class="mini addrow" id="addRowBtn">新增一行</button>';
+  h += missingAttHtml(att);
   h += '<h3>遗留事项（每行一条，可编辑）</h3><textarea id="loTa" class="lo-ta"></textarea>';
   h += '<div class="actions"><button id="applyBtn" class="primary">确认无误，写入文件</button><button id="replanBtn" class="ghost">重新生成计划</button><span id="planErr" class="err"></span></div>';
   el.innerHTML = h;
@@ -1376,19 +1532,16 @@ function buildPlanEditor(el, t, plan) {
   requestAnimationFrame(function () { fitPlanFields(tb); });
 
   el.querySelector('#addRowBtn').onclick = function () {
-    var ne = { find: '', replace: '', clause: '（人工新增）', opinion: '', opinionGrok: '', opinionGemini: '', opinionDoubao: '', hasDoubao: true, opName: '', clauseId: '', section: '其他', appNo: appNo };
+    var ne = { find: '', replace: '', clause: '（人工新增）', opinion: '', opinionGemini: '', opName: '', clauseId: '', section: '其他', appNo: appNo };
     var i2 = curPlanData.push(ne) - 1;
     tb.appendChild(buildRow(ne, i2, { editableFind: true }));
     requestAnimationFrame(function () { fitPlanFields(tb.lastChild); });
   };
 
   el.querySelector('#replanBtn').onclick = function () {
-    if (!confirm('重新生成将丢弃当前所有人工修改，确定？')) return;
-    fetch('/api/tasks/' + t.id + '/replan', { method: 'POST' }).then(readJson).then(function () {
-      el.setAttribute('data-tid', '');
-      ensurePoll();
-      pollDetail();
-    }).catch(function (e2) { el.querySelector('#planErr').textContent = e2.message || String(e2); });
+    if (!confirm(t.status === 'failed' ? '将重新跑一遍该任务，确定？' : '重新生成将丢弃当前所有人工修改，确定？')) return;
+    var btn = this;
+    retryTask(t.id, btn).catch(function (e2) { el.querySelector('#planErr').textContent = e2.message || String(e2); });
   };
 
   el.querySelector('#applyBtn').onclick = function () {
@@ -1400,7 +1553,7 @@ function buildPlanEditor(el, t, plan) {
       var cb = tr.querySelector('input[type=checkbox]');
       var taF = tr.querySelector('.ta-find'), taR = tr.querySelector('.ta-rep');
       var taC = tr.querySelector('.ta-clause');
-      var taG = tr.querySelector('.ta-op-grok'), taM = tr.querySelector('.ta-op-gemini'), taD = tr.querySelector('.ta-op-doubao');
+      var taM = tr.querySelector('.ta-op-gemini');
       if (!cb.checked) return;
       var fv = taF.value.trim();
       if (!fv) { missName.push('#' + (oi + 1)); return; }
@@ -1409,9 +1562,7 @@ function buildPlanEditor(el, t, plan) {
         find: taF.value, replace: taR.value,
         clause: (taC && taC.value) || src.clause || '',
         opinion: src.opinion || '',
-        opinionGrok: realOp(taG),
         opinionGemini: realOp(taM),
-        opinionDoubao: realOp(taD),
         opName: src.opName || '',
         clauseId: src.clauseId || '',
         _sec: src.section || '其他',
@@ -1456,13 +1607,9 @@ function realOp(ta) {
 function buildRow(e, oi, opts) {
   var tr = document.createElement('tr');
   tr.setAttribute('data-oi', oi);
-  var grokOp = e.opinionGrok || '';
   var geminiOp = e.opinionGemini || '';
-  var doubaoOp = e.opinionDoubao || '';
   var emptyHint = (e.hasCompare === false) ? OP_LEGACY : OP_EMPTY;
-  var grokEmpty = grokOp ? '' : emptyHint;
   var geminiEmpty = geminiOp ? '' : emptyHint;
-  var doubaoEmpty = doubaoOp ? '' : (e.hasDoubao === false ? OP_LEGACY : emptyHint);
   var clauseTip = e.opinion ? ' title="' + escAttr(e.opinion) + '"' : (e.opName ? ' title="' + escAttr(e.opName) + '"' : '');
   var findRo = (opts && opts.editableFind) ? '' : ' readonly';
   tr.innerHTML =
@@ -1472,21 +1619,13 @@ function buildRow(e, oi, opts) {
     '<td><textarea class="ta-clause" rows="1"' + clauseTip + '>' + escHtml(e.clause) + '</textarea></td>' +
     '<td><textarea class="ta-find" rows="1"' + findRo + '>' + escHtml(e.find) + '</textarea></td>' +
     '<td><div class="op-cell">' +
-      '<textarea class="ta-op ta-op-grok" rows="1" readonly>' + escHtml(grokOp || grokEmpty) + '</textarea>' +
-      '<button type="button" class="use-op" data-src="grok"' + (grokOp ? '' : ' disabled') + '>采用</button>' +
-    '</div></td>' +
-    '<td><div class="op-cell">' +
       '<textarea class="ta-op ta-op-gemini" rows="1" readonly>' + escHtml(geminiOp || geminiEmpty) + '</textarea>' +
       '<button type="button" class="use-op" data-src="gemini"' + (geminiOp ? '' : ' disabled') + '>采用</button>' +
-    '</div></td>' +
-    '<td><div class="op-cell">' +
-      '<textarea class="ta-op ta-op-doubao" rows="1" readonly>' + escHtml(doubaoOp || doubaoEmpty) + '</textarea>' +
-      '<button type="button" class="use-op" data-src="doubao"' + (doubaoOp ? '' : ' disabled') + '>采用</button>' +
     '</div></td>' +
     '<td><textarea class="ta-rep" rows="1">' + escHtml(e.replace) + '</textarea></td>' +
     '<td><button class="delbtn">✕</button></td>';
   tr.querySelector('.delbtn').onclick = function () { tr.parentNode.removeChild(tr); };
-  var opSel = { grok: '.ta-op-grok', gemini: '.ta-op-gemini', doubao: '.ta-op-doubao' };
+  var opSel = { gemini: '.ta-op-gemini' };
   Array.prototype.slice.call(tr.querySelectorAll('.use-op')).forEach(function (btn) {
     btn.onclick = function () {
       var src = btn.getAttribute('data-src');

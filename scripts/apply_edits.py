@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-"""结构化编辑执行器：按 plan JSON 对 docx 做段落级文本重写，保持源文件版式。
-用法: python apply_edits.py <src.docx> <out.docx> <backup.docx> <plan.json>
+"""结构化编辑执行器：按 plan JSON 对 Word 做段落级文本重写，保持源文件版式。
+用法: python apply_edits.py <src.docx|docm|wps> <out> <backup> <plan.json>
 plan.json: {"edits":[{"find":"...","replace":"..."}, ...]}   replace 为空串表示删除该片段。
 策略: 复制源包后只改 w:t / 必要的 w:br；跨段锚点按原段落/单元格回写，不把邻栏合并进一格。
 写入后若单元格/文本框内容高于原框，缩小该格字号与行距，避免撑破栏位。
 输出: stdout JSON {"results":[{"find","status"}...]}  与 edits 等长（空锚点 status=skip）。
 """
-import sys, json, re, shutil
+import sys, json, re, shutil, os, zipfile, tempfile
 from docx import Document
 from docx.oxml.ns import qn
+
+MACRO_MAIN = b'application/vnd.ms-word.document.macroEnabled.main+xml'
+DOCX_MAIN = b'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml'
 
 MAX_SPAN = 8
 SEP = '\n'
@@ -611,56 +614,123 @@ def apply_span(paras, texts, idxs, a, b, rep):
         rewrite_and_twins(paras, texts, oi, new_T)
 
 
+def _rewrite_zip(path, mutator):
+    path = os.path.abspath(path)
+    fd, tmp = tempfile.mkstemp(prefix='._pkg_', suffix='.zip', dir=os.path.dirname(path) or '.')
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(path, 'r') as zin, zipfile.ZipFile(tmp, 'w') as zout:
+            for info in zin.infolist():
+                data = mutator(info.filename, zin.read(info.filename))
+                ni = zipfile.ZipInfo(filename=info.filename, date_time=info.date_time)
+                ni.compress_type = info.compress_type
+                ni.external_attr = info.external_attr
+                zout.writestr(ni, data)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _set_word_main_ct(path, macro):
+    src_ct = DOCX_MAIN if macro else MACRO_MAIN
+    dst_ct = MACRO_MAIN if macro else DOCX_MAIN
+
+    def mut(name, data):
+        if name == '[Content_Types].xml':
+            return data.replace(src_ct, dst_ct)
+        return data
+
+    _rewrite_zip(path, mut)
+
+
+def _copy_zip_part(src_zip, dst_zip, part):
+    with zipfile.ZipFile(src_zip, 'r') as zin:
+        blob = zin.read(part)
+
+    def mut(name, data):
+        if name == part:
+            return blob
+        return data
+
+    _rewrite_zip(dst_zip, mut)
+
+
 def apply_file(src, out, backup, edits):
-    """按 edits 改 src.docx，写出 out，并复制 backup。返回与 edits 等长的 results。"""
+    """按 edits 改 src.docx/.docm，写出 out，并复制 backup。返回与 edits 等长的 results。"""
     src, out, backup = str(src), str(out), str(backup)
+    ext = os.path.splitext(src)[1].lower()
     shutil.copyfile(src, backup)
     shutil.copyfile(src, out)
-    doc = Document(out)
-    paras = list(doc.element.body.iter(qn('w:p')))
-    texts = [para_text(p) for p in paras]
-    snap = snapshot_boxes(paras, texts)
-    results = []
-    for e in edits or []:
-        find = str(e.get('find', '')).replace('\r\n', '\n').replace('\r', '\n').strip()
-        rep = str(e.get('replace', '')).replace('\r\n', '\n').replace('\r', '\n')
-        if not find:
-            results.append({'find': '', 'status': 'skip'})
-            continue
-        status = 'miss'
-        idx = next((i for i, tx in enumerate(texts) if find in tx), -1)
-        if idx >= 0:
-            T = texts[idx]
-            use = sanitize_replace(find, rep, texts, idx)
-            new_T = T.replace(find, use, 1)
-            apply_single(paras, texts, idx, T, new_T)
-            status = 'hit'
-        else:
-            rx = loose_regex(find)
-            idx = next((i for i, tx in enumerate(texts) if rx and rx.search(tx)), -1)
+    work = out
+    tmp_open = None
+    tmp_saved = None
+    try:
+        if ext == '.docm':
+            tmp_open = out + '.__open.docx'
+            shutil.copyfile(out, tmp_open)
+            _set_word_main_ct(tmp_open, macro=False)
+            work = tmp_open
+        doc = Document(work)
+        paras = list(doc.element.body.iter(qn('w:p')))
+        texts = [para_text(p) for p in paras]
+        snap = snapshot_boxes(paras, texts)
+        results = []
+        for e in edits or []:
+            find = str(e.get('find', '')).replace('\r\n', '\n').replace('\r', '\n').strip()
+            rep = str(e.get('replace', '')).replace('\r\n', '\n').replace('\r', '\n')
+            if not find:
+                results.append({'find': '', 'status': 'skip'})
+                continue
+            status = 'miss'
+            idx = next((i for i, tx in enumerate(texts) if find in tx), -1)
             if idx >= 0:
                 T = texts[idx]
-                m = rx.search(T)
                 use = sanitize_replace(find, rep, texts, idx)
-                new_T = T[:m.start()] + use + T[m.end():]
+                new_T = T.replace(find, use, 1)
                 apply_single(paras, texts, idx, T, new_T)
-                status = 'hit-loose'
+                status = 'hit'
             else:
-                hit = search_span(texts, find, False)
-                if hit:
-                    idxs, _joined, a, b = hit
-                    apply_span(paras, texts, idxs, a, b, rep)
-                    status = 'hit-span'
+                rx = loose_regex(find)
+                idx = next((i for i, tx in enumerate(texts) if rx and rx.search(tx)), -1)
+                if idx >= 0:
+                    T = texts[idx]
+                    m = rx.search(T)
+                    use = sanitize_replace(find, rep, texts, idx)
+                    new_T = T[:m.start()] + use + T[m.end():]
+                    apply_single(paras, texts, idx, T, new_T)
+                    status = 'hit-loose'
                 else:
-                    hit = search_span(texts, find, True)
+                    hit = search_span(texts, find, False)
                     if hit:
                         idxs, _joined, a, b = hit
                         apply_span(paras, texts, idxs, a, b, rep)
-                        status = 'hit-span-loose'
-        results.append({'find': find[:100], 'status': status})
-    fit_overflow(paras, texts, snap)
-    doc.save(out)
-    return results
+                        status = 'hit-span'
+                    else:
+                        hit = search_span(texts, find, True)
+                        if hit:
+                            idxs, _joined, a, b = hit
+                            apply_span(paras, texts, idxs, a, b, rep)
+                            status = 'hit-span-loose'
+            results.append({'find': find[:100], 'status': status})
+        fit_overflow(paras, texts, snap)
+        if ext == '.docm':
+            tmp_saved = out + '.__saved.docx'
+            doc.save(tmp_saved)
+            _copy_zip_part(tmp_saved, out, 'word/document.xml')
+        else:
+            doc.save(out)
+        return results
+    finally:
+        for p in (tmp_open, tmp_saved):
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
 
 def main(argv):
@@ -669,7 +739,15 @@ def main(argv):
         return 2
     src, out, backup, plan_path = argv[1], argv[2], argv[3], argv[4]
     plan = json.load(open(plan_path, encoding='utf-8'))
-    results = apply_file(src, out, backup, plan.get('edits') or [])
+    ext = os.path.splitext(src)[1].lower()
+    if ext in ('.xlsx', '.xlsm', '.xls'):
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import apply_excel
+        results = apply_excel.apply_file(src, out, backup, plan.get('edits') or [])
+    else:
+        results = apply_file(src, out, backup, plan.get('edits') or [])
     print(json.dumps({'results': results}, ensure_ascii=False))
     return 0
 

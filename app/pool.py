@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, re, asyncio
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode, quote
 import httpx
 from .config import load_config, FILL_MARK, httpx_trust_env
 from . import matcher as M
@@ -276,7 +276,27 @@ async def _detail(kind: str, item: dict | None) -> dict | None:
     return data.get("item") or item
 
 
-async def lookup_for_app(fname: str, app_text: str) -> dict:
+async def talent_files_detail(attach_id: str) -> dict | None:
+    """GET /talent-files/detail?attach_id=。无附件包时返回 None。"""
+    aid = str(attach_id or "").strip()
+    if not aid:
+        return None
+    data = await _get("/talent-files/detail", {"attach_id": aid})
+    item = data.get("item") if isinstance(data, dict) else None
+    if not isinstance(item, dict):
+        return None
+    files = item.get("files") if isinstance(item.get("files"), list) else []
+    if not files and not item.get("has_files"):
+        return None
+    return item
+
+
+def talent_file_url(attach_id: str, rel_path: str) -> str:
+    q = urlencode({"attach_id": attach_id, "path": rel_path}, quote_via=quote)
+    return PREFIX + "/talent-files/file?" + q
+
+
+async def lookup_for_app(fname: str, app_text: str, mode: str | None = None) -> dict:
     keys = extract_pool_keys(fname, app_text)
     snap = {
         "configured": bool(load_config().get("poolConfigured")),
@@ -294,7 +314,10 @@ async def lookup_for_app(fname: str, app_text: str) -> dict:
         snap["notes"].append("跳过检索：config.json 未填写 pool.baseUrl / pool.apiKey")
         snap["summary"] = "未配置人才库"
         return snap
-    mode = load_config().get("poolMode") or "all"
+    want = str(mode or "").strip().upper()
+    if want not in ("QM", "HJ"):
+        want = load_config().get("poolMode") or "all"
+    mode = want
     try:
         talent = None
         for aid in keys["attachIds"]:

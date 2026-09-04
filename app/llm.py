@@ -136,7 +136,12 @@ async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIME
     if n_try < 1:
         n_try = 1
     for attempt in range(1, n_try + 1):
-        payload = {"model": prof["model"], "messages": messages, "temperature": LLM_TEMPERATURE, "stream": use_stream}
+        temp = prof.get("temperature")
+        try:
+            temp = float(temp) if temp not in (None, "") else LLM_TEMPERATURE
+        except (TypeError, ValueError):
+            temp = LLM_TEMPERATURE
+        payload = {"model": prof["model"], "messages": messages, "temperature": temp, "stream": use_stream}
         if use_stream and with_stream_opts:
             payload["stream_options"] = {"include_usage": True}
         if with_effort and prof.get("reasoningEffort"):
@@ -155,9 +160,12 @@ async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIME
                     r = await client.post(url, headers={**headers, "Accept": "application/json"}, json=payload)
                     if r.status_code >= 400:
                         raise LlmError(f"HTTP {r.status_code}: {_trunc(r.text, 300)}")
-                    data = r.json()
+                    try:
+                        data = r.json()
+                    except json.JSONDecodeError:
+                        data = _decode_json_object(r.text or "")
                     content = _choice_text(data)
-                    usage = data.get("usage") or {}
+                    usage = (data.get("usage") or {}) if isinstance(data, dict) else {}
             return {"content": content or "", "usage": usage or {}}
         except Exception as e:  # noqa: BLE001
             last_err = e
@@ -230,17 +238,78 @@ async def probe_models(model_id=None) -> dict:
         out.append(item)
     return {"ok": all(x.get("ok") for x in out), "results": out}
 
+_CTRL_IN_JSON = {"\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def _escape_ctrl_in_json_strings(s: str) -> str:
+    """JSON 字符串字面量里的裸控制字符（\\n/\\t/\\x0b 等）转成合法转义；字面量外的换行不动。"""
+    out = []
+    in_str = False
+    esc = False
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if not in_str:
+            if ch == '"':
+                in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if esc:
+            out.append(ch)
+            esc = False
+            i += 1
+            continue
+        if ch == "\\":
+            out.append(ch)
+            esc = True
+            i += 1
+            continue
+        if ch == '"':
+            in_str = False
+            out.append(ch)
+            i += 1
+            continue
+        o = ord(ch)
+        if o < 32:
+            if ch == "\r" and i + 1 < n and s[i + 1] == "\n":
+                out.append("\\n")
+                i += 2
+                continue
+            out.append(_CTRL_IN_JSON.get(ch) or ("\\u%04x" % o))
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _decode_json_object(s: str):
+    last = None
+    repaired = _escape_ctrl_in_json_strings(s)
+    for cand in (s, repaired) if repaired != s else (s,):
+        a = cand.find("{")
+        if a < 0:
+            continue
+        for strict in (True, False):
+            try:
+                obj, _ = json.JSONDecoder(strict=strict).raw_decode(cand, a)
+                return obj
+            except json.JSONDecodeError as e:
+                last = e
+    if (s or "").find("{") < 0:
+        raise json.JSONDecodeError("未找到 JSON 对象", s or "", 0)
+    raise last or json.JSONDecodeError("JSON 解析失败", s or "", 0)
+
+
 def extract_json(text: str):
-    s = str(text or "").strip()
+    s = str(text or "").strip().lstrip("\ufeff")
     fence = chr(96) * 3
-    s = re.sub("^" + fence + "(?:json)?", "", s).strip()
+    s = re.sub("^" + fence + "(?:json)?", "", s, flags=re.I).strip()
     if s.endswith(fence):
-        s = s[: -len(fence)]
-    a = s.find("{")
-    if a < 0:
-        raise json.JSONDecodeError("未找到 JSON 对象", s, 0)
-    obj, _ = json.JSONDecoder().raw_decode(s, a)
-    return obj
+        s = s[: -len(fence)].strip()
+    return _decode_json_object(s)
 
 def now_str() -> str:
     from datetime import datetime

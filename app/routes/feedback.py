@@ -81,7 +81,12 @@ def api_file(fid: int, file_id: int, request: Request):
         path, mime, name = F.get_file(u, fid, file_id)
     except F.FeedbackError as e:
         raise HTTPException(e.status, e.message)
-    return FileResponse(path, media_type=mime, filename=name)
+    return FileResponse(
+        path,
+        media_type=mime or "application/octet-stream",
+        filename=name,
+        content_disposition_type="inline",
+    )
 
 
 @router.patch("/api/feedback/{fid}")

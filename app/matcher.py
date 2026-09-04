@@ -30,13 +30,26 @@ def ext_of(name) -> str:
     i = name.rfind(".")
     return name[i:].lower() if i >= 0 else ""
 
+_APP_MARKERS = (
+    "有效证件姓名",
+    "申报企业",
+    "代表性论文",
+    "填表须知",
+    "实验室名称",
+    "Application Form",
+    "申报人姓名",
+    "Name of Applicant",
+    "申报单位(用人单位)",
+    "Name of Laboratory",
+)
+
 def is_app_content(text) -> bool:
     t = str(text or "")
     if len(t) < 3000:
         return False
     if "{{" in t:
         return False
-    return ("有效证件姓名" in t) or ("申报企业" in t) or ("代表性论文" in t)
+    return any(m in t for m in _APP_MARKERS)
 
 def is_book_num(raw: str) -> bool:
     s = str(raw or "")

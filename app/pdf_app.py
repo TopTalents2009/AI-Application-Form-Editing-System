@@ -5,10 +5,13 @@ from pathlib import Path
 
 from .config import PYEXE
 
-ALLOWED_APP_EXT = {".docx", ".pdf"}
+WORD_APP_EXT = {".docx", ".docm", ".wps"}
+EXCEL_APP_EXT = {".xlsx", ".xlsm", ".xls"}
+ALLOWED_APP_EXT = WORD_APP_EXT | EXCEL_APP_EXT | {".pdf"}
+APP_EXT_HINT = ".docx / .docm / Excel（.xlsx .xlsm .xls）或数字版 .pdf"
 SCAN_MSG = (
     "该 PDF 没有足够的可复制文字，像扫描件。"
-    "当前只支持数字版 PDF（可复制选中文字），扫描件暂不支持。请改传 .docx 或数字 PDF。"
+    "当前只支持数字版 PDF（可复制选中文字），扫描件暂不支持。请改传 Word / Excel 或数字 PDF。"
 )
 CONVERT_TIMEOUT_S = 240
 MIN_CJK = 800
@@ -28,11 +31,35 @@ def is_app_ext(name: str) -> bool:
 
 
 def work_docx_name(app_name: str) -> str:
-    """落盘用的 Word 文件名：PDF 换成同名 .docx，Word 保持原名。"""
+    """落盘用的源文件名：PDF 换成同名 .docx，其余保持原扩展名。"""
     n = str(app_name or "")
     if ext_of(n) == ".pdf":
         return n[: -len(".pdf")] + ".docx"
     return n
+
+
+def edited_name(stem: str, src_ext: str) -> str:
+    ext = str(src_ext or ".docx").lower()
+    if ext not in WORD_APP_EXT | EXCEL_APP_EXT:
+        ext = ".docx"
+    return str(stem or "申报书") + "_修改后" + ext
+
+
+def backup_name(stem: str, src_ext: str) -> str:
+    ext = str(src_ext or ".docx").lower()
+    if ext not in WORD_APP_EXT | EXCEL_APP_EXT:
+        ext = ".docx"
+    return str(stem or "申报书") + "_备份" + ext
+
+
+def is_edited_output(name: str) -> bool:
+    n = str(name or "").lower()
+    return any(n.endswith("_修改后" + e) for e in (WORD_APP_EXT | EXCEL_APP_EXT))
+
+
+def is_backup_output(name: str) -> bool:
+    n = str(name or "").lower()
+    return any(n.endswith("_备份" + e) for e in (WORD_APP_EXT | EXCEL_APP_EXT))
 
 
 def sniff_pdf(data: bytes, name: str = "") -> None:
@@ -172,15 +199,15 @@ def convert_pdf_to_docx_sync(src: Path, dst: Path) -> str:
 
 
 async def ensure_app_docx(src: Path, dst: Path) -> str:
-    """docx 原样复制；pdf 转为工作稿。返回 'copy' / 'word' / 'pdf2docx'。"""
+    """Word/Excel 原样复制；pdf 转为 Word 工作稿。返回 'copy' / 'word' / 'pdf2docx'。"""
     src, dst = Path(src), Path(dst)
-    if src.suffix.lower() in {".docx", ".wps"}:
+    if src.suffix.lower() in WORD_APP_EXT | EXCEL_APP_EXT:
         if src.resolve() != dst.resolve():
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
         return "copy"
     if src.suffix.lower() != ".pdf":
-        raise ValueError("申报书必须为 .docx 或数字版 .pdf")
+        raise ValueError("申报书必须为 " + APP_EXT_HINT)
     require_digital_pdf(src)
     proc = await asyncio.create_subprocess_exec(
         PYEXE, "-m", "app.pdf_app", str(src), str(dst),

@@ -2,15 +2,23 @@
 from __future__ import annotations
 import asyncio, json, os, re, secrets, shutil, time
 from pathlib import Path
-from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_llm, compare_model_profiles, model_family, COMPARE_FAMS, OPINION_FIELDS, fam_tag
+from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_gemini, compare_model_profiles, model_family, COMPARE_FAMS, OPINION_FIELDS, fam_tag
 from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
 from .opinion_extract import ALLOWED_OPINION_EXT, ensure_txt as extract_to_txt
-from .pdf_app import ALLOWED_APP_EXT, ensure_app_docx, sniff_pdf, work_docx_name
+from .pdf_app import (
+    ALLOWED_APP_EXT, APP_EXT_HINT, EXCEL_APP_EXT, WORD_APP_EXT,
+    backup_name, edited_name, ensure_app_docx, is_backup_output, is_edited_output,
+    sniff_pdf, work_docx_name,
+)
 from .pool import lookup_for_app, format_pool_prompt, save_snapshot
-from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block
+from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block, public_attach_hit
 from .report_docx import write_compare_docx
-from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits
+from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits, enforce_edit_limits, limit_hint
+from .form_kind import classify as classify_form
+from .inline_opinions import (
+    INLINE_OP_NAME, NO_OPINION_MSG, extract_inline_opinion_text, split_inline_units,
+)
 
 SECTION_FILES = {"基本信息": "basic-info.md", "教育": "education.md", "工作": "work.md", "论文": "papers.md", "项目": "projects.md"}
 SECTION_ORDER = ["基本信息", "教育", "工作", "论文", "项目", "其他"]
@@ -166,8 +174,12 @@ class TaskStore:
 
     def list_meta(self):
         arr = sorted(self.tasks.values(), key=lambda x: created_key(x.get("createdAt")), reverse=True)
-        return [{"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": t["app"], "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId"), "owner": t.get("owner") or "",
-                 "deliverables": [{"name": o["name"], "size": o.get("size", 0)} for o in (t.get("deliverables") or [])]} for t in arr]
+        out = []
+        for t in arr:
+            self._ensure_app_mode(t)
+            out.append({"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": t["app"], "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId"), "owner": t.get("owner") or "",
+                 "deliverables": [{"name": o["name"], "size": o.get("size", 0)} for o in (t.get("deliverables") or [])]})
+        return out
 
     def get(self, tid): return self.tasks.get(tid) or None
 
@@ -179,11 +191,10 @@ class TaskStore:
             engine = "api"
         if engine != "api":
             raise ValueError("未知引擎: " + engine)
-        prof = resolve_llm(model_id)
+        prof = resolve_gemini(model_id)
         apps = body.get("app"); ops = body.get("opinions") or []
         if not isinstance(apps, dict) or ext_of(sanitize(apps.get("name", ""))) not in ALLOWED_APP_EXT:
-            raise ValueError("申报书必须为 .docx 或数字版 .pdf")
-        if not ops: raise ValueError("至少上传一份意见文档")
+            raise ValueError("申报书必须为 " + APP_EXT_HINT)
         for o in ops:
             if ext_of(sanitize(o.get("name", ""))) not in ALLOWED_OPINION_EXT:
                 raise ValueError("意见类型不支持（Word / Excel / 图片 / txt / md）: " + str(o.get("name")))
@@ -199,9 +210,13 @@ class TaskStore:
             n = sanitize(o["name"])
             (d / "input" / n).write_bytes(__import__("base64").b64decode(o.get("dataB64") or ""))
             op_names.append(n)
+        app_meta = {"name": aname, "no": app_no_of(aname), "workDocx": work_docx_name(aname)}
+        given_mode = str(apps.get("mode") or "").strip().upper()
+        if given_mode in ("QM", "HJ"):
+            app_meta["mode"] = given_mode
         t = {"id": tid, "dir": str(d), "engine": engine, "model": prof["id"], "modelLabel": prof["label"],
              "status": "queued", "createdAt": now_str(),
-             "app": {"name": aname, "no": app_no_of(aname), "workDocx": work_docx_name(aname)},
+             "app": app_meta,
              "opinions": [{"name": n} for n in op_names],
              "log": [], "outputs": [], "deliverables": [], "hasReport": False, "error": None, "finishedAt": None}
         if owner:
@@ -244,8 +259,12 @@ class TaskStore:
         t = self.tasks.get(tid)
         if not t: raise ValueError("任务不存在")
         if t["status"] != "planned" and t["status"] != "failed":
-            raise ValueError("当前状态 " + t["status"] + " 不能重新生成计划")
-        t["status"] = "queued"; t["error"] = None; self.persist(t)
+            raise ValueError("当前状态 " + t["status"] + " 不能重试（仅失败或待确认可重试）")
+        t["status"] = "queued"
+        t["error"] = None
+        t["finishedAt"] = None
+        t["retryCount"] = int(t.get("retryCount") or 0) + 1
+        self.log(t, "重试第 " + str(t["retryCount"]) + " 次，重新生成计划")
         self.enqueue(tid)
         return tid
 
@@ -276,6 +295,20 @@ class TaskStore:
                 if f != app_name:
                     raise ValueError("意见「" + f + "」提取失败：" + msg)
                 raise ValueError("申报书「" + f + "」提取失败：" + msg)
+        if not t.get("opinions"):
+            src = work_input / app_name
+            if ext_of(app_name) == ".pdf":
+                cand = work_input / work_docx
+                if cand.exists():
+                    src = cand
+            text, n_cmt = extract_inline_opinion_text(src)
+            if not text:
+                raise ValueError(NO_OPINION_MSG)
+            (txt_dir / (stem_of(INLINE_OP_NAME) + ".txt")).write_text(text, encoding="utf-8")
+            t["opinions"] = [{"name": INLINE_OP_NAME}]
+            t["inlineOpinions"] = True
+            self.log(t, "未上传意见文档，已从申报书标注栏提取 " + str(n_cmt) + " 条修改意见")
+        self._classify_prepared(t)
         self.persist(t)
 
     async def _py(self, args, timeout=120):
@@ -297,15 +330,67 @@ class TaskStore:
             if p.exists():
                 opinion_files.append({"name": o["name"], "text": p.read_text(encoding="utf-8")})
         if not ap.exists(): raise ValueError("申报书文本缺失（预处理提取失败）")
-        if not opinion_files: raise ValueError("意见文本全部缺失（预处理提取失败）")
+        if not opinion_files:
+            raise ValueError(NO_OPINION_MSG if t.get("inlineOpinions") else "意见文本全部缺失（预处理提取失败）")
         return {"appText": ap.read_text(encoding="utf-8"), "opinionFiles": opinion_files}
+
+    def _set_app_mode(self, t, mode: str, persist: bool = False) -> str:
+        mode = str(mode or "").strip().upper()
+        if mode not in ("QM", "HJ"):
+            return str((t.get("app") or {}).get("mode") or "")
+        cur = str((t.get("app") or {}).get("mode") or "")
+        if cur == mode:
+            return mode
+        t.setdefault("app", {})["mode"] = mode
+        if persist:
+            self.persist(t)
+        return mode
+
+    def _classify_text(self, t, text: str, persist: bool = False) -> str:
+        name = str((t.get("app") or {}).get("name") or "")
+        return self._set_app_mode(t, classify_form(text, name), persist=persist)
+
+    def _classify_prepared(self, t) -> str:
+        name = str((t.get("app") or {}).get("name") or "")
+        ap = Path(t["dir"]) / "work" / "txt" / (stem_of(name) + ".txt")
+        if not ap.exists():
+            return str((t.get("app") or {}).get("mode") or "")
+        try:
+            text = ap.read_text(encoding="utf-8")
+        except Exception:
+            return str((t.get("app") or {}).get("mode") or "")
+        mode = self._classify_text(t, text, persist=False)
+        if mode:
+            self.log(t, "申报书模板 " + mode)
+        return mode
+
+    def _ensure_app_mode(self, t) -> str:
+        cur = str((t.get("app") or {}).get("mode") or "").upper()
+        if cur in ("QM", "HJ"):
+            return cur
+        name = str((t.get("app") or {}).get("name") or "")
+        for p in (
+            Path(t.get("dir") or "") / "work" / "txt" / (stem_of(name) + ".txt"),
+            Path(t.get("dir") or "") / "txt" / (stem_of(name) + ".txt"),
+        ):
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            return self._classify_text(t, text, persist=True)
+        return ""
 
     def collect_opinion_blocks(self, texts) -> list:
         blocks = []
         for of in texts.get("opinionFiles") or []:
-            units = split_source_units(of.get("text") or "")
+            raw = str(of.get("text") or "")
+            units = split_inline_units(raw)
             if not units:
-                raw = str(of.get("text") or "").strip()
+                units = split_source_units(raw)
+            if not units:
+                raw = raw.strip()
                 if raw:
                     units = [raw]
             for u in units:
@@ -333,6 +418,9 @@ class TaskStore:
             lines.append("[" + cid + "] " + clause)
             if opinion:
                 lines.append("原文：" + opinion)
+            hint = limit_hint(sec, clause, opinion, app_text)
+            if hint:
+                lines.append(hint)
             lines.append("")
         body = tpl.replace("{{SECTION}}", sec).replace("{{RULES}}", rules)
         body = body.replace("{{FORM_REQS}}", extract_form_requirements(app_text))
@@ -348,30 +436,32 @@ class TaskStore:
 
     async def verify_outputs(self, t):
         out_dir = Path(t["dir"]) / "work" / "output"
-        outputs = []; docx_count = 0; t["hasReport"] = False
+        outputs = []; ok_count = 0; t["hasReport"] = False
         if out_dir.exists():
             for f in sorted(os.listdir(out_dir)):
                 fp = out_dir / f
                 if not fp.is_file() or fp.stat().st_size == 0: continue
-                is_docx = ext_of(f) == ".docx"
                 intact, detail = True, ""
-                if is_docx and f.endswith("_修改后.docx"):
+                if is_edited_output(f):
                     v = await self.verify_docx(fp)
                     intact = v["ok"]; detail = v["info"]
                     if intact:
-                        docx_count += 1
-                outputs.append({"name": f, "size": fp.stat().st_size, "dir": "output", "docxIntact": (not is_docx) or intact, "verify": detail})
+                        ok_count += 1
+                outputs.append({"name": f, "size": fp.stat().st_size, "dir": "output", "docxIntact": intact, "verify": detail})
                 if "对照表" in f: t["hasReport"] = True
         t["outputs"] = outputs
-        t["deliverables"] = [o for o in outputs if o["name"].endswith("_修改后.docx") or o["name"].endswith("_备份.docx") or "对照表" in o["name"] or "遗留事项" in o["name"]]
-        return docx_count > 0
+        t["deliverables"] = [o for o in outputs if is_edited_output(o["name"]) or is_backup_output(o["name"]) or "对照表" in o["name"] or "遗留事项" in o["name"]]
+        return ok_count > 0
 
     # ---------- ① 生成编辑计划（不写文件） ----------
     async def generate_plan(self, t):
         texts = self.read_prepared_texts(t)
         if not M.is_app_content(texts["appText"]):
-            extra = "。数字 PDF 转换后表格可能丢失，建议改传 Word（.docx）" if ext_of((t.get("app") or {}).get("name")) == ".pdf" else ""
+            extra = "。数字 PDF 转换后表格可能丢失，建议改传 Word / Excel" if ext_of((t.get("app") or {}).get("name")) == ".pdf" else ""
             raise ValueError("所选文件不像一份已填写的申报书（正文过短/未填写模板/缺封面关键字段），请检查是否选错文件" + extra)
+        kind = self._classify_text(t, texts["appText"], persist=False)
+        if kind:
+            self.log(t, "申报书对照模板判定为 " + kind)
         self.log(t, "使用模型 " + str(t.get("modelLabel") or t.get("model") or "默认"))
         self.log(t, "意见按章节分类中…")
         blocks = self.collect_opinion_blocks(texts)
@@ -426,7 +516,7 @@ class TaskStore:
         app_no = app_no_of(t["app"]["name"])
         t.setdefault("app", {})["no"] = app_no
         self.log(t, "检索人才库/企业库…")
-        snap = await lookup_for_app(t["app"]["name"], texts["appText"])
+        snap = await lookup_for_app(t["app"]["name"], texts["appText"], mode=str((t.get("app") or {}).get("mode") or ""))
         try:
             save_snapshot(t["dir"], snap)
         except Exception:
@@ -444,31 +534,20 @@ class TaskStore:
         except Exception as e:
             attach["notes"] = list(attach.get("notes") or []) + ["缺附件检索失败：" + str(e)[:160]]
             self.log(t, "缺附件检索失败：" + str(e)[:160])
-        t["attachHit"] = {"summary": attach.get("summary") or "", "needed": attach.get("needed") or [], "found": len(attach.get("items") or [])}
+        t["attachHit"] = public_attach_hit(attach)
         self.persist(t)
         if attach.get("needed"):
             self.log(t, "" + (attach.get("summary") or "缺附件检索完成") + (("（" + "；".join(attach.get("notes") or []) + "）") if attach.get("notes") else ""))
         attach_text = format_attach_prompt(attach)
         pair = compare_model_profiles()
-        primary_id = str(t.get("model") or "")
-        primary_fam = model_family(primary_id)
-        models_for_plan = []
-        skip_note = []
-        for fam in COMPARE_FAMS:
-            prof = pair.get(fam)
-            if prof and prof.get("ready"):
-                models_for_plan.append((fam, prof["id"], prof.get("label") or fam_tag(fam)))
-            else:
-                skip_note.append(fam_tag(fam) + " 未配置")
-                if fam == primary_fam:
-                    models_for_plan.append((fam, primary_id, str(t.get("modelLabel") or primary_id)))
-        if not models_for_plan:
-            models_for_plan.append((primary_fam, primary_id, str(t.get("modelLabel") or primary_id)))
-        if skip_note:
-            self.log(t, "对照模型：" + "；".join(skip_note))
-        n_models = len(models_for_plan)
-        names_all = "、".join(fam_tag(fam) for fam, _, _ in models_for_plan)
-        self.log(t, "开始按章多模型对照（每章同时向 " + names_all + " 提交，主模型 " + str(t.get("modelLabel") or primary_id) + "，申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章 × " + str(n_models) + " 模型，章节并发 " + str(PLAN_CONCURRENCY) + "）…")
+        gem = pair.get("gemini") or {}
+        if not gem.get("ready"):
+            raise ValueError("未配置 Gemini：请在管理后台填写 Gemini 地址和密钥")
+        primary_id = str(gem.get("id") or t.get("model") or "")
+        primary_fam = "gemini"
+        models_for_plan = [("gemini", primary_id, gem.get("label") or "Gemini")]
+        n_models = 1
+        self.log(t, "开始按章生成计划（Gemini，思考中度，温度 0.1），申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章，章节并发 " + str(PLAN_CONCURRENCY) + "…")
         sec_sem = asyncio.Semaphore(PLAN_CONCURRENCY)
 
         async def plan_one(sec, model_id, fam, label):
@@ -696,6 +775,11 @@ class TaskStore:
                 seen_lo.add(key)
                 leftovers.append(lv)
         fill_empty_opinions(edits, leftovers)
+        n_cut = enforce_edit_limits(edits, texts["appText"])
+        for msg in n_cut:
+            leftovers.append("【表内限字】" + msg)
+        if n_cut:
+            self.log(t, "已按申报书印刷上限压缩 " + str(len(n_cut)) + " 条超限修改意见")
         for msg in check_replace_limits(edits, texts["appText"]):
             leftovers.append("【表内限字】" + msg)
         try:
@@ -703,7 +787,7 @@ class TaskStore:
             save_attach_snapshot(t["dir"], attach)
         except Exception as e:
             self.log(t, "缺附件补检索失败：" + str(e)[:160])
-        t["attachHit"] = {"summary": attach.get("summary") or "", "needed": attach.get("needed") or [], "found": len(attach.get("items") or [])}
+        t["attachHit"] = public_attach_hit(attach)
         self.persist(t)
         lo_blob = "\n".join(str(x) for x in leftovers)
         for line in leftover_lines(attach):
@@ -765,13 +849,16 @@ class TaskStore:
 
             out_dir = Path(t["dir"]) / "work" / "output"; out_dir.mkdir(parents=True, exist_ok=True)
             stem = stem_of(t["app"]["name"])
-            src_docx = Path(t["dir"]) / "work" / "input" / work_docx_name((t.get("app") or {}).get("workDocx") or t["app"]["name"])
-            if src_docx.suffix.lower() != ".docx" or not src_docx.exists():
-                src_docx = Path(t["dir"]) / "work" / "input" / work_docx_name(t["app"]["name"])
-            if not src_docx.exists():
-                raise ValueError("没有可用于落盘的 Word 工作稿（数字 PDF 需先转换成 .docx）")
-            out_docx = out_dir / (stem + "_修改后.docx"); bak_docx = out_dir / (stem + "_备份.docx")
-            so, se, rc = await self._py([SCRIPTS_DIR / "apply_edits.py", src_docx, out_docx, bak_docx, plan_path], timeout=300)
+            src_app = Path(t["dir"]) / "work" / "input" / work_docx_name((t.get("app") or {}).get("workDocx") or t["app"]["name"])
+            if not src_app.exists():
+                src_app = Path(t["dir"]) / "work" / "input" / work_docx_name(t["app"]["name"])
+            src_ext = src_app.suffix.lower()
+            if not src_app.exists() or src_ext not in (WORD_APP_EXT | EXCEL_APP_EXT):
+                raise ValueError("没有可用于落盘的申报书工作稿（数字 PDF 需先转换成 .docx）")
+            out_app = out_dir / edited_name(stem, src_ext)
+            bak_app = out_dir / backup_name(stem, src_ext)
+            apply_timeout = 600 if src_ext in EXCEL_APP_EXT else 300
+            so, se, rc = await self._py([SCRIPTS_DIR / "apply_edits.py", src_app, out_app, bak_app, plan_path], timeout=apply_timeout)
             if rc != 0:
                 t["status"] = "failed"; t["error"] = "编辑执行器失败：" + (se or so or "rc!=0")[:400]; return
 
@@ -782,7 +869,10 @@ class TaskStore:
             self.log(t, "落盘 " + str(hits) + "/" + str(len(applied)) + " 处" + note)
 
             check_txt = tmp_dir / "_final.txt"
-            await self._py([SCRIPTS_DIR / "sb_extract.py", out_docx, check_txt])
+            try:
+                await extract_to_txt(out_app, check_txt)
+            except Exception:
+                await self._py([SCRIPTS_DIR / "sb_extract.py", out_app, check_txt])
             final_text = check_txt.read_text(encoding="utf-8") if check_txt.exists() else ""
             leftovers = list(leftovers or [])
             limit_hits = check_text_limits(final_text)
@@ -806,17 +896,15 @@ class TaskStore:
                 clause = str(e2.get("clause") or "")
                 find = str(e2.get("find") or "")
                 opinion = str(e2.get("opinion") or e2.get("clause") or "")
-                og = str(e2.get("opinionGrok") or "")
-                om = str(e2.get("opinionGemini") or "")
-                od = str(e2.get("opinionDoubao") or "")
+                om = str(e2.get("opinionGemini") or e2.get("opinion") or "")
                 replace = str(e2.get("replace") or "")
                 row_dicts.append({
                     "n": i2 + 1, "section": sec, "clause": clause, "find": find,
-                    "opinion": opinion, "opinionGrok": og, "opinionGemini": om, "opinionDoubao": od,
+                    "opinion": opinion, "opinionGemini": om,
                     "replace": replace, "status": st,
                 })
-                rows.append("| " + str(i2 + 1) + " | " + sec + " | " + esc_md(clause)[:70] + " | " + esc_md(find)[:40] + "… | " + esc_md(og)[:70] + " | " + esc_md(om)[:70] + " | " + esc_md(od)[:70] + " | " + esc_md(replace)[:40] + "… | " + st + " |")
-            report_lines = ["# 修改对照表", "", "> 管线：Grok / Gemini / 火山 多模型出计划 → 人工修订 → 内置执行器落盘　生成时间：" + now_str(), "", "| # | 章节 | 意见条款 | 改前摘录 | Grok修改意见 | Gemini修改意见 | 火山修改意见 | 改后摘录 | 结果 |", "|---|---|---|---|---|---|---|---|---|"] + rows
+                rows.append("| " + str(i2 + 1) + " | " + sec + " | " + esc_md(clause)[:70] + " | " + esc_md(find)[:40] + "… | " + esc_md(om)[:70] + " | " + esc_md(replace)[:40] + "… | " + st + " |")
+            report_lines = ["# 修改对照表", "", "> 管线：Gemini 出计划 → 人工修订 → 内置执行器落盘　生成时间：" + now_str(), "", "| # | 章节 | 意见条款 | 改前摘录 | Gemini修改意见 | 改后摘录 | 结果 |", "|---|---|---|---|---|---|---|"] + rows
             (out_dir / "修改对照表.md").write_text("\n".join(report_lines), encoding="utf-8")
             try:
                 for old in out_dir.glob("*修改对照表.docx"):
