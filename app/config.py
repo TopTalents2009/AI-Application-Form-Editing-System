@@ -83,9 +83,11 @@ def load_config() -> dict:
     papers = c.get("papers") if isinstance(c.get("papers"), dict) else {}
     papers_base = str(papers.get("baseUrl") or c.get("papersBaseUrl") or "").rstrip("/")
     papers_key = _usable_secret(papers.get("apiKey") or papers.get("api_key") or c.get("papersApiKey"))
-    if papers_key and not papers_base:
-        papers_base = "http://192.168.2.8:8000"
-    papers_ok = bool(papers_base and papers_key)
+    papers_user = str(papers.get("username") or papers.get("user") or "").strip()
+    papers_pass = _usable_secret(papers.get("password") or "")
+    if (papers_key or papers_user) and not papers_base:
+        papers_base = "http://192.168.2.62:8000"
+    papers_ok = bool(papers_base and (papers_key or (papers_user and papers_pass)))
     mysql = c.get("mysql") if isinstance(c.get("mysql"), dict) else {}
     mysql_host = str(mysql.get("host") or "127.0.0.1").strip() or "127.0.0.1"
     try:
@@ -98,6 +100,7 @@ def load_config() -> dict:
     mysql_ok = bool(mysql_host and mysql_user and mysql_db)
     raw_models = c.get("models") if isinstance(c.get("models"), list) else []
     client_inbox = str(c.get("clientInbox") or "").strip()
+    project_proof = _project_proof_block(c)
     return {
         "baseUrl": base.rstrip("/"),
         "apiKey": key,
@@ -114,6 +117,9 @@ def load_config() -> dict:
         "poolConfigured": pool_ok,
         "papersBaseUrl": papers_base,
         "papersApiKey": papers_key,
+        "papersUsername": papers_user,
+        "papersPassword": papers_pass,
+        "papersAuthMode": "apiKey" if papers_key else ("session" if papers_user and papers_pass else ""),
         "papersConfigured": papers_ok,
         "mysqlHost": mysql_host,
         "mysqlPort": mysql_port,
@@ -122,6 +128,55 @@ def load_config() -> dict:
         "mysqlDatabase": mysql_db,
         "mysqlConfigured": mysql_ok,
         "clientInbox": client_inbox,
+        "projectProof": project_proof,
+    }
+
+
+def _project_proof_block(c: dict) -> dict:
+    """项目证明补缺：CodeBuddy 无头检索 + 生成 API（生成块按模板填写）。"""
+    raw = c.get("projectProof") if isinstance(c.get("projectProof"), dict) else {}
+    cb = raw.get("codebuddy") if isinstance(raw.get("codebuddy"), dict) else {}
+    gen = raw.get("generate") if isinstance(raw.get("generate"), dict) else {}
+    cmd = str(cb.get("cmd") or "codebuddy.cmd").strip() or "codebuddy.cmd"
+    try:
+        cb_timeout = int(float(cb.get("timeoutSec") or 180))
+    except (TypeError, ValueError):
+        cb_timeout = 180
+    try:
+        max_turns = int(float(cb.get("maxTurns") or 10))
+    except (TypeError, ValueError):
+        max_turns = 10
+    gen_base = str(gen.get("baseUrl") or "").strip().rstrip("/")
+    gen_path = str(gen.get("path") or "").strip()
+    gen_key = _usable_secret(gen.get("apiKey") or gen.get("api_key"))
+    gen_ok = bool(gen_base and gen_path) and FILL_MARK not in gen_base and FILL_MARK not in gen_path
+    method = str(gen.get("method") or "POST").upper() or "POST"
+    try:
+        gen_timeout = int(float(gen.get("timeoutSec") or 120))
+    except (TypeError, ValueError):
+        gen_timeout = 120
+    headers = gen.get("headers") if isinstance(gen.get("headers"), dict) else {}
+    body = gen.get("body") if isinstance(gen.get("body"), (dict, list, str)) else {}
+    provider = str(gen.get("provider") or "").strip().lower()
+    return {
+        "codebuddy": {
+            "cmd": cmd,
+            "timeoutSec": cb_timeout if cb_timeout > 0 else 180,
+            "maxTurns": max_turns if max_turns > 0 else 10,
+            "model": str(cb.get("model") or "").strip(),
+            "permissionMode": str(cb.get("permissionMode") or "bypassPermissions"),
+        },
+        "generate": {
+            "baseUrl": gen_base,
+            "apiKey": gen_key,
+            "path": gen_path,
+            "method": method,
+            "timeoutSec": gen_timeout if gen_timeout > 0 else 120,
+            "provider": provider,
+            "headers": headers,
+            "body": body,
+            "configured": gen_ok,
+        },
     }
 
 DATA_DIR = Path(__file__).resolve().parent.parent
@@ -527,6 +582,26 @@ def _merge_gemini(raw: dict, gemini: dict):
     raw["models"] = models
 
 
+def _merge_papers(raw: dict, papers: dict):
+    """论文导出 API（papers 块）。留空字段保持当前值。"""
+    blob = raw.get("papers") if isinstance(raw.get("papers"), dict) else {}
+    base = str(papers.get("baseUrl") or "").strip().rstrip("/")
+    if base:
+        blob["baseUrl"] = base
+    key = _usable_secret(papers.get("apiKey")) if "apiKey" in papers else ""
+    if key:
+        blob["apiKey"] = key
+    user = str(papers.get("username") or papers.get("user") or "").strip()
+    if user:
+        blob["username"] = user
+    if "password" in papers:
+        pwd = _usable_secret(papers.get("password"))
+        if pwd:
+            blob["password"] = pwd
+    if blob:
+        raw["papers"] = blob
+
+
 def _merge_pool(raw: dict, pool: dict):
     """人才库 / 企业库只读接口（pool 块）。留空字段保持当前值。"""
     blob = raw.get("pool") if isinstance(raw.get("pool"), dict) else {}
@@ -564,6 +639,9 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
     pool = payload.get("pool") if isinstance(payload.get("pool"), dict) else None
     if pool:
         _merge_pool(raw, pool)
+    papers = payload.get("papers") if isinstance(payload.get("papers"), dict) else None
+    if papers:
+        _merge_papers(raw, papers)
     classify = str(payload.get("classifyModel") or payload.get("model") or "").strip()
     if classify:
         raw["model"] = classify
@@ -575,7 +653,7 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
 
 
 # 恢复默认只回滚 LLM 接入参数；数据库 / 人才库 / 论文 / 收件箱等运行时配置保留当前值
-_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox")
+_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox", "projectProof")
 
 
 def restore_default_config() -> dict:
@@ -657,6 +735,14 @@ def editor_config() -> dict:
             "hasKey": bool(cfg.get("poolApiKey")),
             "mode": cfg.get("poolMode") or "all",
             "configured": bool(cfg.get("poolConfigured")),
+        },
+        "papers": {
+            "baseUrl": cfg.get("papersBaseUrl") or "",
+            "hasKey": bool(cfg.get("papersApiKey")),
+            "hasPassword": bool(cfg.get("papersPassword")),
+            "username": cfg.get("papersUsername") or "",
+            "authMode": cfg.get("papersAuthMode") or "",
+            "configured": bool(cfg.get("papersConfigured")),
         },
         "classifyModel": (cfg.get("model") if model_family(cfg.get("model") or "") == "gemini" else "") or gemini["id"],
         "hasDefault": DEFAULT_CONFIG_PATH.exists(),

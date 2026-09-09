@@ -16,6 +16,10 @@ from .attachments import resolve_missing, format_attach_prompt, save_snapshot as
 from .report_docx import write_compare_docx
 from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits, enforce_edit_limits, limit_hint
 from .form_kind import classify as classify_form
+from .hj_form import (
+    HJ_LAYOUT_HINTS, HJ_SECTION_ENUM, HJ_SECTION_FILES, HJ_SECTION_ORDER, QM_SECTION_ENUM,
+    hj_form_requirements, is_hj_app, remap_hj_section, slice_hj_section,
+)
 from .inline_opinions import (
     INLINE_OP_NAME, NO_OPINION_MSG, extract_inline_opinion_text, split_inline_units,
 )
@@ -83,6 +87,10 @@ def split_source_units(text: str) -> list:
         units.extend(_split_items(blk))
     return units
 
+def _chunk_has_item(cur) -> bool:
+    return any(ITEM_HEAD.match(x.strip()) for x in cur if str(x).strip())
+
+
 def _split_items(blk: str) -> list:
     lines = str(blk or "").replace("\r\n", "\n").split("\n")
     chunks, cur = [], []
@@ -98,7 +106,9 @@ def _split_items(blk: str) -> list:
             if cur and len("\n".join(cur)) >= 40:
                 push()
             continue
-        if ITEM_HEAD.match(s) and cur and len("".join(cur).strip()) >= 20:
+        # 已是编号条目时，下一条编号必须切开。短句如「3.承担项目需要证明材料;」
+        # 以前因不足 20 字被粘到下一条，导致「论文重新梳理」丢失。
+        if ITEM_HEAD.match(s) and cur and (_chunk_has_item(cur) or len("".join(cur).strip()) >= 20):
             push()
         cur.append(line)
     push()
@@ -107,7 +117,7 @@ def _split_items(blk: str) -> list:
         return [t] if t else []
     merged = []
     for c in chunks:
-        if merged and len(c) < 16:
+        if merged and len(c) < 16 and not ITEM_HEAD.match(c.lstrip()):
             merged[-1] += "\n" + c
         else:
             merged.append(c)
@@ -397,19 +407,31 @@ class TaskStore:
                 blocks.append({"id": "S" + str(len(blocks) + 1), "name": of["name"], "text": u})
         return blocks
 
-    def build_classify_messages(self, blocks):
+    def _hj_mode(self, t, app_text: str = "") -> bool:
+        app = t.get("app") or {}
+        return is_hj_app(str(app.get("mode") or ""), app_text, str(app.get("name") or ""))
+
+    def _section_spec(self, hj: bool):
+        if hj:
+            return list(HJ_SECTION_ORDER), dict(HJ_SECTION_FILES)
+        return list(SECTION_ORDER), dict(SECTION_FILES)
+
+    def build_classify_messages(self, blocks, hj: bool = False):
         tpl = (ROOT_DIR / "CLASSIFY_PROMPT.md").read_text(encoding="utf-8")
+        enum = HJ_SECTION_ENUM if hj else QM_SECTION_ENUM
+        tpl = tpl.replace("{{SECTION_ENUM}}", enum)
         parts = ["[" + b["id"] + "] 来源文件：" + b["name"] + "\n" + b["text"] for b in blocks]
         return [{"role": "user", "content": tpl.replace("{{OPINIONS}}", "\n\n----\n\n".join(parts))}]
 
-    def load_rules(self, sec):
-        fname = SECTION_FILES.get(sec)
+    def load_rules(self, sec, hj: bool = False):
+        files = HJ_SECTION_FILES if hj else SECTION_FILES
+        fname = files.get(sec)
         fp = RULES_DIR / fname if fname else None
         return fp.read_text(encoding="utf-8") if fp and Path(fp).exists() else ""
 
-    def build_section_plan_messages(self, sec, items, app_text, pool_text="", attach_text=""):
+    def build_section_plan_messages(self, sec, items, app_text, pool_text="", attach_text="", hj: bool = False):
         tpl = (ROOT_DIR / "SECTION_PLAN_TEMPLATE.md").read_text(encoding="utf-8")
-        rules = self.load_rules(sec) or "（本章节暂无专门规则，按申报书通用规范处理）"
+        rules = self.load_rules(sec, hj=hj) or "（本章节暂无专门规则，按申报书通用规范处理）"
         lines = []
         for it in items:
             cid = str(it.get("cid") or "")
@@ -422,12 +444,17 @@ class TaskStore:
             if hint:
                 lines.append(hint)
             lines.append("")
+        form_reqs = extract_form_requirements(app_text)
+        if hj:
+            extra = hj_form_requirements(app_text)
+            form_reqs = extra + (("\n\n" + form_reqs) if form_reqs else "")
         body = tpl.replace("{{SECTION}}", sec).replace("{{RULES}}", rules)
-        body = body.replace("{{FORM_REQS}}", extract_form_requirements(app_text))
+        body = body.replace("{{FORM_REQS}}", form_reqs)
         body = body.replace("{{CLAUSES}}", "\n".join(lines).strip())
-        body = body.replace("{{APP_TEXT}}", app_text)
+        body = body.replace("{{APP_TEXT}}", slice_hj_section(app_text, sec) if hj else app_text)
         body = body.replace("{{POOL_DATA}}", pool_text or "（未检索到库内记录，仅能使用申报书正文；缺数据写入 leftovers）")
         body = body.replace("{{ATTACH_DATA}}", attach_text or "（修改意见未点名缺失附件）")
+        body = body.replace("{{LAYOUT_HINTS}}", HJ_LAYOUT_HINTS if hj else "")
         return [{"role": "user", "content": body}]
 
     async def verify_docx(self, fp):
@@ -462,6 +489,10 @@ class TaskStore:
         kind = self._classify_text(t, texts["appText"], persist=False)
         if kind:
             self.log(t, "申报书对照模板判定为 " + kind)
+        hj = self._hj_mode(t, texts["appText"])
+        sec_all, _sec_files = self._section_spec(hj)
+        if hj:
+            self.log(t, "HJ 按印刷栏位切章：" + "、".join(sec_all[:-1]))
         self.log(t, "使用模型 " + str(t.get("modelLabel") or t.get("model") or "默认"))
         self.log(t, "意见按章节分类中…")
         blocks = self.collect_opinion_blocks(texts)
@@ -469,10 +500,10 @@ class TaskStore:
             raise ValueError("意见原文切分结果为空")
         self.log(t, "已从意见文件切出 " + str(len(blocks)) + " 条原文")
         by_id = {b["id"]: b for b in blocks}
-        allowed_sec = set(SECTION_ORDER)
+        allowed_sec = set(sec_all)
         clauses = []
         try:
-            c_resp = await chat(self.build_classify_messages(blocks), json_mode=True, timeout_s=LLM_TIMEOUT_CLASSIFY, model=t.get("model"))
+            c_resp = await chat(self.build_classify_messages(blocks, hj=hj), json_mode=True, timeout_s=LLM_TIMEOUT_CLASSIFY, model=t.get("model"))
             cj = extract_json(c_resp["content"])
             used = set()
             for i, c in enumerate(cj.get("clauses") or []):
@@ -485,6 +516,8 @@ class TaskStore:
                 if not clause:
                     continue
                 section = str(c.get("section") or "其他").strip()
+                if hj:
+                    section = remap_hj_section(section, clause, blk["text"] if blk else clause)
                 if section not in allowed_sec:
                     section = "其他"
                 cid = unique_cid(sid or ("C" + str(i + 1)), used)
@@ -495,21 +528,61 @@ class TaskStore:
                 })
         except Exception as e:
             self.log(t, "分类失败，整体按【其他】处理：" + str(e)[:150])
+
+        # —— 反馈修复（#10 重复输出 / #11 意见漏提）——
+        # 1) 去重：同一意见正文或条款摘要完全相同的条目只保留第一条，避免「同一条意见输出两次」
+        _seen_op = set()
+        _seen_clause = set()
+        _dedup = []
+        for _c in clauses:
+            _op = norm_find(_c.get("opinion") or "")
+            _cl = norm_find(_c.get("clause") or "")
+            if _op and _op in _seen_op:
+                continue
+            if _cl and _cl in _seen_clause:
+                continue
+            if _op:
+                _seen_op.add(_op)
+            if _cl:
+                _seen_clause.add(_cl)
+            _dedup.append(_c)
+        clauses = _dedup
+
         if not clauses:
             used = set()
             for b in blocks:
                 cid = unique_cid(b["id"], used)
+                section = remap_hj_section("其他", "", b["text"]) if hj else "其他"
+                if section not in allowed_sec:
+                    section = "其他"
                 clauses.append({
-                    "cid": cid, "sourceId": b["id"], "section": "其他",
+                    "cid": cid, "sourceId": b["id"], "section": section,
                     "clause": " ".join(b["text"].split())[:80],
                     "opinion": b["text"], "opName": b["name"],
                 })
+        # 2) 兜底覆盖：LLM 漏掉的来源意见补一条，避免「意见未被提取/未修改」
+        if clauses:
+            _covered = {c.get("sourceId") for c in clauses}
+            _used2 = {c.get("cid") for c in clauses}
+            for b in blocks:
+                if b["id"] in _covered:
+                    continue
+                cid = unique_cid(b["id"], _used2)
+                section = remap_hj_section("其他", "", b["text"]) if hj else "其他"
+                if section not in allowed_sec:
+                    section = "其他"
+                clauses.append({
+                    "cid": cid, "sourceId": b["id"], "section": section,
+                    "clause": " ".join(b["text"].split())[:80],
+                    "opinion": b["text"], "opName": b["name"],
+                })
+                self.log(t, "补充被漏掉的来源意见：" + b["id"])
         by_sec = {}
         for c in clauses:
             by_sec.setdefault(c["section"], []).append(c)
         self.log(t, "章节分布：" + "，".join(s + "×" + str(len(a)) for s, a in by_sec.items()))
 
-        sec_order = [s for s in SECTION_ORDER if s in by_sec]
+        sec_order = [s for s in sec_all if s in by_sec]
         if not sec_order:
             by_sec["其他"] = list(clauses)
             sec_order = ["其他"]
@@ -527,9 +600,9 @@ class TaskStore:
         pool_text = format_pool_prompt(snap)
         opinion_blob = [c.get("opinion") or "" for c in clauses] + [c.get("clause") or "" for c in clauses]
         attach = {"needed": [], "items": [], "private": {}, "notes": [], "summary": ""}
-        self.log(t, "检索缺失附件（人才库优先，论文走论文系统）…")
+        self.log(t, "检索缺失附件（人才库优先；项目证明再走联网检索/生成接口）…")
         try:
-            attach = await resolve_missing(t["id"], opinion_blob, snap, app_no)
+            attach = await resolve_missing(t["id"], opinion_blob, snap, app_no, app_text=texts.get("appText") or "", task_dir=t["dir"])
             save_attach_snapshot(t["dir"], attach)
         except Exception as e:
             attach["notes"] = list(attach.get("notes") or []) + ["缺附件检索失败：" + str(e)[:160]]
@@ -554,7 +627,7 @@ class TaskStore:
             tag = fam_tag(fam)
             self.log(t, "⏳ 【" + sec + "·" + tag + "】正在调用 " + str(label) + "…")
             try:
-                r = await chat(self.build_section_plan_messages(sec, by_sec[sec], texts["appText"], pool_text, attach_text), json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=model_id)
+                r = await chat(self.build_section_plan_messages(sec, by_sec[sec], texts["appText"], pool_text, attach_text, hj=hj), json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=model_id)
                 plan = extract_json(r["content"])
                 n_e = len(plan.get("edits") or []) if isinstance(plan, dict) else 0
                 n_l = len((plan.get("leftovers") if isinstance(plan, dict) else None) or [])
@@ -783,7 +856,7 @@ class TaskStore:
         for msg in check_replace_limits(edits, texts["appText"]):
             leftovers.append("【表内限字】" + msg)
         try:
-            attach = await resolve_missing(t["id"], opinion_blob + leftovers, snap, app_no, prev=attach)
+            attach = await resolve_missing(t["id"], opinion_blob + leftovers, snap, app_no, prev=attach, app_text=texts.get("appText") or "", task_dir=t["dir"])
             save_attach_snapshot(t["dir"], attach)
         except Exception as e:
             self.log(t, "缺附件补检索失败：" + str(e)[:160])

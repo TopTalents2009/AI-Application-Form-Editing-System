@@ -1,12 +1,13 @@
 """修改意见提到缺附件时：先查人才库，论文再查论文导出 API，并给出本系统下载链接。"""
 from __future__ import annotations
-import json, re, secrets
+import asyncio, json, re, secrets
 from pathlib import Path
 from urllib.parse import urlparse
 import httpx
 from .config import load_config
 from . import papers as P
 from . import pool as POOL
+from . import project_proof as PP
 
 NEED_RE = re.compile(
     r"缺|缺少|缺失|未上传|未提供|未附|请补充|须补充|需补充|请上传|补交|补传|补齐|不清晰|"
@@ -23,7 +24,7 @@ KINDS = [
     {"id": "paper", "label": "论文全文", "keys": ("论文全文", "论文pdf", "论文 pdf", "论文PDF", "论文附件", "论文材料", "论文扫描", "代表性论著", "需附全文", "科研成果")},
     {"id": "photo", "label": "证件照", "keys": ("证件照", "一寸照", "白底照")},
     {"id": "sign", "label": "电子签", "keys": ("电子签", "电子签名", "签字扫描", "签名扫描")},
-    {"id": "project", "label": "项目证明", "keys": ("项目证明", "项目材料", "项目扫描")},
+    {"id": "project", "label": "项目证明", "keys": ("项目证明", "项目材料", "项目扫描", "立项批文", "立项证明", "主持项目证明", "科研项目证明")},
 ]
 KIND_POOL_ID = {
     "passport": "passport",
@@ -73,6 +74,10 @@ def _kind_needed(blob: str, kind: dict) -> bool:
     if kind["id"] == "paper":
         if re.search(r"论文.{0,12}(全文|PDF|pdf|附件|扫描件)", blob) and NEED_RE.search(blob):
             return True
+    if kind["id"] == "project":
+        if re.search(r"(主持.{0,6}项目|立项|科研项目).{0,16}(证明|批文|批复|附件材料)", blob):
+            if NEED_RE.search(blob) or re.search(r"必须提供|须提供|应提供|请提供|严禁用论文代替", blob):
+                return True
     return False
 
 
@@ -254,7 +259,7 @@ def _private_item(*, source: str, url: str, filename: str):
     return {"source": source, "url": url, "filename": filename}
 
 
-async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict | None = None) -> dict:
+async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict | None = None, app_text: str = "", task_dir: str | Path | None = None) -> dict:
     needed = extract_needed_kinds(texts)
     cfg = load_config()
     result = prev or {
@@ -266,6 +271,10 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
         "papersFetched": False,
         "papersError": "",
         "papersAttachId": "",
+        "codebuddyFetched": False,
+        "codebuddyError": "",
+        "generateFetched": False,
+        "generateError": "",
     }
     labels = [k["label"] for k in needed]
     result["needed"] = labels
@@ -360,6 +369,75 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                 if not any(it.get("source") == "papers" for it in result["items"]) and last_err:
                     result["papersError"] = last_err
 
+    project_kind = next((k for k in needed if k["id"] == "project"), None)
+    pool_project_ok = bool(by_kind.get("项目证明"))
+    work_root = Path(task_dir) / "work" / "tmp" / "project_proof" if task_dir else Path(".")
+    if project_kind and not pool_project_ok:
+        person = PP.person_name(snap)
+        projects = PP.extract_projects(snap, app_text)
+        company = str(((snap or {}).get("keys") or {}).get("company") or "")
+        ids = _attach_ids(snap, app_no)
+        aid = ids[0] if ids else str(app_no or "")
+        if not result.get("codebuddyFetched"):
+            result["codebuddyFetched"] = True
+            cb = await asyncio.to_thread(
+                PP.run_codebuddy_search,
+                person=person, attach_id=aid, projects=projects,
+                work_dir=work_root / "codebuddy",
+            )
+            if cb.get("error"):
+                result["codebuddyError"] = str(cb.get("error") or "")
+                result["notes"].append("项目证明联网检索：" + result["codebuddyError"])
+            n_cb = 0
+            for f in cb.get("items") or []:
+                u = str(f.get("url") or "")
+                if not u or u in known_urls:
+                    continue
+                known_urls.add(u)
+                fid = _new_id()
+                pub = _public_item(
+                    tid, fid,
+                    kind="项目证明", source="codebuddy",
+                    filename=str(f.get("filename") or "project-proof"),
+                    title=str(f.get("title") or f.get("filename") or ""),
+                    note=str(f.get("note") or "CodeBuddy 联网检索"),
+                )
+                result["items"].append(pub)
+                result["private"][fid] = _private_item(source="codebuddy", url=u, filename=pub["filename"])
+                by_kind.setdefault("项目证明", []).append(pub)
+                n_cb += 1
+            if n_cb:
+                result["notes"].append("CodeBuddy 联网检索命中 " + str(n_cb) + " 个项目证明")
+        if not by_kind.get("项目证明") and not result.get("generateFetched"):
+            result["generateFetched"] = True
+            gen = await PP.call_generate_api(
+                person=person, attach_id=aid, company=company, projects=projects,
+                work_dir=work_root / "generate",
+            )
+            if gen.get("error"):
+                result["generateError"] = str(gen.get("error") or "")
+                result["notes"].append("项目证明生成：" + result["generateError"])
+            n_gen = 0
+            for f in gen.get("items") or []:
+                u = str(f.get("url") or "")
+                if not u or u in known_urls:
+                    continue
+                known_urls.add(u)
+                fid = _new_id()
+                pub = _public_item(
+                    tid, fid,
+                    kind="项目证明", source="generate",
+                    filename=str(f.get("filename") or "project-proof"),
+                    title=str(f.get("title") or f.get("filename") or ""),
+                    note=str(f.get("note") or "生成 API"),
+                )
+                result["items"].append(pub)
+                result["private"][fid] = _private_item(source="generate", url=u, filename=pub["filename"])
+                by_kind.setdefault("项目证明", []).append(pub)
+                n_gen += 1
+            if n_gen:
+                result["notes"].append("生成 API 产出 " + str(n_gen) + " 个项目证明")
+
     found_n = len(result["items"])
     miss = [lab for lab in labels if not any(it.get("kind") == lab or (lab == "论文全文" and "论文" in str(it.get("kind") or "")) for it in result["items"])]
     parts = []
@@ -387,13 +465,16 @@ def leftover_lines(result: dict) -> list:
         if hits:
             bits = []
             for it in hits:
-                src = "人才库" if it.get("source") == "pool" else "论文系统"
+                src = {"pool": "人才库", "papers": "论文系统", "codebuddy": "联网检索", "generate": "生成接口"}.get(it.get("source"), str(it.get("source") or "外部"))
                 bits.append(src + " " + str(it.get("filename") or it.get("title") or "") + " " + str(it.get("download") or ""))
             lines.append("【缺附件·" + lab + "】已检索到，下载：" + " ； ".join(bits))
         else:
             extra = ""
             if lab == "论文全文" and result.get("papersError"):
                 extra = "。" + str(result.get("papersError"))
+            elif lab == "项目证明":
+                bits = [str(x) for x in (result.get("codebuddyError"), result.get("generateError")) if x]
+                extra = "。" + "；".join(bits) if bits else ""
             elif not extra and result.get("notes"):
                 extra = "。" + "；".join(str(x) for x in result.get("notes") if lab in str(x) or (lab == "论文全文" and "论文" in str(x)))
             lines.append("【缺附件·" + lab + "】人才库未检索到可下载文件" + extra)
@@ -418,7 +499,7 @@ def format_attach_prompt(result: dict) -> str:
         for it in items:
             lines.append("- " + str(it.get("kind") or "") + " " + str(it.get("title") or it.get("filename") or "") + " → " + str(it.get("download") or ""))
     else:
-        lines.append("库内与论文系统均未给出可下载文件。leftovers 写明缺哪类附件，严禁编造已上传。")
+        lines.append("库内、联网检索与生成接口均未给出可下载文件。leftovers 写明缺哪类附件，严禁编造已上传。")
     notes = result.get("notes") or []
     if notes:
         lines.append("检索说明：" + "；".join(str(x) for x in notes[:12]))
@@ -436,6 +517,10 @@ def save_snapshot(task_dir: str | Path, result: dict) -> None:
         "papersFetched": bool(result.get("papersFetched")),
         "papersError": result.get("papersError") or "",
         "papersAttachId": result.get("papersAttachId") or "",
+        "codebuddyFetched": bool(result.get("codebuddyFetched")),
+        "codebuddyError": result.get("codebuddyError") or "",
+        "generateFetched": bool(result.get("generateFetched")),
+        "generateError": result.get("generateError") or "",
         "private": result.get("private") or {},
     }
     (d / "attachments.json").write_text(json.dumps(slim, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -480,8 +565,30 @@ async def fetch_upstream(priv: dict):
     if source == "papers":
         if not cfg.get("papersConfigured"):
             raise P.PapersError("NOT_CONFIGURED", "未配置论文系统")
-        url = P.abs_url(cfg["papersBaseUrl"], url)
-        headers = {"X-Api-Key": cfg["papersApiKey"]}
+        full = P.abs_url(cfg["papersBaseUrl"], url)
+        if cfg.get("papersApiKey"):
+            url = full
+            headers = {"X-Api-Key": cfg["papersApiKey"]}
+        else:
+            content, fn, ctype, status = await P.fetch_file(full)
+            fn = str(priv.get("filename") or fn)
+            return content, fn, ctype, status
+    elif source in ("codebuddy", "generate") and not re.match(r"https?://", url, re.I):
+        local = Path(url[7:] if url.startswith("file://") else url)
+        if not local.is_file():
+            raise P.PapersError("BAD_FILE", "本地项目证明不存在：" + str(local))
+        fn = str(priv.get("filename") or local.name)
+        ctype = "application/pdf" if local.suffix.lower() == ".pdf" else "application/octet-stream"
+        return local.read_bytes(), fn, ctype, 200
+    elif source == "generate":
+        gen = (cfg.get("projectProof") or {}).get("generate") or {}
+        if not gen.get("configured"):
+            raise P.PapersError("NOT_CONFIGURED", "未配置项目证明生成 API")
+        url = P.abs_url(gen.get("baseUrl") or "", url)
+        headers = PP.generate_headers(gen)
+        key = str(gen.get("apiKey") or "")
+        if key and "X-Api-Key" not in headers and "Authorization" not in headers:
+            headers["X-Api-Key"] = key
     else:
         if url.startswith("/"):
             if not cfg.get("poolConfigured"):

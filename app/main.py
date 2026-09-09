@@ -7,7 +7,6 @@ from .runner import TaskStore
 from .batch import BatchStore
 from .routes import tasks as tasks_routes
 from .routes import batches as batches_routes
-from .routes import client_extract as client_extract_routes
 from .routes import auth as auth_routes
 from .routes import admin as admin_routes
 from .routes import feedback as feedback_routes
@@ -21,14 +20,14 @@ class NoCacheStatic(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
         p = request.url.path
-        if p == "/" or p.startswith("/public") or p.startswith("/client-extract"):
+        if p == "/" or p.startswith("/public"):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
 app.add_middleware(NoCacheStatic)
 
 # 无需登录即可访问的路径
-PUBLIC_PATHS = ("/login", "/register", "/api/auth/login", "/api/auth/register")
+PUBLIC_PATHS = ("/login", "/register", "/api/auth/login", "/api/auth/register", "/client-extract")
 
 class AuthGate(BaseHTTPMiddleware):
     """校验会话 cookie：未登录页面跳 /login，API 返回 401。"""
@@ -53,10 +52,8 @@ app.add_middleware(AuthGate)
 
 tasks_router = tasks_routes.create_router(runner)
 batches_router = batches_routes.create_router(runner, batches)
-client_extract_router = client_extract_routes.create_router()
 app.include_router(tasks_router)
 app.include_router(batches_router)
-app.include_router(client_extract_router)
 app.include_router(auth_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(feedback_routes.router)
@@ -124,9 +121,19 @@ async def api_pool_health():
     from .pool import health
     return await health()
 
+@app.get("/api/papers/health")
+async def api_papers_health():
+    from .papers import health
+    return await health()
+
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+
+@app.get("/client-extract")
+def client_extract_disabled():
+    """年龄改写界面已下线，旧链接重定向到申报书智能修改首页。"""
+    return RedirectResponse("/", status_code=302)
 
 from fastapi.staticfiles import StaticFiles
 app.mount("/public", StaticFiles(directory=str(STATIC_DIR)), name="public")

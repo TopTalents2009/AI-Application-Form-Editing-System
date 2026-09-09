@@ -194,7 +194,8 @@ def split_opinion_blocks(text) -> list:
     for raw in String_splitlines(text):
         l = raw.strip()
         is_new = (
-            re.match(r"\d{4,6}\s*(个?人才|的?修改意见|[:：]?)", l)
+            re.match(r"\d{4,6}\s*(个?人才|的?修改意见)[:：]?", l)
+            or re.match(r"\d{4,6}\s*[：:]", l)
             or re.match(r"[A-Za-z][A-Za-z .'\-]{3,40}[：:]", l)
             or re.fullmatch(r"[A-Z][A-Z .'\-]{4,40}", l)
             or (re.match(r"[A-Za-z][A-Za-z'\- ]{2,30}(（[^）]{2,40}）)?\s*$", l) and any(c.isupper() for c in l) and not re.search(r"[，。；,.]$", l))

@@ -335,6 +335,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
         </div>
         <div id="cfgCards"></div>
         <div id="poolCfgCard"></div>
+        <div id="papersCfgCard"></div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <button type="button" class="btn-save" id="cfgSave">保存全部配置</button>
           <button type="button" class="mini" id="cfgRestore">恢复默认配置</button>
@@ -596,7 +597,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       var tb = document.getElementById('taskBody');
       tb.innerHTML = '';
       var openId = tb.getAttribute('data-open') || '';
-      tasks.slice(0, 20).forEach(function (t) {
+      tasks.forEach(function (t) {
         var tr = document.createElement('tr');
         tr.className = 'task-row' + (t.id === openId ? ' open' : '');
         tr.setAttribute('data-id', t.id);
@@ -1068,13 +1069,14 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     bindModelIdChange(fams, ed);
     renderClassifySelect(fams, ed);
     renderPoolCard(ed);
+    renderPapersCard(ed);
   }
 
   function collectFields(key, root) {
     var p = {};
     (root || document).querySelectorAll('[data-f="' + key + '"]').forEach(function (el) {
       var k = el.getAttribute('data-k');
-      if (k === 'apiKey') { if (el.value.trim()) p.apiKey = el.value.trim(); }
+      if (k === 'apiKey' || k === 'password') { if (el.value.trim()) p[k] = el.value.trim(); }
       else if (k === 'stream') p.stream = el.checked;
       else if (k === 'timeoutSec') { var n = parseInt(el.value, 10); if (n > 0) p.timeoutSec = n; }
       else if (k === 'temperature') { var t = parseFloat(el.value); if (!isNaN(t)) p.temperature = t; }
@@ -1192,7 +1194,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
           '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (p.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
         '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">生成计划时按申报书编号 / 姓名 / 企业统一社会信用代码检索外部只读人才库与企业库补齐空缺字段；密钥仅存本机 config.json，界面不回显。Base URL / 检索模式留空 = 不修改。</p>' +
         '<div class="cfg-grid">' +
-          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="pool" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://192.168.x.x:8087"></div></div>' +
+          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="pool" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://192.168.2.23:8078"></div></div>' +
           '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="pool" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-API-KEY') + '"></div></div>' +
           '<div class="f-row"><label>检索模式</label><div class="inp"><input data-f="pool" data-k="mode" value="' + esc(p.mode || 'all') + '" placeholder="all"></div></div>' +
           '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已就绪 · 检索时参与' : '未配置 · 跳过检索，缺数据写遗留') + '</div></div>' +
@@ -1204,6 +1206,65 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       '</div>';
     var btn = box.querySelector('.cfg-save-one');
     if (btn) btn.addEventListener('click', function () { savePoolConfig(box); });
+  }
+
+  function renderPapersCard(ed) {
+    var box = document.getElementById('papersCfgCard');
+    if (!box) return;
+    var p = ed.papers || {};
+    var ready = !!p.configured;
+    var authOk = !!(p.hasKey || p.hasPassword);
+    box.innerHTML =
+      '<div class="acard">' +
+        '<h3>论文导出 API ' +
+          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (authOk ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.authMode === 'apiKey' ? 'API Key' : (p.authMode === 'session' ? '网页账号' : '未配置鉴权')) + '</span></h3>' +
+        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">意见点名缺论文全文时，人才库未命中后按人才编号拉取科研成果附件。优先使用 <code>API Key</code>（见 <code>论文api文档.md</code>）；未配密钥时可填论文系统管理员账号密码（网页登录）。Base URL / 账号留空 = 不修改。</p>' +
+        '<div class="cfg-grid">' +
+          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="papers" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://192.168.2.62:8000"></div></div>' +
+          '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="papers" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-Api-Key') + '"></div></div>' +
+          '<div class="f-row"><label>管理员账号</label><div class="inp"><input data-f="papers" data-k="username" value="' + esc(p.username || '') + '" placeholder="admin"></div></div>' +
+          '<div class="f-row"><label>管理员密码（留空 = 不修改）</label><div class="inp"><input type="password" data-f="papers" data-k="password" value="" placeholder="' + (p.hasPassword ? '••••••••（已配置）' : '填入密码') + '"></div></div>' +
+          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已就绪 · 缺论文时可拉取' : '未配置 · 跳过论文 API') + '</div></div>' +
+          '<div class="f-row"><label>连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="papersHealthBtn">检测论文 API</button><span id="papersHealthMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
+        '</div>' +
+        '<div class="cfg-save-row">' +
+          '<button type="button" class="mini cfg-save-one">保存论文 API 配置</button>' +
+          '<span class="cfg-save-msg"></span>' +
+        '</div>' +
+      '</div>';
+    var btn = box.querySelector('.cfg-save-one');
+    if (btn) btn.addEventListener('click', function () { savePapersConfig(box); });
+    var hb = box.querySelector('#papersHealthBtn');
+    if (hb) hb.addEventListener('click', function () {
+      var msg = box.querySelector('#papersHealthMsg');
+      if (msg) msg.textContent = '检测中…';
+      fetch('/api/papers/health').then(function (r) { return r.json(); }).then(function (j) {
+        if (!msg) return;
+        if (j.ok) msg.textContent = '✓ 服务与鉴权正常';
+        else if (j.service_ok) msg.textContent = '服务可达；' + (j.error || '鉴权未通过');
+        else msg.textContent = '✗ ' + (j.error || '不可达');
+        msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
+      }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });
+    });
+  }
+
+  function savePapersConfig(card) {
+    var btn = card.querySelector('.cfg-save-one');
+    var msg = card.querySelector('.cfg-save-msg');
+    var ed = cfgData.edit || {};
+    if (btn) btn.disabled = true;
+    cardMsg(msg, false, '');
+    postConfig({ papers: collectFields('papers', card) }).then(function (res) {
+      if (res.ok && res.data && res.data.version) {
+        cardMsg(msg, true, '✓ 已保存');
+        var got = res.data.edit || {};
+        for (var k in got) ed[k] = got[k];
+        var p = ed.papers || {};
+        var dot = card.querySelector('.keydot');
+        if (dot) { dot.style.color = p.hasKey ? 'var(--ok)' : 'var(--bad)'; dot.textContent = '● ' + (p.hasKey ? '密钥已配置' : '未配置密钥'); }
+      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
+      if (btn) btn.disabled = false;
+    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
   }
 
   function savePoolConfig(card) {
@@ -1233,6 +1294,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       gemini: collectFields('gemini'),
       doubao: collectFields('doubao'),
       pool: collectFields('pool', document.getElementById('poolCfgCard')),
+      papers: collectFields('papers', document.getElementById('papersCfgCard')),
       classifyModel: document.getElementById('classifyModel').value
     };
     postConfig(payload).then(function (res) {

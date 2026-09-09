@@ -1,8 +1,8 @@
 # AI Application Form Editing System
 
-**版本 2.4** · 申报书智能修改系统（FastAPI）
+**版本 2.5** · 申报书智能修改系统（FastAPI）
 
-上传已填写的申报书与区域修改意见，系统自动识别申报书模板（QM 启明 Word / HJ 火炬 Word·Excel），由 **Gemini 单模型**按章生成编辑计划，**人工逐条核对确认后再按原版式写回源文件**（Word 保持表格单元格结构，Excel 保留格式与宏）。生成计划时检索外部只读人才库 / 企业库补齐空缺字段；意见点名缺护照、学历证明、论文全文、证件照、电子签等附件时，先查库（含人才库附件包）再给出下载链接；库内没有论文文件时按人才编号走科研成果导出 API。内置 MySQL 账号体系：登录后才能使用，普通用户只能看到自己提交的任务，管理员拥有后台控制台。
+上传已填写的申报书与区域修改意见，系统自动识别申报书模板（QM 启明 Word / HJ 火炬 Word·Excel），由 **Gemini 单模型**按章生成编辑计划，**人工逐条核对确认后再按原版式写回源文件**（Word 保持表格单元格结构，Excel 保留格式与宏）。生成计划时检索外部只读人才库 / 企业库补齐空缺字段；意见点名缺护照、学历证明、论文全文、证件照、电子签等附件时，先查库（含人才库附件包）再给出下载链接；库内没有论文文件时按人才编号走科研成果导出 API。意见点名缺项目证明时：先查人才库附件包 → 未命中则 CodeBuddy 无头联网检索 → 仍没有则调用生成 API（`projectProof.generate` 为模板，需自行填写）。内置 MySQL 账号体系：登录后才能使用，普通用户只能看到自己提交的任务，管理员拥有后台控制台。
 
 仓库：https://github.com/TopTalents2009/AI-Application-Form-Editing-System
 
@@ -14,8 +14,7 @@
 2. `pip install -r requirements.txt`
 3. 复制 `config.example.json` 为 `config.json`，填入密钥（见下节）
 4. 双击 `start.cmd`，或 `python run.py`
-5. 浏览器打开 http://127.0.0.1:3777  
-   客户端提取页：http://127.0.0.1:3777/client-extract
+5. 浏览器打开 http://127.0.0.1:3777
 6. 首次启动自动建库并创建初始管理员 `admin / Admin@123456`，**请立即登录后台修改密码**；普通用户在注册页自行注册
 
 `config.json` / `config.default.json` 含密钥，**不要提交到仓库**。运行时目录 `tasks/`、`batches/`、`client_inbox/` 含申报书原文，已列入 `.gitignore`。
@@ -36,7 +35,8 @@
 | 顶层 `baseUrl` / `apiKey` / `model` / `reasoningEffort` | **Grok** 网关（默认 `grok-4.6`）：仅供管理后台配置与连通性测试，用户端不展示、不参与出计划 |
 | `doubaoApiKey` 与 `models` 中火山项 | **火山方舟**（`doubao-seed-2-0-mini-260428`）：同上，保留给管理后台，管线不再调用 |
 | `pool` | 汪伦人才库 / 企业库只读接口（`X-API-KEY`，前缀 `/api/external-read/v1`，可带 `allowed_modes` 限制 `QM` / `HJ`） |
-| `papers` | 科研成果附件导出 API（`X-Api-Key`，前缀 `/api/v1`，默认局域网 `http://192.168.2.8:8000`） |
+| `papers` | 科研成果附件导出 API（`X-Api-Key`，前缀 `/api/v1`，默认局域网 `http://192.168.2.62:8000`） |
+| `projectProof` | 项目证明补缺：`codebuddy` 无头联网检索；`generate` 为生成 API 模板（`baseUrl` / `apiKey` / `path` / `headers` / `body` 留空处填 `填入`，占位符 `{{attach_id}}` `{{name}}` `{{company}}` `{{projects}}` `{{apiKey}}`） |
 | `mysql` | 用户账号库（登录 / 会话 / 管理后台） |
 
 规则：
@@ -48,7 +48,7 @@
 
 ---
 
-## 2.4 能力
+## 2.5 能力
 
 - **QM / HJ 模板自动识别**：`app/form_kind.py` 对照根目录 `QM.docx` / `HJ.docx` 特征与内置结构词，把申报书判为 QM（启明，Word）或 HJ（火炬，如佛山仙湖实验室，常为 Excel），贯穿预处理、库检索（`mode`）、章节规则与落盘
 - **Word / Excel 申报书均可**：接受 `.docx / .docm / .wps / .xlsx / .xlsm / .xls` 与数字版 `.pdf`（扫描 PDF 拒绝）；写回时 Word 用 `apply_edits.py` 1:1 结构写入，Excel 用 `apply_excel.py` 按单元格改写、保留格式与 VBA（`.xls` 走本机 Excel COM）
@@ -77,7 +77,7 @@
 预处理（Word / Excel 抽取；数字 PDF 先转 .docx；扫描 PDF 拒绝）
   切意见 / 切标注块 → 按模板章节分类（QM 六章 / HJ 九章）
         → 人才库 / 企业库检索（带 mode 过滤）
-        → 缺附件检索（人才库附件包 → 库 payload → 论文 API）
+        → 缺附件检索（人才库附件包 → 库 payload → 论文 API；项目证明再走 CodeBuddy 联网检索 → 生成 API）
         → 注入填表须知 + 章节规则 + 库数据 + 附件链接
         → Gemini 按章出 edits / leftovers（思考中度，温度 0.1）
         → 合并去重、印刷限字压缩、写入附件下载遗留项
@@ -103,8 +103,9 @@
 2. 按申报书人才编号 `attach_id` 请求**人才库附件包**（按必交清单回填命中文件）
 3. 附件包无果时在人才库、企业库 JSON 中查找带下载地址的文件（文件名或类型含护照、学历、论文等）
 4. **论文**：库内无 PDF 时再请求论文系统 `GET /api/v1/talents/{attach_id}`，收集装订 PDF 与单篇 `pdf_url`
-5. 计划 JSON 的 `attachments` 与遗留事项写入本系统链接：`/api/tasks/{任务id}/ext-files/{id}`  
-   浏览器不接触上游密钥；下载由后端带 `X-API-KEY` / `X-Api-Key` 代拉
+5. **项目证明**：库内无文件时，用申报人姓名与项目列表调用本机 `codebuddy -p`（`--permission-mode bypassPermissions`，`--output-format json`）联网检索立项批文 / 资助公示 / 官方 PDF；仍未命中则按 `projectProof.generate` 模板请求生成 API
+6. 计划 JSON 的 `attachments` 与遗留事项写入本系统链接：`/api/tasks/{任务id}/ext-files/{id}`  
+   浏览器不接触上游密钥；下载由后端带 `X-API-KEY` / `X-Api-Key` 代拉；生成 API 未填写（含 `填入`）时跳过并在遗留事项注明
 
 论文系统约定（详见 `论文api文档.md`）：
 
@@ -148,7 +149,8 @@
 | `app/inline_opinions.py` | Word / Excel 标注栏（批注）意见抽取 |
 | `app/matcher.py` | 意见块切分、书 × 意见配对、申报书正文预检 |
 | `app/form_reqs.py` | 填表须知与印刷限字 / 限项解析、限字压缩 |
-| `app/attachments.py` | 缺附件识别、人才库附件包、论文回退、代理下载元数据 |
+| `app/attachments.py` | 缺附件识别、人才库附件包、论文回退、项目证明联网/生成回退、代理下载元数据 |
+| `app/project_proof.py` | 项目证明：从人才库抽项目、CodeBuddy 无头检索、生成 API 模板调用 |
 | `app/pool.py` | 人才库 / 企业库客户端（支持 mode） |
 | `app/papers.py` | 论文导出 API 客户端 |
 | `app/config.py` | 配置加载与模型目录（生产只用 Gemini）；版本号 `APP_VERSION` |
@@ -183,6 +185,17 @@
 ---
 
 ## 更新记录
+
+### 2.5
+
+- **项目证明补缺链路**：新增 `app/project_proof.py`，意见点名缺项目证明时依次走 人才库附件包 → 本机 CodeBuddy CLI 无头联网检索（立项批文 / 资助公示 / 官方 PDF）→ 生成 API（`projectProof.generate` 模板，含 `填入` 占位符视为未配置、跳过并注明）；同一任务内 CodeBuddy 与生成接口各只打一次
+- `app/attachments.py`：缺附件识别扩展「项目证明 / 立项批文 / 主持项目证明 / 科研项目必须提供立项批复」等表述，未命中库后转入联网检索 / 生成接口回退
+- `app/config.py` / `config.example.json`：新增 `projectProof`（含 `codebuddy` 无头检索与 `generate` 生成 API 模板、占位符 `{{attach_id}}` `{{name}}` `{{company}}` `{{projects}}` `{{apiKey}}`），恢复默认配置时保留 `projectProof`
+- 修复**意见重复输出（#10）**：`app/matcher.py` 切分正则收紧（必须带「修改意见/人才」或冒号才切块，避免「2024年工作进展」误切）；`app/runner.py` 生成计划按来源意见与条款摘要 1:1 对账去重
+- 修复**意见漏提（#11）**：`app/runner.py` 生成计划兜底补回 LLM 分类漏掉的来源意见块
+- 后台任务列表显示全部任务（`static/admin.html` 去除前 20 条截断）
+- 编辑规则收紧：`SECTION_PLAN_TEMPLATE.md` 改为最小改动（`find` 优先定位锚点句、≤80 字；`replace` 只改本条要求、新增 `opinion` 改法说明）；`CLASSIFY_PROMPT.md` 要求每条已编号原文至少对应一条 clause
+- HJ 分类纠错：`app/hj_form.py` 论文/论著（影响因子、一作、通讯作者、Nature Communications 等）强制归入「专长成果」并按要求重排；`rules/hj-expertise.md` 补论文重排与补录规则
 
 ### 2.4
 

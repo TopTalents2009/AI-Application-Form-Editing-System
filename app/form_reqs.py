@@ -224,7 +224,6 @@ _SEC_FIELDS = {
 
 _TEXT_KEYS = (
     ("replace", "修改后"),
-    ("opinionGemini", "Gemini修改意见"),
 )
 
 

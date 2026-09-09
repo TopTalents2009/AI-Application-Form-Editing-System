@@ -32,8 +32,32 @@
     "mode": "all"
   },
   "papers": {
-    "baseUrl": "http://192.168.2.8:8000",
-    "apiKey": "填入"
+    "baseUrl": "http://192.168.2.62:8000",
+    "apiKey": "填入",
+    "username": "填入",
+    "password": "填入"
+  },
+  "projectProof": {
+    "codebuddy": {
+      "cmd": "C:\\Users\\1\\AppData\\Roaming\\npm\\codebuddy.cmd",
+      "timeoutSec": 180,
+      "maxTurns": 10,
+      "model": "",
+      "permissionMode": "bypassPermissions"
+    },
+    "generate": {
+      "baseUrl": "http://192.168.2.37:3602",
+      "apiKey": "填入 sk- 开头的 AutoRef 系统密钥",
+      "path": "/api/external/documents",
+      "method": "POST",
+      "timeoutSec": 300,
+      "provider": "autoref",
+      "headers": {
+        "Authorization": "Bearer {{apiKey}}",
+        "Content-Type": "application/json"
+      },
+      "body": {}
+    }
   },
   "mysql": {
     "host": "127.0.0.1",

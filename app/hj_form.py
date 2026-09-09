@@ -58,7 +58,11 @@ HJ_SECTION_ENUM = """- 关键申报信息（国籍、姓名、实验室、专业
 # 意见关键词 → 强制归入 HJ 章（纠正把工作设想/关键词丢进「项目/其他」）
 _HJ_FORCE = (
     ("工作设想", ("工作设想", "研发目标", "技术路线", "量化指标", "量化目标", "预期目标", "研究背景及意义")),
-    ("专长成果", ("研究领域关键词", "关键词遗漏", "专长和代表性成果", "专长及代表性成果", "专长部分", "代表性成果", "成果集中在履历")),
+    ("专长成果", (
+        "研究领域关键词", "关键词遗漏", "专长和代表性成果", "专长及代表性成果", "专长部分",
+        "代表性成果", "成果集中在履历", "代表性论著", "论文重新", "论文排序", "论文梳理",
+        "影响因子", "一作", "通讯作者", "nature communication", "论著（论文）",
+    )),
     ("关键申报信息", ("学科分类", "二级学科", "一级学科", "专业领域选", "前沿领域")),
     ("用人单位", ("用人单位简介", "推荐理由", "支持条件", "拟任职")),
     ("教育", ("教育经历", "学历表格")),
@@ -91,9 +95,9 @@ def is_hj_app(mode: str = "", app_text: str = "", fname: str = "") -> bool:
 
 def remap_hj_section(section: str, clause: str = "", opinion: str = "") -> str:
     """用意见原文把误分到「项目/其他/基本信息」的条款纠正到 HJ 印刷章。"""
-    blob = compact(str(clause or "") + str(opinion or ""))
+    blob = compact(str(clause or "") + str(opinion or "")).lower()
     for sec, keys in _HJ_FORCE:
-        if any(compact(k) in blob for k in keys):
+        if any(compact(k).lower() in blob for k in keys):
             return sec
     sec = str(section or "").strip()
     return sec if sec in HJ_SECTION_ORDER else "其他"

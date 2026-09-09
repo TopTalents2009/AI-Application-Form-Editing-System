@@ -1,8 +1,8 @@
 # 科研成果附件系统 — 导出 API 文档
 
-版本：v1  
-更新日期：2026-09-01  
-权限：只读。不能构建、上传、改框、重新装订。  
+版本：v1.1  
+更新日期：2026-09-09  
+权限：只读拉取（`/api/v1/*`）+ 全功能调用（`web.export_full_access: true` 时，见第 9 节）。  
 鉴权：API Key（与网页登录账号无关）
 
 本文档给对接方使用。密钥由本系统管理员线下提供，不要写入公开仓库。
@@ -25,11 +25,11 @@
 | 场景 | 地址 |
 |------|------|
 | 本机 | `http://127.0.0.1:8000` |
-| 局域网（当前） | `http://192.168.2.8:8000` |
+| 局域网（固定 IP） | `http://192.168.2.62:8000` |
 
 完整 URL = Base URL + 路径，例如：
 
-`http://192.168.2.8:8000/api/v1/talents/200050`
+`http://192.168.2.62:8000/api/v1/talents/200050`
 
 在线接口列表（本机打开）：`http://127.0.0.1:8000/docs`
 
@@ -65,7 +65,7 @@ GET /api/v1/talents/200050?api_key=<API_KEY>
 
 ## 3. 约定
 
-- **人才 ID**（`attach_id`）：与汪伦人才库一致，一般为 4–6 位数字，例如 `200050`。也可带前缀 `HJ_200050`，服务端会规范化成纯 ID。
+- **人才 ID**（`attach_id`）：与人才库一致，一般为 4–6 位数字，例如 `200050`。也可带前缀 `HJ_200050`，服务端会规范化成纯 ID。
 - **装订附件**：每人一份 PDF，文件名为 `{人才ID}.pdf`。
 - **相对路径**：JSON 里的 `url`、`pdf_url` 是路径，调用时前面加 Base URL。
 - **时间字段**：ISO 8601 字符串，可能为空。
@@ -143,7 +143,7 @@ GET /api/v1/talents/200050?api_key=<API_KEY>
       "updated_at": "2026-08-21T15:30:00+08:00",
       "attachment": {
         "ready": true,
-        "filename": "200050.pdf",
+        "filename": "200050_20260903120000.pdf",
         "file_id": 12,
         "size": 1234567,
         "url": "/api/v1/talents/200050/attachment",
@@ -159,7 +159,9 @@ GET /api/v1/talents/200050?api_key=<API_KEY>
 | `count` | int | `talents` 条数 |
 | `talents[].attach_id` | string | 人才 ID |
 | `talents[].name` | string | 姓名，可能为空 |
-| `talents[].mode` | string | 申报模式等，可能为空 |
+| `talents[].mode` | string | 申报类别代码：`HJ` / `QM` / `HJ,QM` |
+| `talents[].apply_category` | string | 同 `mode` |
+| `talents[].apply_category_label` | string | `火炬` / `启明` / `火炬/启明` |
 | `talents[].fetched_at` | string | 档案拉取时间 |
 | `talents[].updated_at` | string | 最近更新时间 |
 | `talents[].attachment.ready` | boolean | 装订 PDF 是否可下载 |
@@ -199,7 +201,7 @@ GET /api/v1/talents/200050?api_key=<API_KEY>
   "updated_at": "2026-08-21T15:30:00+08:00",
   "attachment": {
     "ready": true,
-    "filename": "200050.pdf",
+    "filename": "200050_20260903120000.pdf",
     "file_id": 12,
     "size": 1234567,
     "url": "/api/v1/talents/200050/attachment",
@@ -223,7 +225,7 @@ GET /api/v1/talents/200050?api_key=<API_KEY>
     {
       "file_id": 12,
       "kind": "attachment",
-      "filename": "200050.pdf",
+      "filename": "200050_20260903120000.pdf",
       "size": 1234567,
       "doi": "",
       "paper_id": "",
@@ -288,7 +290,7 @@ GET /api/v1/talents/200050?api_key=<API_KEY>
 
 - Body：PDF 二进制
 - `Content-Type`：`application/pdf` 或 `application/octet-stream`
-- `Content-Disposition`：`attachment; filename*=UTF-8''200050.pdf`
+- `Content-Disposition`：`attachment; filename*=UTF-8''200050_20260903120000.pdf`
 - 可能带响应头 `X-SHA256`
 
 请按二进制保存，不要当 JSON 解析。建议保存名为 `{attach_id}.pdf`。
@@ -358,13 +360,13 @@ JSON 错误一般为：
 ### curl（Windows）
 
 ```powershell
-$base = "http://192.168.2.8:8000"
+$base = "http://192.168.2.62:8000"
 $key  = "<API_KEY>"
 
 curl.exe -H "X-Api-Key: $key" "$base/api/v1/health"
 curl.exe -H "X-Api-Key: $key" "$base/api/v1/talents"
 curl.exe -H "X-Api-Key: $key" "$base/api/v1/talents/200050"
-curl.exe -H "X-Api-Key: $key" -L -o "200050.pdf" "$base/api/v1/talents/200050/attachment"
+curl.exe -H "X-Api-Key: $key" -L -o "200050_20260903120000.pdf" "$base/api/v1/talents/200050/attachment"
 curl.exe -H "X-Api-Key: $key" -L -o "p1.pdf" "$base/api/v1/files/88"
 ```
 
@@ -373,7 +375,7 @@ curl.exe -H "X-Api-Key: $key" -L -o "p1.pdf" "$base/api/v1/files/88"
 ```python
 import requests
 
-BASE = "http://192.168.2.8:8000"
+BASE = "http://192.168.2.62:8000"
 HEADERS = {"X-Api-Key": "<API_KEY>"}
 
 r = requests.get(f"{BASE}/api/v1/talents/200050", headers=HEADERS, timeout=30)
@@ -393,4 +395,54 @@ if data["attachment"]["ready"]:
 
 本 API **提供**：按人才 ID 查询、下载装订 PDF、按 `file_id` 下载库内文件。
 
-本 API **不提供**：登录网页、上传清单、检索作者、启动构建、改红框、重新装订。这些属于本系统内部网页，不对对接方开放。
+`/api/v1/*` 只读接口默认**不包含**：登录网页、上传清单、检索作者、启动构建、改红框、重新装订。这些属于本系统内部网页功能。
+
+---
+
+## 9. 全功能调用（2026-09-09 新增，需管理员开启）
+
+管理员在 `config.local.yaml` 设置 `web.export_full_access: true` 后，**同一把 API Key** 额外获得内部功能接口的调用权（等同登录用户，`X-Api-Key` 照旧放在请求头）。当前已开启。
+
+### 9.1 常用功能接口
+
+| 功能 | 方法与路径 | 说明 |
+|------|-----------|------|
+| 拉取人才论文 | `POST /api/talent/fetch` | 表单：`attach_id=200983`（多人 `200983:200057`）、`refresh=0/1`。同步返回论文列表 |
+| 人才档案详情 | `GET /api/talent/{attach_id}` | 本地缓存档案 |
+| 解析 DOI | `POST /api/resolve` | 表单：`attach_id`。启动后台任务 |
+| 查 DOI 任务 | `GET /api/resolve/{job_id}` | 任务进度/结果 |
+| 构建附件 | `POST /api/build` | 表单：`attach_id` 等。启动后台构建任务 |
+| 查构建任务 | `GET /api/build/{job_id}` | 进度；完成后可用 `/api/v1/.../attachment` 下载 |
+| 任务列表 | `GET /api/jobs` | 全部任务状态 |
+| 简历抓取 | `POST /api/resume/analyze` | 上传简历 PDF/DOCX（multipart 文件域），返回抓取任务 |
+| 查简历任务 | `GET /api/resume/job/{job_id}` | 抓取进度与论文清单 |
+
+字段细节以在线文档为准：`http://192.168.2.62:8000/docs`（FastAPI 自动生成，含全部入参）。
+
+### 9.2 调用示例
+
+```bash
+# 1) 拉取人才论文
+curl -X POST -H "X-Api-Key: <API_KEY>" \
+  -F "attach_id=200983" -F "refresh=1" \
+  http://192.168.2.62:8000/api/talent/fetch
+
+# 2) 启动构建
+curl -X POST -H "X-Api-Key: <API_KEY>" \
+  -F "attach_id=200983" \
+  http://192.168.2.62:8000/api/build
+
+# 3) 轮询任务状态（job_id 取自上一步返回）
+curl -H "X-Api-Key: <API_KEY>" \
+  http://192.168.2.62:8000/api/build/<job_id>
+
+# 4) 完成后下载附件（与第 6 节相同）
+curl -H "X-Api-Key: <API_KEY>" -L -o 200983.pdf \
+  http://192.168.2.62:8000/api/v1/talents/200983/attachment
+```
+
+### 9.3 注意事项
+
+- 该权限**等同管理员**：除功能接口外，反馈、结果页等内部接口同样可调，请只发给可信对接方。
+- 管理员可随时在 `config.local.yaml` 把 `export_full_access` 改回 `false` 并重启服务收回；`web.export_allow_ips` 仍可限定来源 IP。
+- 构建类接口会占用下载通道与磁盘，请勿并发大批量提交。
