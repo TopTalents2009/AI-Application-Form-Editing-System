@@ -1,0 +1,48 @@
+# secrets
+config.json
+config.default.json
+.env
+.env.*
+
+# runtime data (申报书原文、意见、计划、库快照)
+tasks/
+batches/
+client_inbox/
+feedback/
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# local machine notes / credentials (do not publish)
+MySQL连接信息.txt
+副高级职位.txt
+人才库外部只读-API使用说明.md
+
+# local one-off tests
+_test_*.py
+_test_*.json
+_write_*.py
+.t_*.py
+_diag_*.docx
+_test_hj_*.docx
+*.py.bak
+*.docx.bak
+config.json.bak
+_ping.txt
+_probe_dump.py
+_read_task.py
+_retrigger_task.py
+scripts/_probe_render.py
+static/_backup_*.html
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log

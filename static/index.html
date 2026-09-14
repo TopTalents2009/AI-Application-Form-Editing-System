@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>申报书智能修改系统</title>
+<link rel="stylesheet" href="/public/style.css?v=py50">
+<style>
+#errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
+font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+</style></head>
+<body>
+<div id="errbar"></div>
+<script>
+window.addEventListener("error",function(e){var b=document.getElementById("errbar");b.style.display="block";b.textContent+="[脚本异常] "+(e.message||e.type)+" @"+(e.filename||"").split("/").pop()+":"+e.lineno+"\n";});
+window.addEventListener("unhandledrejection",function(e){var b=document.getElementById("errbar");b.style.display="block";b.textContent+="[未处理Promise] "+(e.reason&&e.reason.message||e.reason)+"\n";});
+</script>
+
+<header class="topbar">
+  <div class="tlogo">申</div>
+  <div class="ttitles">
+    <h1>申报书智能修改系统</h1>
+    <p>AI APPLICATION FORM EDITING SYSTEM</p>
+  </div>
+  <div class="grow"></div>
+  <div id="userBox" style="display:none">
+    <span class="tuser" id="userName"></span>
+    <a id="adminLink" class="tbtn" href="/admin" style="display:none">用户管理</a>
+    <button type="button" class="tbtn" id="logoutBtn">退出登录</button>
+  </div>
+  <button type="button" class="tbtn" id="fbOpenBtn">意见反馈</button>
+  <div class="live"><span class="dot"></span><span id="liveStatus">服务运行中</span></div>
+</header>
+
+<main class="wrap">
+
+<section class="grid2">
+
+  <div class="card" id="newTaskCard">
+    <h2>新建任务</h2>
+
+    <div class="field">
+      <label class="flabel">① 申报书（Word / Excel / PDF，含扫描件，可多选）</label>
+      <label class="drop" for="appFile">
+        <input type="file" id="appFile" accept=".docx,.docm,.wps,.xlsx,.xlsm,.xls,.pdf" multiple>
+        <span class="dz-main">点击选择申报书文件</span>
+        <span class="dz-sub">.docx / .docm / Excel（.xlsx .xlsm .xls）或可复制文字的 PDF；可多次追加，点 × 移除</span>
+      </label>
+      <div class="chips" id="appName"></div>
+    </div>
+
+    <div class="field">
+      <label class="flabel">② 修改意见文档（可选）</label>
+      <label class="drop" for="opFiles">
+        <input type="file" id="opFiles" accept=".docx,.docm,.wps,.txt,.md,.xlsx,.xlsm,.xls,.csv,.jpg,.jpeg,.png,.webp,.gif,.tif,.tiff,.bmp,image/*" multiple>
+        <span class="dz-main">点击选择意见文档</span>
+        <span class="dz-sub">可不传：将读取申报书标注栏（批注）。Word / Excel / 图片 / txt / md，点 × 移除</span>
+      </label>
+      <div class="chips" id="opNames"></div>
+    </div>
+
+    <div class="field">
+      <label class="flabel">模型配置</label>
+      <p class="cfg-hint">当前只用 Gemini 生成修改意见（思考中度，温度 0.1）。Grok / 火山配置在管理后台。</p>
+      <div class="cfg-toolbar">
+        <div class="cfg-dd-col">
+          <span class="cfg-mini">编辑配置</span>
+          <div id="engineRow"></div>
+        </div>
+        <div class="cfg-dd-col">
+          <span class="cfg-mini">默认采用</span>
+          <div id="defaultRow"></div>
+        </div>
+      </div>
+      <div id="cfgForm" class="cfg-form">正在读取配置…</div>
+      <div class="cfg-actions">
+        <button type="button" id="cfgSaveBtn" class="ghost">保存配置</button>
+        <button type="button" id="cfgDefaultBtn" class="ghost">保存为默认</button>
+        <button type="button" id="cfgRestoreBtn" class="ghost">恢复默认</button>
+        <button type="button" id="cfgProbeBtn" class="ghost">检测连通性</button>
+        <span id="cfgMsg" class="err"></span>
+      </div>
+      <div id="probeBox" class="probe-box" hidden></div>
+    </div>
+
+    <div class="actions">
+      <button id="submitBtn" class="primary">提交任务</button>
+      <span id="formErr" class="err"></span>
+    </div>
+  </div>
+
+  <div class="list-slot">
+  <div class="card" id="listCard">
+    <h2>任务列表 <span id="listCount" class="count-pill hidden"></span></h2>
+    <div id="taskScroll" class="tsroll">
+      <table id="taskTable">
+        <thead><tr>
+          <th class="col-time">时间</th>
+          <th class="col-name">申报书</th>
+          <th class="col-st">状态</th>
+          <th class="col-act"></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="emptyHint" class="empty">暂无任务，先在左侧提交一个吧</div>
+    </div>
+  </div>
+  </div>
+
+</section>
+
+<section class="card hidden" id="matchCard">
+    <div class="dhead">
+      <h2>配对确认 <span id="batchId" class="mono tag"></span></h2>
+    </div>
+    <div id="matchStats" class="meta"></div>
+    <div id="matchBooks"></div>
+    <h3 id="sharedHead" class="hidden">共享意见（命中多本，勾选要写入的申报书）</h3>
+    <div id="sharedList"></div>
+    <div class="field" style="margin-top:12px">
+      <label class="switch">
+        <input type="checkbox" id="genericToggle" checked>
+        <span class="slider"></span>
+        <span class="stext">附加通用条款池 <small>无归属的通用规范类意见块，仅附加给已配对到修改意见的书</small></span>
+      </label>
+    </div>
+    <h3>未配对（有编号/姓名但找不到书，不会执行）</h3>
+    <ul id="unmatchedList" class="unl"></ul>
+    <div class="actions">
+      <button id="startBatchBtn" class="primary">开始执行</button>
+      <span id="matchErr" class="err"></span>
+    </div>
+  </section>
+
+  <section class="card hidden" id="detailCard">
+  <div class="dhead">
+    <h2>任务详情 <span id="detailId" class="mono tag"></span></h2>
+    <button id="closeDetail" class="ghost">收起</button>
+  </div>
+
+  <div id="bookPager" class="book-pager hidden">
+    <button type="button" class="ghost" id="pagePrev">‹ 上一本</button>
+    <div class="page-mid">
+      <div id="pageTitle" class="page-title"></div>
+      <div id="pageInfo" class="page-sub"></div>
+    </div>
+    <button type="button" class="ghost" id="pageNext">下一本 ›</button>
+  </div>
+
+  <div id="stepper" class="stepper"></div>
+  <div id="detailMeta" class="meta"></div>
+
+  <h3>实时日志</h3>
+  <pre id="logBox" class="log"><div class="ln">等待事件…</div></pre>
+
+  <h3>成果下载</h3>
+  <ul id="outList" class="outs"></ul>
+  <div id="doneAttBox" class="hidden"></div>
+
+  <h3 id="reportHead" class="hidden">修改对照表预览 <a id="reportDocx" class="report-dl hidden" href="#">下载 Word</a></h3>
+  <div id="reportBox" class="report-md hidden"></div>
+</section>
+
+</main>
+
+<footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据 · v2.3</footer>
+
+<div id="fbMask" class="fb-mask" hidden>
+  <div class="fb-modal" role="dialog" aria-labelledby="fbTitle">
+    <div class="fb-head">
+      <h2 id="fbTitle">意见反馈</h2>
+      <button type="button" class="ghost" id="fbCloseBtn">关闭</button>
+    </div>
+    <p class="fb-hint">描述使用中的问题或建议，可附截图。管理员会在后台看到。</p>
+    <textarea id="fbContent" class="fb-ta" rows="5" maxlength="4000" placeholder="请填写反馈内容…"></textarea>
+    <label class="drop fb-drop" for="fbFiles">
+      <input type="file" id="fbFiles" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" multiple>
+      <span class="dz-main">点击选择图片（可多选，最多 8 张）</span>
+      <span class="dz-sub">jpg / png / gif / webp，单张不超过 8MB；点缩略图 × 移除</span>
+    </label>
+    <div class="fb-thumbs" id="fbThumbs"></div>
+    <div class="fb-actions">
+      <button type="button" class="primary" id="fbSubmitBtn">提交反馈</button>
+      <span id="fbMsg" class="err"></span>
+    </div>
+    <h3 class="fb-sub">我提交的反馈</h3>
+    <div id="fbMine" class="fb-list">暂无反馈</div>
+  </div>
+</div>
+
+<script src="/public/app.js?v=py50"></script>
+</body>
+</html>

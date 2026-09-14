@@ -1,0 +1,233 @@
+# AI Application Form Editing System
+
+**版本 2.5** · 申报书智能修改系统（FastAPI）
+
+上传已填写的申报书与区域修改意见，系统自动识别申报书模板（QM 启明 Word / HJ 火炬 Word·Excel），由 **Gemini 单模型**按章生成编辑计划，**人工逐条核对确认后再按原版式写回源文件**（Word 保持表格单元格结构，Excel 保留格式与宏）。生成计划时检索外部只读人才库 / 企业库补齐空缺字段；意见点名缺护照、学历证明、论文全文、证件照、电子签等附件时，先查库（含人才库附件包）再给出下载链接；库内没有论文文件时按人才编号走科研成果导出 API。意见点名缺项目证明时：先查人才库附件包 → 未命中则 CodeBuddy 无头联网检索 → 仍没有则调用生成 API（`projectProof.generate` 为模板，需自行填写）。内置 MySQL 账号体系：登录后才能使用，普通用户只能看到自己提交的任务，管理员拥有后台控制台。
+
+仓库：https://github.com/TopTalents2009/AI-Application-Form-Editing-System
+
+---
+
+## 快速开始
+
+1. Python 3.10+（推荐 conda 环境 `work`）
+2. `pip install -r requirements.txt`
+3. 复制 `config.example.json` 为 `config.json`，填入密钥（见下节）
+4. 双击 `start.cmd`，或 `python run.py`
+5. 浏览器打开 http://127.0.0.1:3777
+6. 首次启动自动建库并创建初始管理员 `admin / Admin@123456`，**请立即登录后台修改密码**；普通用户在注册页自行注册
+
+`config.json` / `config.default.json` 含密钥，**不要提交到仓库**。运行时目录 `tasks/`、`batches/`、`client_inbox/` 含申报书原文，已列入 `.gitignore`。
+
+`start.cmd` 只会结束占用 3777/3778 的 **python / uvicorn**，不会杀 `svchost`。若 3777 被 Windows 端口转发占用，会改用 3778，可用管理员运行 `fix_portproxy.cmd` 恢复 3777。
+
+> 模板文件 `QM.docx` / `HJ.docx` 放在项目根目录，用于申报书模板比对；文件缺失时退回到内置结构关键词判定，不影响使用。
+
+---
+
+## 配置
+
+复制示例后按项填写。占位符 `填入` 视为未配置。
+
+| 块 | 作用 |
+|----|------|
+| `geminiApiKey` 与 `models` 中 Gemini 项 | **Gemini**（12ai，`gemini-3.7-flash`，流式，单次 300 秒）：**生产管线唯一出计划 / 分类模型**（思考中度，温度 0.1） |
+| 顶层 `baseUrl` / `apiKey` / `model` / `reasoningEffort` | **Grok** 网关（默认 `grok-4.6`）：仅供管理后台配置与连通性测试，用户端不展示、不参与出计划 |
+| `doubaoApiKey` 与 `models` 中火山项 | **火山方舟**（`doubao-seed-2-0-mini-260428`）：同上，保留给管理后台，管线不再调用 |
+| `pool` | 汪伦人才库 / 企业库只读接口（`X-API-KEY`，前缀 `/api/external-read/v1`，可带 `allowed_modes` 限制 `QM` / `HJ`） |
+| `papers` | 科研成果附件导出 API（`X-Api-Key`，前缀 `/api/v1`，默认局域网 `http://192.168.2.62:8000`） |
+| `projectProof` | 项目证明补缺：`codebuddy` 无头联网检索；`generate` 为生成 API 模板（`baseUrl` / `apiKey` / `path` / `headers` / `body` 留空处填 `填入`，占位符 `{{attach_id}}` `{{name}}` `{{company}}` `{{projects}}` `{{apiKey}}`） |
+| `mysql` | 用户账号库（登录 / 会话 / 管理后台） |
+
+规则：
+
+- 独立网关**不得**误用顶层 Grok 密钥。
+- 火山地址已是 `/api/v3`，不要再拼 `/v1`。
+- 用户前端 `/api/config` 只下发 Gemini 模型与 `hasKey` 等状态，**不回传明文密钥、不展示 Grok / 火山 / 库地址**；管理员 `/api/config` 才返回完整模型配置。
+- 论文密钥由导出系统管理员线下提供，写入 `papers.apiKey`；对接约定见仓库内 `论文api文档.md`。
+
+---
+
+## 2.5 能力
+
+- **QM / HJ 模板自动识别**：`app/form_kind.py` 对照根目录 `QM.docx` / `HJ.docx` 特征与内置结构词，把申报书判为 QM（启明，Word）或 HJ（火炬，如佛山仙湖实验室，常为 Excel），贯穿预处理、库检索（`mode`）、章节规则与落盘
+- **Word / Excel 申报书均可**：接受 `.docx / .docm / .wps / .xlsx / .xlsm / .xls` 与数字版 `.pdf`（扫描 PDF 拒绝）；写回时 Word 用 `apply_edits.py` 1:1 结构写入，Excel 用 `apply_excel.py` 按单元格改写、保留格式与 VBA（`.xls` 走本机 Excel COM）
+- **意见文档可选**：不传意见时从申报书标注栏（Word 批注 / Excel 批注）自动抽取修改意见；批量模式下未配对到任何修改意见的申报书直接跳过——不套用通用条款、不创建任务
+- **Gemini 单模型出计划**：分类与按章出计划只用 Gemini，计划表只保留「Gemini 修改意见」一列，可点「采用」写入「修改后」；对照表 / 前端文案同步为单模型口径
+- **印刷栏位限字强约束**：以申报书印刷「限 N 字 / N 字以内」为最高优先级，覆盖规则包；`find` 命中「重要经历 / 主要技术能力 / 标志性成果」及企业情况「①业务领域～⑤产业链地位」等子栏时按占比拆限字，`enforce_edit_limits` 对超限 replace 先压缩再输出，剩余超限写入遗留事项「【表内限字】」
+- **账号体系**：MySQL 存储用户（用户名 / 真实姓名 / 部门 / 角色 / 状态），PBKDF2-SHA256 密码，Cookie 会话 7 天；未登录访问页面跳 `/login`，API 返回 401
+- **数据隔离**：任务与批次记录提交人，普通用户只能看到自己的任务与日志，越权访问一律 404；历史无归属任务仅管理员可见
+- **管理后台 `/admin`**：任务总览（统计卡 + 最近任务 + 产出下载 + 提交人）、新建任务入口、人员信息（角色 / 状态 / 重置密码 / 删除，保护最后一名管理员）、模型配置（Grok / Gemini / 火山可视化编辑，密钥留空不修改）、系统信息；右侧锚点菜单
+- **缺附件检索 + 附件包**：意见点名缺护照 / 学历证明 / 工作证明 / 意向协议 / 论文全文 / 证件照 / 电子签 / 项目证明等时，先按 `attach_id` 拉取**人才库附件包**，再在人才库 / 企业库 payload 与论文系统找文件，计划页与任务完成后均给出本系统代理下载链接
+- **论文导出 API**：库内没有可下载论文时，按 `attach_id`（与汪伦人才编号一致，4–6 位，可带 `HJ_` 前缀）调用 `GET /api/v1/talents/{id}`；404 不重试，409 表示装订附件尚未生成
+- **失败任务可重试**：任务列表 / 详情 / 计划页均可点「重试」，`POST /api/tasks/{id}/retry` 从预处理重新跑（记录重试次数）
+- **输出可靠性**：对模型返回的 JSON 做容错解析（BOM、```json 围栏、字符串内裸控制字符）；任务完成后做终检限字并生成对照表与遗留事项
+- 产出：`*_修改后.{同源扩展名}`、`*_备份.{同源扩展名}`、修改对照表（Markdown + Word）、遗留事项.md
+
+---
+
+## 管线
+
+```
+登录（MySQL 会话校验，普通用户仅见本人数据）
+        ↓
+提交申报书（自动识别 QM / HJ 模板）
+  意见文档（可选；不传则读申报书标注栏批注）
+        ↓
+预处理（Word / Excel 抽取；数字 PDF 先转 .docx；扫描 PDF 拒绝）
+  切意见 / 切标注块 → 按模板章节分类（QM 六章 / HJ 九章）
+        → 人才库 / 企业库检索（带 mode 过滤）
+        → 缺附件检索（人才库附件包 → 库 payload → 论文 API；项目证明再走 CodeBuddy 联网检索 → 生成 API）
+        → 注入填表须知 + 章节规则 + 库数据 + 附件链接
+        → Gemini 按章出 edits / leftovers（思考中度，温度 0.1）
+        → 合并去重、印刷限字压缩、写入附件下载遗留项
+        → 人工逐条核对（Gemini 修改意见 / 修改后可编辑）
+        → apply_edits / apply_excel 写回源文件（结构对齐、保留宏）
+        → 终检限字、对照表、遗留事项；缺失附件可下载
+```
+
+匹配规则（matcher v2）：编号 90 / 前缀 85 / 全名 100；弱 token 走 LLM 仲裁。`25xxxx` / `26xxxx` 视为日期码，不参与编号匹配。`is_app_content` 覆盖 QM / HJ 封面标记，HJ（Application Form / 实验室名称等）也能通过预检。
+
+章节与规则包：
+
+- **QM（启明，Word）**：基本信息、教育、工作、论文、项目、其他 → `rules/basic-info.md`、`education.md`、`work.md`、`papers.md`、`projects.md`
+- **HJ（火炬，Word / Excel）**：关键申报信息、个人基本信息、教育、工作、学术荣誉、专长成果、工作设想、用人单位、其他 → `rules/hj-key.md`、`hj-profile.md`、`hj-education.md`、`hj-work.md`、`hj-honors.md`、`hj-expertise.md`、`hj-plan.md`、`hj-employer.md`
+
+---
+
+## 缺附件与论文 API
+
+当修改意见含「缺护照 / 缺少学历证明 / 未上传学位证 / 论文需附全文 / 缺论文 PDF / 缺证件照 / 电子签」等表述时：
+
+1. 扫描意见与后续遗留事项，识别附件类型（护照 / 学历 / 工作证明 / 论文 / 证件照 / 电子签 / 项目证明等）
+2. 按申报书人才编号 `attach_id` 请求**人才库附件包**（按必交清单回填命中文件）
+3. 附件包无果时在人才库、企业库 JSON 中查找带下载地址的文件（文件名或类型含护照、学历、论文等）
+4. **论文**：库内无 PDF 时再请求论文系统 `GET /api/v1/talents/{attach_id}`，收集装订 PDF 与单篇 `pdf_url`
+5. **项目证明**：库内无文件时，用申报人姓名与项目列表调用本机 `codebuddy -p`（`--permission-mode bypassPermissions`，`--output-format json`）联网检索立项批文 / 资助公示 / 官方 PDF；仍未命中则按 `projectProof.generate` 模板请求生成 API
+6. 计划 JSON 的 `attachments` 与遗留事项写入本系统链接：`/api/tasks/{任务id}/ext-files/{id}`  
+   浏览器不接触上游密钥；下载由后端带 `X-API-KEY` / `X-Api-Key` 代拉；生成 API 未填写（含 `填入`）时跳过并在遗留事项注明
+
+论文系统约定（详见 `论文api文档.md`）：
+
+- 仅 GET；人才 ID 与汪伦 `attach_id` 一致
+- 相对路径 `url` / `pdf_url` 需加 Base URL
+- **不提供**按作者检索、上传、触发构建
+- 401 密钥错误；404 无该人；409 附件未生成（间隔 1–5 分钟再试，不要改用其它接口拼一份）
+
+未配置 `papers.apiKey` 时，护照等仍可走人才库；论文遗留事项会提示「论文 API 未配置」。
+
+---
+
+## 版式与填表须知
+
+- `find` 与 `replace` 换行次数必须一致；表格左栏标题与右栏正文不得并成一段；严禁把「引进企业基本情况」①业务领域～⑤产业链地位整栏写进同一条 replace（find 是哪一格就只改哪一格）
+- 不得新增申报书没有的小标题；一次编辑只改锚点覆盖的那一块
+- 字数按印刷「限 N 字 / N 字以内」，目标约上限的 80%～90%，**绝对不得超过上限**；【限字】与填表要求优先于章节规则包
+- 除规定栏位外：不出现申报人姓名、企业名称；金额万元、一位小数
+- 按申报书模板切章；HJ 申报书以印刷栏位（关键申报信息 / 个人基本信息 / 教育 / 工作 / 学术荣誉 / 专长成果 / 工作设想 / 申报单位）为界，不与 QM 六章混用
+
+---
+
+## 前端要点
+
+- 计划表：用 / 编号 / 章节 / 意见条款 / 修改前（只读锚点）/ Gemini 修改意见 / 修改后（可编辑）；取消勾选＝放弃该条
+- 未上传意见时提示已从标注栏提取条数；批量结果中未配对的书显示「跳过」
+- 缺附件命中时计划页显示可下载清单；任务完成后在详情页再次展示缺失附件下载
+- 失败任务在列表 / 详情 / 计划页显示「重试」，从预处理重跑
+- 配置编辑只改当前模型接入参数，不改数据库与论文系统配置
+
+---
+
+## 目录（主要）
+
+| 路径 | 说明 |
+|------|------|
+| `app/runner.py` | 任务管线：预处理、QM/HJ 判定、分类、Gemini 出计划、确认落盘 |
+| `app/batch.py` | 批量匹配：书 × 意见配对、标注栏配对、按书拆任务 |
+| `app/form_kind.py` | QM / HJ 模板自动识别（对比 QM.docx / HJ.docx 特征） |
+| `app/hj_form.py` | HJ 申报书章节切分、正文抽取、规则文件映射 |
+| `app/inline_opinions.py` | Word / Excel 标注栏（批注）意见抽取 |
+| `app/matcher.py` | 意见块切分、书 × 意见配对、申报书正文预检 |
+| `app/form_reqs.py` | 填表须知与印刷限字 / 限项解析、限字压缩 |
+| `app/attachments.py` | 缺附件识别、人才库附件包、论文回退、项目证明联网/生成回退、代理下载元数据 |
+| `app/project_proof.py` | 项目证明：从人才库抽项目、CodeBuddy 无头检索、生成 API 模板调用 |
+| `app/pool.py` | 人才库 / 企业库客户端（支持 mode） |
+| `app/papers.py` | 论文导出 API 客户端 |
+| `app/config.py` | 配置加载与模型目录（生产只用 Gemini）；版本号 `APP_VERSION` |
+| `app/auth.py` | 注册 / 登录 / 会话 / 用户管理（PBKDF2） |
+| `app/db.py` | MySQL 连接、users / sessions 建表、初始管理员 |
+| `app/routes/auth.py` | 登录 / 注册 / 登出 / 当前用户 API 与页面 |
+| `app/routes/admin.py` | 管理后台页面与用户管理 API |
+| `scripts/apply_edits.py` | Word 1:1 结构写入 |
+| `scripts/apply_excel.py` | Excel 单元格改写（openpyxl；`.xls` 走 COM） |
+| `scripts/sb_verify.py` | 落盘后结构 / 内容校验 |
+| `CLASSIFY_PROMPT.md` | 意见条款分类提示词（章节枚举按 QM/HJ 注入） |
+| `SECTION_PLAN_TEMPLATE.md` | 按章出计划提示词（含版式与限字提示） |
+| `rules/` | 各章质检与撰写规则（QM） |
+| `rules/hj-*.md` | HJ 各章质检与撰写规则 |
+| `static/login.html` | 登录页（分屏品牌布局） |
+| `static/register.html` | 注册页（含密码强度条） |
+| `static/admin.html` | 管理控制台 |
+| `config.example.json` | 配置模板 |
+
+---
+
+## 安全
+
+- 登录才能使用系统；普通用户仅能访问自己提交的任务（详情 / 计划 / 文件 / 附件全部校验归属）
+- 初始管理员 `admin`，**首次登录后请立即在后台修改密码**
+- 原件只读，确认前不改申报书（输出先写 `*_修改后` / `*_备份`）
+- 库与申报书都没有的事实写入 leftovers，禁止编造
+- 密钥仅存本机 `config.json`（已 gitignore），用户前端只暴露 `hasKey` 与 Gemini 参数
+- 模型配置修改与恢复默认仅限管理员
+- 附件下载走任务内代理，不把上游 URL 和密钥交给浏览器
+
+---
+
+## 更新记录
+
+### 2.5
+
+- **项目证明补缺链路**：新增 `app/project_proof.py`，意见点名缺项目证明时依次走 人才库附件包 → 本机 CodeBuddy CLI 无头联网检索（立项批文 / 资助公示 / 官方 PDF）→ 生成 API（`projectProof.generate` 模板，含 `填入` 占位符视为未配置、跳过并注明）；同一任务内 CodeBuddy 与生成接口各只打一次
+- `app/attachments.py`：缺附件识别扩展「项目证明 / 立项批文 / 主持项目证明 / 科研项目必须提供立项批复」等表述，未命中库后转入联网检索 / 生成接口回退
+- `app/config.py` / `config.example.json`：新增 `projectProof`（含 `codebuddy` 无头检索与 `generate` 生成 API 模板、占位符 `{{attach_id}}` `{{name}}` `{{company}}` `{{projects}}` `{{apiKey}}`），恢复默认配置时保留 `projectProof`
+- 修复**意见重复输出（#10）**：`app/matcher.py` 切分正则收紧（必须带「修改意见/人才」或冒号才切块，避免「2024年工作进展」误切）；`app/runner.py` 生成计划按来源意见与条款摘要 1:1 对账去重
+- 修复**意见漏提（#11）**：`app/runner.py` 生成计划兜底补回 LLM 分类漏掉的来源意见块
+- 后台任务列表显示全部任务（`static/admin.html` 去除前 20 条截断）
+- 编辑规则收紧：`SECTION_PLAN_TEMPLATE.md` 改为最小改动（`find` 优先定位锚点句、≤80 字；`replace` 只改本条要求、新增 `opinion` 改法说明）；`CLASSIFY_PROMPT.md` 要求每条已编号原文至少对应一条 clause
+- HJ 分类纠错：`app/hj_form.py` 论文/论著（影响因子、一作、通讯作者、Nature Communications 等）强制归入「专长成果」并按要求重排；`rules/hj-expertise.md` 补论文重排与补录规则
+
+### 2.4
+
+- 生产管线改为 **Gemini 单模型**：分类与按章出计划只用 Gemini（思考中度、温度 0.1）；用户端 `/api/config` 不再下发 Grok / 火山参数，仅管理员后台保留其配置与连通性测试；计划表、对照表改为单列 Gemini 意见
+- **QM / HJ 模板自动识别**：按 `QM.docx` / `HJ.docx` 特征 + 结构关键词判定模板，贯穿预处理、库检索（mode）、章节规则与落盘
+- **Excel 申报书支持**：`.xlsx / .xlsm / .xls` 可作申报书直接修改，`apply_excel.py` 按单元格改写、保留格式与 VBA（`.xls` 走本机 Excel COM）；Word 侧扩展 `.docm / .wps`
+- **HJ 章节体系**：`app/hj_form.py` 按印刷栏位切章，配套 `rules/hj-*.md`；HJ 申报书不再套用 QM 六章
+- **意见文档可选**：不传意见时读申报书标注栏（Word / Excel 批注）自动抽取；批量下未配对到意见的书跳过、不套通用条款、不建任务
+- **印刷限字强约束**：按栏位（含「重要经历 / 主要技术能力 / 标志性成果」与企业情况 ①–⑤ 子栏占比）解析并压缩超限 replace
+- **人才库附件包**：按 `attach_id` 拉取附件包补缺（新增证件照 / 电子签 / 项目证明识别）；任务完成后在详情页展示缺失附件下载
+- **失败任务重试**：列表 / 详情 / 计划页可点「重试」，从预处理重跑并记录次数
+- **输出可靠性**：JSON 容错解析（BOM、fence、裸控制字符）、模板关键词判定升级、对照表保留 Gemini 意见列
+- 修复：Gemini 计划 JSON 中裸控制字符导致【基本信息】解析失败、管理后台反馈图片内联预览等
+
+### 2.3
+
+- MySQL 账号体系：登录 / 注册（用户名、真实姓名、部门、密码） / 会话；未登录跳转登录页，API 返回 401
+- 数据隔离：任务与批次记录提交人，普通用户仅见本人数据；后台任务总览显示提交人并可下载产出
+- 管理控制台 `/admin`：任务总览 / 新建任务 / 人员信息 / 模型配置 / 系统信息；管理员登录直达
+- 模型配置可视化编辑（仅管理员）：Base URL、密钥（留空不改）、超时、流式、推理强度、默认采用模型
+- 界面整备：全站去除 emoji、登录 / 注册 / 主页面 / 后台统一头部布局、登录注册页分屏美化（密码强度条、错误抖动、大写锁定提示）
+- `apply_edits.py`：单元格内容溢出时自动缩小字号与行距
+- 修复：认证中间件挂载遗漏、会话 Cookie `expires` 参数报错、火山密钥格式
+
+### 2.1
+
+- 接入火山 `doubao-seed-2-0-mini-260428`，与 Grok、Gemini 三模型对照出计划（2.4 起管线改用 Gemini 单模型）
+- 修改后 Word 对齐源文件表格/单元格/段落；尊重印刷限字与填表须知
+- 意见缺附件时检索人才库并提供下载链接
+- 接入科研成果导出 API：库内无论文则按 `attach_id` 查询；404/409 按文档处理
+- 前端不展示库地址与密钥明文；`start.cmd` 不结束 svchost
+
+### 2.0
+
+- FastAPI 单机服务、批量匹配、两阶段编辑、人才库 / 企业库只读检索

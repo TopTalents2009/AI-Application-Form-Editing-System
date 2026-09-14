@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 申报书智能修改系统</title>
+<link rel="stylesheet" href="/public/style.css?v=py41">
+<style>
+/* ========== 全屏星空背景 + 粒子 ========== */
+.auth-page{
+  position:relative;min-height:100vh;overflow:hidden;
+  background:linear-gradient(160deg,#050a1c 0%,#0a1a45 38%,#123a7a 72%,#0b2c63 100%);
+  background-size:180% 180%;
+  animation:gradient-flow 20s ease infinite;
+}
+@keyframes gradient-flow{0%,100%{background-position:0% 0%}50%{background-position:100% 100%}}
+.auth-page::before,.auth-page::after{
+  content:"";position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none;
+}
+.auth-page::before{width:560px;height:560px;background:#2b4fb0;top:-220px;right:-120px;opacity:.45;animation:drift 18s ease-in-out infinite alternate}
+.auth-page::after{width:480px;height:480px;background:#14508a;bottom:-200px;left:-100px;opacity:.4;animation:drift 22s ease-in-out infinite alternate-reverse}
+.auth-page .glow2{position:absolute;border-radius:50%;filter:blur(70px);pointer-events:none;
+  width:360px;height:360px;background:#6a4fb0;top:40%;left:38%;opacity:.18;animation:drift 26s ease-in-out infinite alternate}
+@keyframes drift{to{transform:translate(-40px,34px) scale(1.08)}}
+#particles-bg{position:absolute;inset:0;z-index:0}
+
+/* ========== 内容网格 ========== */
+.auth-grid{
+  position:relative;z-index:1;max-width:1280px;margin:0 auto;min-height:100vh;
+  display:grid;grid-template-columns:minmax(400px,46%) 1fr;
+}
+.brand{
+  display:flex;flex-direction:column;justify-content:space-between;
+  padding:52px 48px 48px 56px;color:#fff;
+  background:linear-gradient(95deg, rgba(6,14,38,.5), rgba(6,14,38,.18) 60%, transparent 100%);
+}
+.brand-head{display:flex;align-items:center;gap:14px}
+.brand-logo{
+  width:52px;height:52px;border-radius:15px;font-size:22px;font-weight:700;
+  background:rgba(255,255,255,.12);backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),0 8px 24px -8px rgba(0,0,0,.5);
+}
+.brand-head h1{margin:0;font-size:20px;letter-spacing:1px}
+.brand-head p{margin:3px 0 0;font-size:12.5px;opacity:.55;letter-spacing:.5px}
+.brand-body{max-width:400px}
+.brand-body h2{margin:0 0 14px;font-size:30px;line-height:1.35;font-weight:700;letter-spacing:.5px}
+.brand-body h2 em{font-style:normal;background:linear-gradient(90deg,#9cc2ff,#e4eeff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand-body>p{margin:0;font-size:14px;line-height:1.9;color:rgba(255,255,255,.62)}
+.feat{list-style:none;margin:30px 0 0;padding:0;display:grid;gap:14px}
+.feat li{display:flex;gap:12px;align-items:flex-start;font-size:13.5px;line-height:1.6;color:rgba(255,255,255,.85)}
+.feat .fi{
+  flex-shrink:0;width:34px;height:34px;border-radius:10px;font-weight:700;font-size:14px;color:#bcd4ff;
+  background:rgba(255,255,255,.1);backdrop-filter:blur(4px);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);
+}
+.feat b{display:block;font-size:13.5px;color:#fff}
+.feat span{color:rgba(255,255,255,.52);font-size:12.5px}
+.brand-foot{font-size:12px;color:rgba(255,255,255,.38);letter-spacing:.4px}
+
+/* ========== 表单侧（暗色玻璃卡） ========== */
+.form-side{display:flex;align-items:center;justify-content:center;padding:44px 36px}
+.form-box{
+  width:100%;max-width:392px;
+  background:rgba(10,20,45,.5);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:20px;padding:34px 32px;
+  box-shadow:0 8px 20px rgba(0,0,0,.25),0 30px 70px -18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.08);
+  animation:rise .55s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.form-box h2{margin:0 0 8px;font-size:26px;font-weight:700;color:#fff}
+.form-box .sub{margin:0 0 28px;font-size:13.5px;color:rgba(222,235,255,.65)}
+.f-row{margin-bottom:18px;animation:field-in .5s cubic-bezier(.22,1,.36,1) both}
+.f-row:nth-of-type(1){animation-delay:.08s}
+.f-row:nth-of-type(2){animation-delay:.14s}
+.f-row:nth-of-type(3){animation-delay:.20s}
+.f-row:nth-of-type(4){animation-delay:.26s}
+.f-row:nth-of-type(5){animation-delay:.32s}
+@keyframes field-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.f-row label{display:block;font-size:13px;font-weight:600;color:#b6c9ef;margin-bottom:8px}
+.inp{position:relative;display:flex;align-items:center}
+.inp .in-ic{
+  position:absolute;left:14px;width:17px;height:17px;color:#6d84b5;pointer-events:none;
+  transition:color .18s;
+}
+.inp input{
+  width:100%;height:48px;padding:0 76px 0 40px;
+  font-size:14px;font-family:inherit;color:#fff;
+  background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.16);border-radius:12px;
+  outline:none;transition:border-color .18s, box-shadow .18s, background .18s;
+}
+.inp input::placeholder{color:rgba(255,255,255,.32)}
+.inp input:hover{border-color:rgba(255,255,255,.3)}
+.inp input:focus{
+  background:rgba(255,255,255,.12);
+  border-color:#5b8fe8;
+  box-shadow:0 0 0 4px rgba(91,143,232,.22);
+}
+.inp input:focus~.in-ic{color:#8ab4ff}
+.eye{
+  position:absolute;right:8px;width:32px;height:32px;border:none;background:none;
+  border-radius:9px;cursor:pointer;color:#8aa0cf;
+  display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;
+}
+.eye:hover{background:rgba(255,255,255,.12);color:#cfe1ff}
+.eye svg{width:17px;height:17px}
+.ic-eye-off{display:none}
+.eye.off .ic-eye{display:none}
+.eye.off .ic-eye-off{display:block}
+.caps{display:none;margin-top:7px;font-size:12px;color:#ffd479}
+.form-err{
+  display:none;align-items:flex-start;gap:8px;
+  margin:2px 0 16px;padding:10px 13px;
+  font-size:13px;line-height:1.5;color:#ffb0ad;
+  background:rgba(230,60,60,.12);border:1px solid rgba(240,100,100,.3);border-radius:10px;
+}
+.form-err.show{display:flex;animation:shake .4s ease}
+@keyframes shake{20%{transform:translateX(-5px)}40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}
+.btn-login{
+  width:100%;height:48px;margin-top:4px;border:none;border-radius:12px;cursor:pointer;
+  font-size:15px;font-weight:700;font-family:inherit;letter-spacing:6px;text-indent:6px;color:#fff;
+  background:linear-gradient(120deg,#2450a4,#3b74d6,#5b8fe8);
+  background-size:200% 200%;
+  box-shadow:0 10px 24px -6px rgba(80,140,230,.5);
+  transition:transform .15s, box-shadow .2s;
+  animation:gradient-flow 6s ease infinite;
+}
+.btn-login:hover{transform:translateY(-1px);box-shadow:0 14px 28px -6px rgba(80,140,230,.65)}
+.btn-login:active{transform:translateY(0)}
+.btn-login:disabled{opacity:.6;cursor:wait;transform:none}
+.btn-login .spin{
+  display:inline-block;width:15px;height:15px;vertical-align:-2px;margin-right:8px;
+  border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.form-foot{margin-top:26px;font-size:13.5px;color:rgba(210,225,255,.6);text-align:center}
+.form-foot a{color:#8ab4ff;font-weight:700;text-decoration:none}
+.form-foot a:hover{text-decoration:underline;color:#a9c8ff}
+.side-foot{margin-top:34px;font-size:12px;color:rgba(210,225,255,.4);text-align:center}
+
+/* ========== 响应式 / 无动效偏好 ========== */
+@media (max-width:900px){
+  .auth-grid{grid-template-columns:1fr;padding:0 16px}
+  .brand{display:none}
+  .mobile-brand{display:flex!important}
+}
+.mobile-brand{
+  display:none;align-items:center;gap:12px;margin:0 0 24px;padding:13px 16px;
+  border-radius:14px;color:#fff;
+  background:rgba(255,255,255,.1);backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.14);
+}
+.mobile-brand .brand-logo{width:40px;height:40px;font-size:17px;border-radius:11px}
+.mobile-brand h1{margin:0;font-size:16px}
+.mobile-brand p{margin:2px 0 0;font-size:11.5px;opacity:.6}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="auth-page">
+  <div id="particles-bg"></div>
+  <div class="glow2"></div>
+
+  <div class="auth-grid">
+    <aside class="brand">
+      <div class="brand-head">
+        <div class="brand-logo">申</div>
+        <div>
+          <h1>申报书智能修改系统</h1>
+          <p>AI APPLICATION FORM EDITING SYSTEM</p>
+        </div>
+      </div>
+      <div class="brand-body">
+        <h2>修改意见进，<br><em>成品申报书出</em></h2>
+        <p>上传申报书与区域修改意见，由 Gemini 生成编辑计划，人工确认后按原文版式写入源文件。</p>
+        <ul class="feat">
+          <li><span class="fi">1</span><div><b>Gemini 生成修改计划</b><span>按章给出修改建议，人工核对后再写入</span></div></li>
+          <li><span class="fi">2</span><div><b>版式保真写入</b><span>保持源文件表格、单元格与段落结构</span></div></li>
+          <li><span class="fi">3</span><div><b>人才库 · 论文附件检索</b><span>缺护照、缺论文？自动查库给链接</span></div></li>
+          <li><span class="fi">4</span><div><b>人工确认 · 原件只读</b><span>确认前不改 Word，禁止编造事实</span></div></li>
+        </ul>
+      </div>
+      <div class="brand-foot">本地单机服务 · 原件只读 · 严禁编造数据 · v2.3</div>
+    </aside>
+
+    <main class="form-side">
+      <div class="form-box">
+        <div class="mobile-brand">
+          <div class="brand-logo">申</div>
+          <div>
+            <h1>申报书智能修改系统</h1>
+            <p>AI APPLICATION FORM EDITING SYSTEM</p>
+          </div>
+        </div>
+        <h2>欢迎回来</h2>
+        <p class="sub">请登录你的账号，继续处理申报书</p>
+
+        <form id="loginForm" autocomplete="off">
+          <div class="f-row">
+            <label for="username">用户名</label>
+            <div class="inp">
+              <input type="text" id="username" required maxlength="32" placeholder="请输入用户名">
+              <svg class="in-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+          </div>
+          <div class="f-row">
+            <label for="password">密码</label>
+            <div class="inp">
+              <input type="password" id="password" required maxlength="64" placeholder="请输入密码">
+              <svg class="in-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <button type="button" class="eye" id="eyeBtn" title="显示 / 隐藏密码" tabindex="-1">
+                <svg class="ic-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg class="ic-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+              </button>
+            </div>
+            <div class="caps" id="capsHint">键盘大写锁定已开启</div>
+          </div>
+
+          <div class="form-err" id="errBox"><span id="err"></span></div>
+          <button type="submit" class="btn-login" id="submitBtn">登 录</button>
+        </form>
+
+        <p class="form-foot">还没有账号？<a href="/register">立即注册</a></p>
+        <p class="side-foot">登录即代表同意仅将本系统用于申报书修改工作</p>
+      </div>
+    </main>
+  </div>
+</div>
+<script src="/public/vendor/tsparticles.bundle.min.js"></script>
+<script>
+(function () {
+  /* ===== 全屏星空粒子：仅未开启"减少动效"时加载；交互只有悬停排斥 ===== */
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduced && window.tsParticles) {
+    tsParticles.load('particles-bg', {
+      fpsLimit: 60,
+      detectRetina: true,
+      background: { color: 'transparent' },
+      interactivity: {
+        events: {
+          onHover: { enable: true, mode: 'repulse' },
+          resize: true
+        },
+        modes: { repulse: { distance: 130, duration: 0.4 } }
+      },
+      particles: {
+        color: { value: ['#ffffff', '#bcd4ff', '#7fa9f0'] },
+        links: { color: '#7fa9f0', distance: 160, enable: true, opacity: 0.12, width: 0.8 },
+        move: { enable: true, speed: 0.5, direction: 'none', outModes: { default: 'bounce' }, random: true, straight: false },
+        number: { density: { enable: true, area: 700 }, value: 90 },
+        opacity: {
+          value: { min: 0.15, max: 0.8 },
+          animation: { enable: true, speed: 0.3, minimumValue: 0.05, sync: false }
+        },
+        size: {
+          value: { min: 0.8, max: 2.6 },
+          animation: { enable: true, speed: 1.2, minimumValue: 0.5, sync: false }
+        }
+      }
+    });
+  }
+
+  var form = document.getElementById('loginForm');
+  var err = document.getElementById('err');
+  var errBox = document.getElementById('errBox');
+  var btn = document.getElementById('submitBtn');
+
+  function fail(msg) {
+    err.textContent = msg;
+    errBox.classList.remove('show');
+    void errBox.offsetWidth; /* 重触发抖动动画 */
+    errBox.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = '登 录';
+  }
+
+  document.getElementById('eyeBtn').addEventListener('click', function () {
+    var pw = document.getElementById('password');
+    var show = pw.type === 'password';
+    pw.type = show ? 'text' : 'password';
+    this.classList.toggle('off', show);
+  });
+
+  var caps = document.getElementById('capsHint');
+  document.getElementById('password').addEventListener('keyup', function (e) {
+    if (e.getModifierState) caps.style.display = e.getModifierState('CapsLock') ? 'block' : 'none';
+  });
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    errBox.classList.remove('show');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>登录中…';
+    fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value.trim(),
+        password: document.getElementById('password').value
+      })
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, data: j }; });
+    }).then(function (res) {
+      if (res.ok && res.data && res.data.ok) {
+        var u = res.data.user || {};
+        btn.textContent = '登录成功，正在进入…';
+        location.href = u.role === 'admin' ? '/admin' : (res.data.redirect || '/');
+        return;
+      }
+      fail((res.data && res.data.detail) || '登录失败，请重试');
+    }).catch(function (ex) {
+      fail('网络异常：' + (ex && ex.message || ex));
+    });
+  });
+})();
+</script>
+</body>
+</html>
