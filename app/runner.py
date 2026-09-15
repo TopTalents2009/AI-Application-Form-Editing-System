@@ -2,31 +2,38 @@
 from __future__ import annotations
 import asyncio, json, os, re, secrets, shutil, time
 from pathlib import Path
-from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_gemini, compare_model_profiles, model_family, COMPARE_FAMS, OPINION_FIELDS, fam_tag
+from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_gemini, compare_model_profiles, model_family, COMPARE_FAMS, OPINION_FIELDS, fam_tag, scan_pdf_settings
 from .llm import chat, extract_json, extract_json_lenient, now_str, created_key, LlmError
 from . import matcher as M
 from .opinion_extract import ALLOWED_OPINION_EXT, ensure_txt as extract_to_txt
 from .pdf_app import (
     ALLOWED_APP_EXT, APP_EXT_HINT, EXCEL_APP_EXT, WORD_APP_EXT,
+    SCAN_OCR_TIMEOUT_S, SCAN_OCR_PAGE_CONCURRENCY,
     backup_name, edited_name, ensure_app_docx, is_backup_output, is_edited_output,
-    finalize_scanned_docx, pdf_kind, sniff_pdf, work_docx_name,
+    ocr_scanned_pdf_to_text, pdf_kind, sniff_pdf, work_docx_name, _pdf_text_stats,
 )
+from .opinion_extract import resolve_ocr_timeout
 from .pool import lookup_for_app, format_pool_prompt, save_snapshot
 from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block, public_attach_hit
 from .report_docx import write_compare_docx
 from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits, enforce_edit_limits, limit_hint
 from .edit_validate import validate_structured_edits, clauses_from_edits
+from .manual_fill import promote_unknown_to_manual_edits
 from .form_kind import classify as classify_form
 from .hj_form import (
     HJ_LAYOUT_HINTS, HJ_SECTION_ENUM, HJ_SECTION_FILES, HJ_SECTION_ORDER, QM_SECTION_ENUM,
+    QM_SECTION_ORDER, remap_qm_section, slice_qm_section, slice_qm_employer,
     hj_form_requirements, is_hj_app, remap_hj_section, slice_hj_section,
 )
 from .inline_opinions import (
     INLINE_OP_NAME, NO_OPINION_MSG, extract_inline_opinion_text, split_inline_units,
 )
 
-SECTION_FILES = {"基本信息": "basic-info.md", "教育": "education.md", "工作": "work.md", "论文": "papers.md", "项目": "projects.md"}
-SECTION_ORDER = ["基本信息", "教育", "工作", "论文", "项目", "其他"]
+SECTION_FILES = {
+    "基本信息": "basic-info.md", "教育": "education.md", "工作": "work.md",
+    "论文": "papers.md", "项目": "projects.md", "工作计划": "work-plan.md",
+}
+SECTION_ORDER = list(QM_SECTION_ORDER)
 TERMINAL = {"done", "failed"}
 PYENV = dict(os.environ, PYTHONIOENCODING="utf-8")
 RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
@@ -135,10 +142,17 @@ def parse_classify_clauses(cj: dict, blocks: list, hj: bool, allowed_sec: set) -
         if not clause:
             continue
         section = str(c.get("section") or "其他").strip()
-        if hj:
+        if blk and blk.get("_metaSection") and not hj:
+            section = str(blk["_metaSection"])
+            if blk.get("_metaClause"):
+                clause = str(blk["_metaClause"])
+        elif hj:
             section = remap_hj_section(section, clause, blk["text"] if blk else clause)
         else:
-            section = guess_qm_section((blk or {}).get("text") or clause) if section == "其他" else section
+            opinion = blk["text"] if blk else clause
+            section = remap_qm_section(section, clause, opinion)
+            if section == "其他":
+                section = guess_qm_section(opinion or clause)
         if section not in allowed_sec:
             section = "其他"
         cid = unique_cid(sid or ("C" + str(i + 1)), used)
@@ -150,6 +164,29 @@ def parse_classify_clauses(cj: dict, blocks: list, hj: bool, allowed_sec: set) -
     return clauses
 
 
+def expand_qm_work_plan_clauses(clauses: list) -> list:
+    """市专题/微信等综合意见同时涉及 300 字与 1500 字时，复制一条到「工作计划」章单独出计划。"""
+    out = list(clauses or [])
+    used = {str(c.get("cid") or "") for c in out}
+    for c in clauses or []:
+        from .hj_form import _qm_mixed_meta_opinion
+        if not _qm_mixed_meta_opinion(c.get("clause") or "", c.get("opinion") or ""):
+            continue
+        if str(c.get("section") or "") == "工作计划":
+            continue
+        cid = unique_cid(str(c.get("cid") or "S0") + "-WP", used)
+        used.add(cid)
+        out.append({
+            "cid": cid,
+            "sourceId": c.get("sourceId"),
+            "section": "工作计划",
+            "clause": "工作目标及可行性论证1500字栏（市专题/综合修改意见）",
+            "opinion": c.get("opinion") or "",
+            "opName": c.get("opName") or "",
+        })
+    return out
+
+
 def classify_clauses_heuristic(blocks: list, hj: bool, allowed_sec: set) -> list:
     clauses = []
     used = set()
@@ -158,7 +195,9 @@ def classify_clauses_heuristic(blocks: list, hj: bool, allowed_sec: set) -> list
         if hj:
             section = remap_hj_section("其他", text, text)
         else:
-            section = guess_qm_section(text)
+            section = remap_qm_section("其他", text, text)
+            if section == "其他":
+                section = guess_qm_section(text)
         if section not in allowed_sec:
             section = "其他"
         sid = norm_sid(b.get("id"))
@@ -441,16 +480,41 @@ class TaskStore:
                 if f == app_name and ext == ".pdf":
                     kind = pdf_kind(work_input / f)
                     t.setdefault("app", {})["pdfKind"] = kind
-                    engine = await ensure_app_docx(
-                        work_input / f, work_input / work_docx,
-                        log_fn=lambda msg: self.log(t, msg),
-                    )
                     if kind == "scanned":
-                        self.log(t, "扫描 PDF 已 OCR 识别并生成 Word 工作稿 " + work_docx + "（" + str(engine) + "）")
-                        self.log(t, "提示：扫描件落盘时将按根目录 QM.docx / HJ.docx 模板重新生成申报书；请重点核对对照表")
+                        _, _, _, n_pages = _pdf_text_stats(work_input / f)
+                        per_page = resolve_ocr_timeout()
+                        batches = max(1, (int(n_pages or 1) + SCAN_OCR_PAGE_CONCURRENCY - 1) // SCAN_OCR_PAGE_CONCURRENCY)
+                        cfg = scan_pdf_settings()
+                        timeout = max(
+                            SCAN_OCR_TIMEOUT_S,
+                            int(cfg.get("timeoutSec") or 900),
+                            per_page * batches,
+                        )
+                        try:
+                            engine = await asyncio.wait_for(
+                                ocr_scanned_pdf_to_text(
+                                    work_input / f, target,
+                                    log_fn=lambda msg: self.log(t, msg),
+                                ),
+                                timeout=timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            raise ValueError("扫描 PDF 识别超时，请减少页数或改传 Word / Excel")
+                        t.setdefault("app", {})["ocrEngine"] = engine
+                        t.setdefault("app", {})["scannedTextOnly"] = True
+                        self.log(
+                            t,
+                            "扫描 PDF 已 OCR 识别为文本（不转 Word，" + str(engine) + "）；"
+                            "落盘时将套 QM/HJ 模板生成申报书",
+                        )
                     else:
+                        engine = await ensure_app_docx(
+                            work_input / f, work_input / work_docx,
+                            log_fn=lambda msg: self.log(t, msg),
+                        )
+                        t.setdefault("app", {})["ocrEngine"] = engine
                         self.log(t, "数字 PDF 已转为 Word 工作稿 " + work_docx + "（" + str(engine) + "）")
-                    await extract_to_txt(work_input / work_docx, target)
+                        await extract_to_txt(work_input / work_docx, target)
                 else:
                     await extract_to_txt(work_input / f, target)
                 self.log(t, "已提取 " + f + " → txt/" + target.name)
@@ -462,11 +526,29 @@ class TaskStore:
                 raise ValueError("申报书「" + f + "」提取失败：" + msg)
         if not t.get("opinions"):
             src = work_input / app_name
-            if ext_of(app_name) == ".pdf":
-                cand = work_input / work_docx
-                if cand.exists():
-                    src = cand
-            text, n_cmt = extract_inline_opinion_text(src)
+            text, n_cmt = "", 0
+            if ext_of(app_name) == ".pdf" and t.get("app", {}).get("pdfKind") == "scanned":
+                ocr_txt = txt_dir / (stem_of(app_name) + ".txt")
+                if ocr_txt.exists():
+                    raw = ocr_txt.read_text(encoding="utf-8")
+                    units = split_inline_units(raw)
+                    if units:
+                        lines = []
+                        for i, u in enumerate(units, 1):
+                            lines.append("<<<标注 " + str(i) + ">>>")
+                            body = str(u or "").strip()
+                            if body and not re.match(r"^\d+\.", body):
+                                body = str(i) + ". " + body
+                            lines.append(body)
+                            lines.append("")
+                        text = "\n".join(lines).strip()
+                        n_cmt = len(units)
+            if not text:
+                if ext_of(app_name) == ".pdf":
+                    cand = work_input / work_docx
+                    if cand.exists():
+                        src = cand
+                text, n_cmt = extract_inline_opinion_text(src)
             if not text:
                 raise ValueError(NO_OPINION_MSG)
             (txt_dir / (stem_of(INLINE_OP_NAME) + ".txt")).write_text(text, encoding="utf-8")
@@ -547,7 +629,7 @@ class TaskStore:
             return self._classify_text(t, text, persist=True)
         return ""
 
-    def collect_opinion_blocks(self, texts) -> list:
+    def collect_opinion_blocks(self, texts, t=None) -> list:
         blocks = []
         for of in texts.get("opinionFiles") or []:
             raw = str(of.get("text") or "")
@@ -560,6 +642,17 @@ class TaskStore:
                     units = [raw]
             for u in units:
                 blocks.append({"id": "S" + str(len(blocks) + 1), "name": of["name"], "text": u})
+        if t is not None:
+            from .opinion_sanitize import sanitize_opinion_blocks
+            hj = self._hj_mode(t, str(texts.get("appText") or ""))
+            blocks, notes = sanitize_opinion_blocks(
+                blocks,
+                app_text=str(texts.get("appText") or ""),
+                app_name=str((t.get("app") or {}).get("name") or ""),
+                hj=hj,
+            )
+            for msg in notes:
+                self.log(t, msg)
         return blocks
 
     def _hj_mode(self, t, app_text: str = "") -> bool:
@@ -606,7 +699,24 @@ class TaskStore:
         body = tpl.replace("{{SECTION}}", sec).replace("{{RULES}}", rules)
         body = body.replace("{{FORM_REQS}}", form_reqs)
         body = body.replace("{{CLAUSES}}", "\n".join(lines).strip())
-        body = body.replace("{{APP_TEXT}}", slice_hj_section(app_text, sec) if hj else app_text)
+        if hj:
+            app_slice = slice_hj_section(app_text, sec)
+        elif sec == "工作计划":
+            app_slice = slice_qm_section(app_text, sec)
+        elif sec == "其他":
+            blob = "\n".join(
+                str(it.get("opinion") or "") + str(it.get("clause") or "") for it in (items or [])
+            )
+            if re.search(r"拟提供申报人支持条件|支持条件|500\s*平米|科研启动经费|贴合实际", blob, re.I):
+                er = RULES_DIR / "employer-qm.md"
+                if er.exists():
+                    rules = rules + "\n\n" + er.read_text(encoding="utf-8")
+                app_slice = slice_qm_employer(app_text)
+            else:
+                app_slice = app_text
+        else:
+            app_slice = app_text
+        body = body.replace("{{APP_TEXT}}", app_slice)
         body = body.replace("{{POOL_DATA}}", pool_text or "（未检索到库内记录，仅能使用申报书正文；缺数据写入 leftovers）")
         body = body.replace("{{ATTACH_DATA}}", attach_text or "（修改意见未点名缺失附件）")
         body = body.replace("{{LAYOUT_HINTS}}", HJ_LAYOUT_HINTS if hj else "")
@@ -641,7 +751,7 @@ class TaskStore:
         if not M.is_app_content(texts["appText"]):
             app = t.get("app") or {}
             if ext_of(app.get("name")) == ".pdf":
-                extra = "。扫描 PDF 识别或数字 PDF 转换后表格可能丢失，建议尽量改传 Word / Excel" if app.get("pdfKind") == "scanned" else "。数字 PDF 转换后表格可能丢失，建议改传 Word / Excel"
+                extra = "。扫描 PDF 将 OCR 后套模板生成，字段解析可能不全，建议尽量改传 Word / Excel" if app.get("pdfKind") == "scanned" else "。数字 PDF 转换后表格可能丢失，建议改传 Word / Excel"
             else:
                 extra = ""
             raise ValueError("所选文件不像一份已填写的申报书（正文过短/未填写模板/缺封面关键字段），请检查是否选错文件" + extra)
@@ -654,7 +764,7 @@ class TaskStore:
             self.log(t, "HJ 按印刷栏位切章：" + "、".join(sec_all[:-1]))
         self.log(t, "使用模型 " + str(t.get("modelLabel") or t.get("model") or "默认"))
         self.log(t, "意见按章节分类中…")
-        blocks = self.collect_opinion_blocks(texts)
+        blocks = self.collect_opinion_blocks(texts, t)
         if not blocks:
             raise ValueError("意见原文切分结果为空")
         self.log(t, "已从意见文件切出 " + str(len(blocks)) + " 条原文")
@@ -697,6 +807,8 @@ class TaskStore:
 
         if not clauses:
             clauses = classify_clauses_heuristic(blocks, hj, allowed_sec)
+        if not hj:
+            clauses = expand_qm_work_plan_clauses(clauses)
         # 2) 兜底覆盖：LLM 漏掉的来源意见补一条，避免「意见未被提取/未修改」
         if clauses:
             _covered = {c.get("sourceId") for c in clauses}
@@ -709,7 +821,9 @@ class TaskStore:
                 if hj:
                     section = remap_hj_section("其他", text, text)
                 else:
-                    section = guess_qm_section(text)
+                    section = remap_qm_section("其他", text, text)
+                    if section == "其他":
+                        section = guess_qm_section(text)
                 if section not in allowed_sec:
                     section = "其他"
                 clauses.append({
@@ -764,27 +878,41 @@ class TaskStore:
         self.log(t, "开始按章生成计划（Gemini，思考中度，温度 0.1），申报书编号 " + (app_no or "未识别") + "，共 " + str(len(sec_order)) + " 章，章节并发 " + str(PLAN_CONCURRENCY) + "…")
         sec_sem = asyncio.Semaphore(PLAN_CONCURRENCY)
 
-        async def plan_one(sec, model_id, fam, label):
+        async def plan_one(sec, batch_items, log_label, model_id, fam, model_label):
             tag = fam_tag(fam)
-            self.log(t, "⏳ 【" + sec + "·" + tag + "】正在调用 " + str(label) + "…")
+            self.log(t, "⏳ 【" + log_label + "·" + tag + "】正在调用 " + str(model_label) + "…")
             try:
-                r = await chat(self.build_section_plan_messages(sec, by_sec[sec], texts["appText"], pool_text, attach_text, hj=hj), json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=model_id)
+                r = await chat(
+                    self.build_section_plan_messages(sec, batch_items, texts["appText"], pool_text, attach_text, hj=hj),
+                    json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=model_id,
+                )
                 plan = extract_json_lenient(r["content"])
                 n_e = len(plan.get("edits") or []) if isinstance(plan, dict) else 0
                 n_l = len((plan.get("leftovers") if isinstance(plan, dict) else None) or [])
-                self.log(t, "【" + sec + "·" + tag + "】返回 " + str(n_e) + " 条编辑 / " + str(n_l) + " 条遗留")
+                self.log(t, "【" + log_label + "·" + tag + "】返回 " + str(n_e) + " 条编辑 / " + str(n_l) + " 条遗留")
                 return {"sec": sec, "plan": plan, "error": None, "fam": fam, "model": model_id}
             except Exception as e:
-                self.log(t, "【" + sec + "·" + tag + "】失败：" + str(e)[:150])
+                self.log(t, "【" + log_label + "·" + tag + "】失败：" + str(e)[:150])
                 return {"sec": sec, "plan": None, "error": str(e)[:200], "fam": fam, "model": model_id}
 
         async def plan_sec(sec):
-            n = len(by_sec[sec])
+            items = by_sec[sec]
+            n = len(items)
             names = " + ".join(fam_tag(fam) for fam, _, _ in models_for_plan)
-            async with sec_sem:
-                self.log(t, "【" + sec + "】同时提交 " + names + "（" + str(n) + " 条意见）…")
-                rows = await asyncio.gather(*(plan_one(sec, mid, fam, label) for fam, mid, label in models_for_plan))
-                return list(rows)
+            # 「其他」一次塞入过多条款时模型易整批标「已合规」；按批切分
+            batches = [items]
+            if sec == "其他" and n > 8:
+                batches = [items[i:i + 8] for i in range(0, n, 8)]
+            all_rows = []
+            for bi, batch in enumerate(batches):
+                log_label = sec + (("·批" + str(bi + 1)) if len(batches) > 1 else "")
+                async with sec_sem:
+                    self.log(t, "【" + log_label + "】同时提交 " + names + "（" + str(len(batch)) + " 条意见）…")
+                    rows = await asyncio.gather(*(
+                        plan_one(sec, batch, log_label, mid, fam, lbl) for fam, mid, lbl in models_for_plan
+                    ))
+                    all_rows.extend(rows)
+            return all_rows
 
         sec_results = await asyncio.gather(*(plan_sec(s) for s in sec_order))
         settled = [row for group in sec_results for row in group]
@@ -985,45 +1113,55 @@ class TaskStore:
             miss_ids = "、".join(norm_sid(c.get("sourceId") or c.get("cid")) for c in missing_clauses[:8])
             if len(missing_clauses) > 8:
                 miss_ids += "…"
-            self.log(t, "计划未覆盖 " + str(len(missing_clauses)) + " 条意见（" + miss_ids + "），补发专项计划…")
-            sup_sec = missing_clauses[0].get("section") or "其他"
-            if len({c.get("section") or "其他" for c in missing_clauses}) > 1:
-                sup_sec = "其他"
+            self.log(t, "计划未覆盖 " + str(len(missing_clauses)) + " 条意见（" + miss_ids + "），按章节补发专项计划…")
             tag = fam_tag(primary_fam)
-            try:
-                r = await chat(
-                    self.build_section_plan_messages(sup_sec, missing_clauses, texts["appText"], pool_text, attach_text, hj=hj),
-                    json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=primary_id,
-                )
-                sup_plan = extract_json_lenient(r["content"])
-                sup_edits = 0
-                for e2 in (sup_plan.get("edits") if isinstance(sup_plan, dict) else None) or []:
-                    if not isinstance(e2, dict) or not str(e2.get("find", "")).strip():
-                        continue
-                    k = norm_find(e2.get("find"))
-                    if any(x.get("_k") == k for x in edits):
-                        continue
-                    src = items_by_cid.get(norm_sid(e2.get("clauseId"))) or next(
-                        (c for c in missing_clauses if norm_sid(c.get("cid")) == norm_sid(e2.get("clauseId"))),
-                        None,
-                    )
-                    item = dict(e2)
-                    item["_k"] = k
-                    item["_sec"] = sup_sec
-                    item["section"] = sup_sec
-                    item["appNo"] = app_no
-                    item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
-                    item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
-                    item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
-                    item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
-                    item[OPINION_FIELDS[primary_fam]] = str(item.get("replace") or "")
-                    edits.append(item)
-                    sup_edits += 1
-                for lv in ((sup_plan.get("leftovers") if isinstance(sup_plan, dict) else None) or []):
-                    leftovers.append("【" + tag + "·" + sup_sec + "】" + str(lv))
-                self.log(t, "专项计划补回 " + str(sup_edits) + " 条编辑 / " + str(len((sup_plan.get("leftovers") if isinstance(sup_plan, dict) else None) or [])) + " 条遗留")
-            except Exception as e:
-                self.log(t, "专项计划失败：" + str(e)[:150])
+            by_miss_sec: dict[str, list] = {}
+            for c in missing_clauses:
+                sec = str(c.get("section") or "其他")
+                if not hj:
+                    sec = remap_qm_section(sec, str(c.get("clause") or ""), str(c.get("opinion") or ""))
+                by_miss_sec.setdefault(sec, []).append(c)
+            total_sup = 0
+            for sup_sec, sec_items in by_miss_sec.items():
+                batches = [sec_items[i:i + 8] for i in range(0, len(sec_items), 8)]
+                for bi, batch in enumerate(batches):
+                    label = sup_sec + ("·批" + str(bi + 1) if len(batches) > 1 else "")
+                    try:
+                        r = await chat(
+                            self.build_section_plan_messages(sup_sec, batch, texts["appText"], pool_text, attach_text, hj=hj),
+                            json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=primary_id,
+                        )
+                        sup_plan = extract_json_lenient(r["content"])
+                        sup_n = 0
+                        for e2 in (sup_plan.get("edits") if isinstance(sup_plan, dict) else None) or []:
+                            if not isinstance(e2, dict) or not str(e2.get("find", "")).strip():
+                                continue
+                            k = norm_find(e2.get("find"))
+                            if any(x.get("_k") == k for x in edits):
+                                continue
+                            src = items_by_cid.get(norm_sid(e2.get("clauseId"))) or next(
+                                (c for c in batch if norm_sid(c.get("cid")) == norm_sid(e2.get("clauseId"))),
+                                None,
+                            )
+                            item = dict(e2)
+                            item["_k"] = k
+                            item["_sec"] = sup_sec
+                            item["section"] = sup_sec
+                            item["appNo"] = app_no
+                            item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+                            item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
+                            item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
+                            item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
+                            item[OPINION_FIELDS[primary_fam]] = str(item.get("replace") or "")
+                            edits.append(item)
+                            sup_n += 1
+                        for lv in ((sup_plan.get("leftovers") if isinstance(sup_plan, dict) else None) or []):
+                            leftovers.append("【" + tag + "·" + label + "】" + str(lv))
+                        total_sup += sup_n
+                        self.log(t, "专项【" + label + "】补回 " + str(sup_n) + " 条编辑")
+                    except Exception as e:
+                        self.log(t, "专项【" + label + "】失败：" + str(e)[:150])
+            self.log(t, "专项计划合计补回 " + str(total_sup) + " 条编辑")
             for c in missing_clauses:
                 if clause_covered(c, edits, leftovers):
                     continue
@@ -1049,6 +1187,103 @@ class TaskStore:
             str(t.get("app", {}).get("name") or ""),
         )
         edits, struct_issues = validate_structured_edits(edits, clauses, texts["appText"], hj=hj_mode)
+        _wp_retry_tags = ("【工作计划漏改】", "【关键问题拆分】", "【可行性论证漏改】")
+        wp_retry = [m for m in struct_issues if any(str(m).startswith(t) for t in _wp_retry_tags)]
+        if wp_retry and not hj_mode:
+            wp_items = []
+            for c in clauses:
+                op = str(c.get("opinion") or "")
+                sec = remap_qm_section(str(c.get("section") or ""), str(c.get("clause") or ""), op)
+                if sec == "工作计划" or re.search(
+                    r"重新拆分|三个技术问题|政策|市场|技术发展趋势|可行性论证|拟解决的关键技术",
+                    op, re.I,
+                ):
+                    wp_items.append(c)
+            if wp_items:
+                self.log(t, "检测到工作计划/关键问题/可行性漏改，强制补发【工作计划】专项（" + str(len(wp_items)) + " 条意见）…")
+                try:
+                    r = await chat(
+                        self.build_section_plan_messages("工作计划", wp_items, texts["appText"], pool_text, attach_text, hj=False),
+                        json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=primary_id,
+                    )
+                    wp_plan = extract_json_lenient(r["content"])
+                    wp_n = 0
+                    for e2 in (wp_plan.get("edits") if isinstance(wp_plan, dict) else None) or []:
+                        if not isinstance(e2, dict) or not str(e2.get("find", "")).strip():
+                            continue
+                        k = norm_find(e2.get("find"))
+                        if any(x.get("_k") == k for x in edits):
+                            continue
+                        src = items_by_cid.get(norm_sid(e2.get("clauseId"))) or next(
+                            (c for c in wp_items if norm_sid(c.get("cid")) == norm_sid(e2.get("clauseId"))),
+                            None,
+                        )
+                        item = dict(e2)
+                        item["_k"] = k
+                        item["_sec"] = "工作计划"
+                        item["section"] = "工作计划"
+                        item["appNo"] = app_no
+                        item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+                        item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
+                        item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
+                        item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
+                        item[OPINION_FIELDS[primary_fam]] = str(item.get("replace") or "")
+                        edits.append(item)
+                        wp_n += 1
+                    self.log(t, "工作计划强制补扫补回 " + str(wp_n) + " 条编辑")
+                    if wp_n > 0:
+                        struct_issues = [
+                            m for m in struct_issues
+                            if not any(str(m).startswith(t) for t in _wp_retry_tags)
+                        ]
+                        edits, extra_issues = validate_structured_edits(edits, clauses, texts["appText"], hj=hj_mode)
+                        struct_issues.extend(extra_issues)
+                except Exception as e:
+                    self.log(t, "工作计划强制补扫失败：" + str(e)[:150])
+        sup_retry = [m for m in struct_issues if str(m).startswith("【支持条件漏改】")]
+        if sup_retry and not hj_mode:
+            sup_items = [
+                c for c in clauses
+                if re.search(r"拟提供申报人支持条件|支持条件|500\s*平米|科研启动经费|贴合实际", str(c.get("opinion") or ""), re.I)
+            ]
+            if sup_items:
+                self.log(t, "检测到支持条件漏改，强制补发【其他·用人单位】专项（" + str(len(sup_items)) + " 条）…")
+                try:
+                    r = await chat(
+                        self.build_section_plan_messages("其他", sup_items, texts["appText"], pool_text, attach_text, hj=False),
+                        json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=primary_id,
+                    )
+                    sup_plan = extract_json_lenient(r["content"])
+                    sup_n = 0
+                    for e2 in (sup_plan.get("edits") if isinstance(sup_plan, dict) else None) or []:
+                        if not isinstance(e2, dict) or not str(e2.get("find", "")).strip():
+                            continue
+                        k = norm_find(e2.get("find"))
+                        if any(x.get("_k") == k for x in edits):
+                            continue
+                        src = items_by_cid.get(norm_sid(e2.get("clauseId"))) or next(
+                            (c for c in sup_items if norm_sid(c.get("cid")) == norm_sid(e2.get("clauseId"))),
+                            None,
+                        )
+                        item = dict(e2)
+                        item["_k"] = k
+                        item["_sec"] = "其他"
+                        item["section"] = "其他"
+                        item["appNo"] = app_no
+                        item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+                        item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
+                        item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
+                        item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
+                        item[OPINION_FIELDS[primary_fam]] = str(item.get("replace") or "")
+                        edits.append(item)
+                        sup_n += 1
+                    self.log(t, "支持条件专项补回 " + str(sup_n) + " 条编辑")
+                    if sup_n > 0:
+                        struct_issues = [m for m in struct_issues if not str(m).startswith("【支持条件漏改】")]
+                        edits, extra_issues = validate_structured_edits(edits, clauses, texts["appText"], hj=hj_mode)
+                        struct_issues.extend(extra_issues)
+                except Exception as e:
+                    self.log(t, "支持条件专项补扫失败：" + str(e)[:150])
         for msg in struct_issues:
             tag_msg = msg if msg.startswith("【") else "【结构化校验】" + msg
             if tag_msg not in leftovers:
@@ -1078,6 +1313,12 @@ class TaskStore:
                 continue
             leftovers.append(line)
             lo_blob += "\n" + line
+
+        edits, leftovers, manual_n = promote_unknown_to_manual_edits(
+            clauses, edits, leftovers, texts["appText"], app_no=app_no, hj=hj_mode,
+        )
+        if manual_n:
+            self.log(t, "未知信息转人工复核：" + str(manual_n) + " 条（已定位申报书原文，修改后栏预填原文）")
 
         if not edits and not leftovers:
             raise ValueError("各章节均未产出有效编辑")
@@ -1146,12 +1387,7 @@ class TaskStore:
 
             out_dir = Path(t["dir"]) / "work" / "output"; out_dir.mkdir(parents=True, exist_ok=True)
             stem = stem_of(t["app"]["name"])
-            src_app = Path(t["dir"]) / "work" / "input" / work_docx_name((t.get("app") or {}).get("workDocx") or t["app"]["name"])
-            if not src_app.exists():
-                src_app = Path(t["dir"]) / "work" / "input" / work_docx_name(t["app"]["name"])
-            src_ext = src_app.suffix.lower()
-            if not src_app.exists() or src_ext not in (WORD_APP_EXT | EXCEL_APP_EXT):
-                raise ValueError("没有可用于落盘的申报书工作稿（PDF 需先转换成 .docx）")
+            is_scanned_pdf = (t.get("app") or {}).get("pdfKind") == "scanned"
             app_text = ""
             try:
                 app_text = self.read_prepared_texts(t)["appText"]
@@ -1199,65 +1435,68 @@ class TaskStore:
                     "全部 " + str(len(actionable)) + " 条编辑的改前摘录在申报书中均未找到，无法落盘。"
                     "请核对计划是否与原件一致，或改传 Word / Excel 原件（扫描 PDF 命中率较低）"
                 )
-            out_app = out_dir / edited_name(stem, src_ext)
-            bak_app = out_dir / backup_name(stem, src_ext)
-            apply_timeout = 600 if src_ext in EXCEL_APP_EXT else 300
-            so, se, rc = await self._py([SCRIPTS_DIR / "apply_edits.py", src_app, out_app, bak_app, plan_path], timeout=apply_timeout)
-            if rc != 0:
-                t["status"] = "failed"; t["error"] = "编辑执行器失败：" + (se or so or "rc!=0")[:400]; return
+            if is_scanned_pdf:
+                from .template_fill import apply_text_edits
 
-            if (t.get("app") or {}).get("pdfKind") == "scanned" and src_ext in WORD_APP_EXT:
+                out_app = out_dir / edited_name(stem, ".docx")
+                pdf_src = Path(t["dir"]) / "work" / "input" / str((t.get("app") or {}).get("name") or "")
+                if pdf_src.exists() and pdf_src.suffix.lower() == ".pdf":
+                    shutil.copyfile(pdf_src, out_dir / (stem + "_备份.pdf"))
                 kind = str((t.get("app") or {}).get("mode") or "").upper()
                 if kind not in ("QM", "HJ"):
                     kind = str(self._classify_text(t, app_text, persist=False) or "HJ").upper()
-                from .template_fill import apply_text_edits
-
                 render_txt = tmp_dir / "_render_source.txt"
                 render_body = apply_text_edits(app_text, edits)
                 if not str(render_body or "").strip():
-                    try:
-                        await extract_to_txt(out_app, render_txt)
-                        render_body = render_txt.read_text(encoding="utf-8") if render_txt.exists() else ""
-                    except Exception:
-                        await self._py([SCRIPTS_DIR / "sb_extract.py", out_app, render_txt])
-                        render_body = render_txt.read_text(encoding="utf-8") if render_txt.exists() else ""
+                    raise ValueError("扫描件落盘失败：应用编辑后正文为空")
                 render_txt.write_text(render_body, encoding="utf-8")
                 ro, re_, rc_r = await self._py(
                     [SCRIPTS_DIR / "render_declaration.py", render_txt, kind, out_app],
                     timeout=300,
                 )
-                rendered = False
+                info = {}
                 if rc_r == 0:
                     try:
                         info = json.loads(ro or "{}")
                     except Exception:
                         info = {}
-                    if info.get("ok"):
-                        rendered = True
-                        self.log(
-                            t,
-                            "扫描件已按「" + kind + "」模板（QM.docx/HJ.docx）生成申报书（"
-                            + str(info.get("talent") or "") + " / "
-                            + str(info.get("enterprise") or "")[:40] + "）",
-                        )
+                if not info.get("ok"):
+                    raise ValueError(
+                        "扫描件模板渲染失败："
+                        + str(info.get("error") or re_ or ro or "未知错误")[:240]
+                    )
+                self.log(
+                    t,
+                    "扫描件已按「" + kind + "」模板生成申报书（未经过 PDF→Word 转换；"
+                    + str(info.get("talent") or "") + " / "
+                    + str(info.get("enterprise") or "")[:40] + "）",
+                )
+                applied = []
+                for e in edits or []:
+                    fnd = str(e.get("find") or "").strip()
+                    if not fnd:
+                        applied.append({"status": "skip"})
+                    elif fnd in str(app_text or ""):
+                        applied.append({"status": "hit"})
                     else:
-                        self.log(t, "模板渲染失败：" + str(info.get("error") or ro or "")[:160])
-                else:
-                    self.log(t, "模板渲染失败：" + str(re_ or ro or "")[:160])
-                if not rendered:
-                    pdf_src = Path(t["dir"]) / "work" / "input" / str((t.get("app") or {}).get("name") or "")
-                    if pdf_src.exists() and pdf_src.suffix.lower() == ".pdf":
-                        try:
-                            tmp_fmt = out_app.with_suffix(".fmt.docx")
-                            finalize_scanned_docx(pdf_src, out_app, tmp_fmt)
-                            shutil.move(str(tmp_fmt), str(out_app))
-                            self.log(t, "已回退为 PDF 截图版式（每页嵌入原件 + 修改后文字层）")
-                        except Exception as e:
-                            self.log(t, "版式重排也失败，保留文字稿输出：" + str(e)[:160])
-                    else:
-                        self.log(t, "未找到 PDF 原件，保留文字稿输出")
-
-            applied = json.loads(so).get("results") or []
+                        applied.append({"status": "miss"})
+            else:
+                src_app = Path(t["dir"]) / "work" / "input" / work_docx_name((t.get("app") or {}).get("workDocx") or t["app"]["name"])
+                if not src_app.exists():
+                    src_app = Path(t["dir"]) / "work" / "input" / work_docx_name(t["app"]["name"])
+                src_ext = src_app.suffix.lower()
+                if not src_app.exists() or src_ext not in (WORD_APP_EXT | EXCEL_APP_EXT):
+                    raise ValueError("没有可用于落盘的申报书工作稿")
+                out_app = out_dir / edited_name(stem, src_ext)
+                bak_app = out_dir / backup_name(stem, src_ext)
+                apply_timeout = 600 if src_ext in EXCEL_APP_EXT else 300
+                so, se, rc = await self._py(
+                    [SCRIPTS_DIR / "apply_edits.py", src_app, out_app, bak_app, plan_path],
+                    timeout=apply_timeout,
+                )
+                if rc != 0:
+                    t["status"] = "failed"; t["error"] = "编辑执行器失败：" + (se or so or "rc!=0")[:400]; return
+                applied = json.loads(so).get("results") or []
             misses = sum(1 for a2 in applied if a2.get("status") == "miss")
             skips = sum(1 for a2 in applied if a2.get("status") == "skip")
             hits = sum(1 for a2 in applied if str(a2.get("status") or "").startswith("hit"))

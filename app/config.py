@@ -68,6 +68,54 @@ def _read_config_file() -> tuple[dict, str]:
         return {}, "找不到 config.json"
     return _decode_json(CONFIG_PATH.read_bytes(), "config.json")
 
+def scan_pdf_settings() -> dict:
+    """扫描 PDF 转换配置（docreconstruct + Gemini 混合）。"""
+    c, _ = _read_config_file()
+    block = c.get("scanPdf") if isinstance(c.get("scanPdf"), dict) else {}
+    hybrid = block.get("hybrid") if isinstance(block.get("hybrid"), dict) else {}
+    converter = str(block.get("converter") or hybrid.get("mode") or "hybrid").strip().lower()
+    if converter not in ("gemini", "docreconstruct", "hybrid"):
+        converter = "hybrid"
+    output_mode = str(block.get("outputMode") or "template").strip().lower()
+    if output_mode not in ("convert", "template"):
+        output_mode = "convert"
+    keywords = hybrid.get("criticalKeywords")
+    if not isinstance(keywords, list):
+        keywords = [
+            "有效证件姓名", "性别", "出生日期", "教育经历", "工作经历", "护照", "申报书",
+        ]
+    try:
+        page_min = int(hybrid.get("pageMinChars") or 80)
+    except (TypeError, ValueError):
+        page_min = 80
+    try:
+        qa_min = float(hybrid.get("qaMinScore") or 0.0)
+    except (TypeError, ValueError):
+        qa_min = 0.0
+    try:
+        gemini_max = int(hybrid.get("geminiMaxPages") or 12)
+    except (TypeError, ValueError):
+        gemini_max = 12
+    try:
+        timeout = int(hybrid.get("timeoutSec") or 900)
+    except (TypeError, ValueError):
+        timeout = 900
+    return {
+        "converter": converter,
+        "outputMode": output_mode,
+        "languages": str(hybrid.get("languages") or "chi_sim+eng").strip() or "chi_sim+eng",
+        "pageMinChars": max(20, page_min),
+        "qaMinScore": qa_min,
+        "geminiMaxPages": max(1, gemini_max),
+        "timeoutSec": max(120, timeout),
+        "criticalKeywords": [str(x).strip() for x in keywords if str(x).strip()],
+        "python": str(hybrid.get("python") or "").strip(),
+        "tesseractCmd": str(hybrid.get("tesseractCmd") or "").strip(),
+        "tessdataPrefix": str(hybrid.get("tessdataPrefix") or "").strip(),
+        "keepIntermediates": bool(hybrid.get("keepIntermediates", True)),
+    }
+
+
 def load_config() -> dict:
     c, err = _read_config_file()
     base = llm_api_base(str(c.get("baseUrl") or ""))
@@ -129,6 +177,7 @@ def load_config() -> dict:
         "mysqlConfigured": mysql_ok,
         "clientInbox": client_inbox,
         "projectProof": project_proof,
+        "scanPdf": scan_pdf_settings(),
     }
 
 

@@ -10,3 +10,5 @@ Pillow>=10.0
 pymupdf>=1.24
 pdf2docx>=0.5
 pymysql>=1.1
+# 扫描 PDF 混合 OCR（可选）：pip install -e "tools/docreconstruct[hybrid]"
+# 另需系统安装 Tesseract OCR（chi_sim + eng 语言包）

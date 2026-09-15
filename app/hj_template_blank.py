@@ -21,7 +21,7 @@ def _clear_cover_paragraphs(doc: Document) -> None:
         (re.compile(r"(实验室名称[^:：\n]*[:：])\s*.+$", re.I), r"\1              "),
         (re.compile(r"(联\s*系\s*人[^:：\n]*[:：])\s*.+$", re.I), r"\1"),
         (re.compile(r"(联系人电话[^:：\n]*[:：])\s*.+$", re.I), r"\1"),
-        (re.compile(r"(填表日期[^0-9\n]*).*$", re.I), r"\1      年   月   日"),
+        (re.compile(r"(填表日期\s*\([^)]*\)\s*).*$", re.I), r"\1      年   月   日"),
     )
     for p in doc.paragraphs:
         text = str(p.text or "")

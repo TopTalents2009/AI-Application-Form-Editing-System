@@ -7,7 +7,10 @@ from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
 from .form_kind import classify as classify_form
 from .opinion_extract import ALLOWED_OPINION_EXT, ensure_txt as extract_to_txt
-from .pdf_app import ALLOWED_APP_EXT, APP_EXT_HINT, ensure_app_docx, sniff_pdf, work_docx_name
+from .pdf_app import (
+    ALLOWED_APP_EXT, APP_EXT_HINT, ensure_app_docx, ocr_scanned_pdf_to_text,
+    pdf_kind, sniff_pdf, work_docx_name,
+)
 from .inline_opinions import NO_OPINION_MSG, extract_inline_opinion_text, split_inline_units
 
 def _rid(): return "b" + format(int(time.time() * 1000), "x") + "-" + secrets.token_hex(3)
@@ -107,10 +110,14 @@ class BatchStore:
                 out = txt_dir / (Path(n).stem + ".txt")
                 try:
                     if _ext(n) == ".pdf":
-                        docx = conv_dir / work_docx_name(n)
-                        engine = await ensure_app_docx(src, docx)
-                        self.log(b, "数字 PDF 已转为 Word " + n + " → " + docx.name + "（" + str(engine) + "）")
-                        await extract_to_txt(docx, out)
+                        if pdf_kind(src) == "scanned":
+                            engine = await ocr_scanned_pdf_to_text(src, out, log_fn=lambda msg: self.log(b, msg))
+                            self.log(b, "扫描 PDF OCR 为文本 " + n + "（" + str(engine) + "，不转 Word）")
+                        else:
+                            docx = conv_dir / work_docx_name(n)
+                            engine = await ensure_app_docx(src, docx)
+                            self.log(b, "数字 PDF 已转为 Word " + n + " → " + docx.name + "（" + str(engine) + "）")
+                            await extract_to_txt(docx, out)
                     else:
                         await extract_to_txt(src, out)
                     app_texts[n] = out.read_text(encoding="utf-8")
@@ -131,11 +138,30 @@ class BatchStore:
                 inline_ops = {}
                 for n in b["apps"]:
                     src = Path(b["dir"]) / "input" / n
+                    text, n_cmt = "", 0
                     if _ext(n) == ".pdf":
-                        cand = conv_dir / work_docx_name(n)
-                        if cand.exists():
-                            src = cand
-                    text, n_cmt = extract_inline_opinion_text(src)
+                        ocr_txt = txt_dir / (Path(n).stem + ".txt")
+                        if pdf_kind(src) == "scanned" and ocr_txt.exists():
+                            raw = ocr_txt.read_text(encoding="utf-8")
+                            units = split_inline_units(raw)
+                            if units:
+                                lines = []
+                                for i, u in enumerate(units, 1):
+                                    lines.append("<<<标注 " + str(i) + ">>>")
+                                    body = str(u or "").strip()
+                                    if body and not re.match(r"^\d+\.", body):
+                                        body = str(i) + ". " + body
+                                    lines.append(body)
+                                    lines.append("")
+                                text = "\n".join(lines).strip()
+                                n_cmt = len(units)
+                        if not text:
+                            cand = conv_dir / work_docx_name(n)
+                            if cand.exists():
+                                src = cand
+                            text, n_cmt = extract_inline_opinion_text(src)
+                    else:
+                        text, n_cmt = extract_inline_opinion_text(src)
                     if not text:
                         self.log(b, "申报书「" + n + "」" + NO_OPINION_MSG)
                         continue

@@ -10,6 +10,9 @@ batches/
 client_inbox/
 feedback/
 
+# vendored OCR tool (pip install -e tools/docreconstruct[hybrid])
+tools/docreconstruct/
+
 # python
 __pycache__/
 *.py[cod]

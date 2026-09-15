@@ -37,6 +37,28 @@
     "username": "填入",
     "password": "填入"
   },
+  "scanPdf": {
+    "converter": "hybrid",
+    "outputMode": "template",
+    "hybrid": {
+      "pageMinChars": 80,
+      "qaMinScore": 0.15,
+      "geminiMaxPages": 10,
+      "timeoutSec": 900,
+      "languages": "chi_sim+eng",
+      "tesseractCmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+      "tessdataPrefix": "C:\\Program Files\\Tesseract-OCR\\tessdata",
+      "criticalKeywords": [
+        "有效证件姓名",
+        "性别",
+        "出生日期",
+        "教育经历",
+        "工作经历",
+        "护照"
+      ],
+      "keepIntermediates": true
+    }
+  },
   "projectProof": {
     "codebuddy": {
       "cmd": "C:\\Users\\1\\AppData\\Roaming\\npm\\codebuddy.cmd",

@@ -105,6 +105,27 @@ table.tbl td.ops{overflow:visible;white-space:nowrap}
 .mini.active{border-color:var(--brand2);background:#e9f0fc;color:var(--brand);font-weight:700}
 .fb-item .fb-meta{align-items:center}
 .fb-item .fb-imgs a{cursor:zoom-in}
+#fbAdminList{display:flex;flex-direction:column;gap:8px}
+#fbAdminList .fb-item{margin:0;padding:0;overflow:hidden}
+.fb-item-hd{
+  display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;
+  user-select:none;transition:background .12s;
+}
+.fb-item-hd:hover{background:#f6f8fc}
+.fb-item-hd .fb-chev{
+  width:16px;height:16px;flex-shrink:0;color:#98a2b6;transition:transform .18s;
+}
+.fb-item:not(.bd-collapsed) .fb-item-hd .fb-chev{transform:rotate(90deg)}
+.fb-item-hd .fb-meta{margin:0;flex-shrink:0;flex-wrap:nowrap;white-space:nowrap}
+.fb-item-hd .fb-sum{
+  flex:1;min-width:0;font-size:13px;color:var(--ink);line-height:1.45;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.fb-item-hd .fb-sum.muted{color:#98a2b6}
+.fb-item-bd{padding:0 12px 12px 36px;border-top:1px solid #eef1f6}
+.fb-item.bd-collapsed .fb-item-bd{display:none}
+.fb-item-bd .fb-body{margin-top:10px}
+.fb-item-bd .fb-ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .fb-preview{position:fixed;inset:0;z-index:220;background:rgba(12,18,32,.86);overflow:hidden}
 .fb-preview[hidden]{display:none!important}
 .fb-preview-stage{position:absolute;inset:52px 64px 56px;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
@@ -317,9 +338,19 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
             <button type="button" class="mini fb-filter" data-st="new">待处理</button>
             <button type="button" class="mini fb-filter" data-st="read">已读</button>
             <button type="button" class="mini fb-filter" data-st="done">已处理</button>
+            <span style="flex:1"></span>
+            <button type="button" class="mini" id="fbExpandAll">全部展开</button>
+            <button type="button" class="mini" id="fbCollapseAll">全部折叠</button>
             <span class="msg" id="fbAdminMsg" style="margin:0"></span>
           </div>
           <div id="fbAdminList">加载中…</div>
+          <div id="fbAdminPager" class="book-pager" hidden style="margin-top:12px">
+            <button type="button" class="ghost mini" id="fbPagePrev">上一页</button>
+            <div class="page-mid">
+              <div class="page-sub" id="fbPageInfo">第 1 / 1 页 · 共 0 条</div>
+            </div>
+            <button type="button" class="ghost mini" id="fbPageNext">下一页</button>
+          </div>
         </div>
       </section>
 
@@ -797,7 +828,30 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 
   /* ===== 用户反馈 ===== */
   var fbFilter = '';
+  var fbExpanded = {};
+  var fbAllItems = [];
+  var fbPage = 1;
+  var FB_PAGE_SIZE = 12;
   var fbMsgEl = document.getElementById('fbAdminMsg');
+  function fbPreviewText(it) {
+    var t = String(it.content || '').replace(/\s+/g, ' ').trim();
+    if (!t && it.files && it.files.length) return '（' + it.files.length + ' 张截图）';
+    if (!t) return '（无文字）';
+    return t.length > 72 ? t.slice(0, 72) + '…' : t;
+  }
+  function fbIsOpen(it) {
+    if (fbExpanded[it.id] !== undefined) return !!fbExpanded[it.id];
+    return it.status === 'new';
+  }
+  function fbSetAll(open) {
+    var box = document.getElementById('fbAdminList');
+    if (!box) return;
+    box.querySelectorAll('.fb-item[data-id]').forEach(function (el) {
+      var id = el.getAttribute('data-id');
+      fbExpanded[id] = open;
+      el.classList.toggle('bd-collapsed', !open);
+    });
+  }
   function sayFb(ok, t) {
     if (!fbMsgEl) return;
     fbMsgEl.className = 'msg ' + (ok ? 'ok' : 'bad');
@@ -815,15 +869,43 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     if (n > 0) { b.hidden = false; b.textContent = n > 99 ? '99+' : String(n); }
     else { b.hidden = true; b.textContent = ''; }
   }
-  function loadFeedback() {
-    fetch('/api/feedback').then(function (r) { return r.json(); }).then(function (res) {
-      var items = (res && res.items) || [];
-      setFbBadge(res && res.unread ? res.unread : 0);
-      var box = document.getElementById('fbAdminList');
-      var shown = fbFilter ? items.filter(function (it) { return it.status === fbFilter; }) : items;
-      if (!shown.length) { box.innerHTML = '<div class="files-muted">暂无反馈</div>'; return; }
-      box.innerHTML = shown.map(function (it) {
+  function fbFilteredItems() {
+    return fbFilter ? fbAllItems.filter(function (it) { return it.status === fbFilter; }) : fbAllItems;
+  }
+  function renderFbPager(total, page, pages) {
+    var pager = document.getElementById('fbAdminPager');
+    var info = document.getElementById('fbPageInfo');
+    var prev = document.getElementById('fbPagePrev');
+    var next = document.getElementById('fbPageNext');
+    if (!pager) return;
+    if (pages <= 1) {
+      pager.hidden = true;
+      if (info) info.textContent = total ? ('共 ' + total + ' 条') : '';
+      return;
+    }
+    pager.hidden = false;
+    if (info) info.textContent = '第 ' + page + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
+    if (prev) prev.disabled = page <= 1;
+    if (next) next.disabled = page >= pages;
+  }
+  function renderFeedbackList() {
+    var box = document.getElementById('fbAdminList');
+    var shown = fbFilteredItems();
+    var total = shown.length;
+    if (!total) {
+      box.innerHTML = '<div class="files-muted">暂无反馈</div>';
+      renderFbPager(0, 1, 1);
+      return;
+    }
+    var pages = Math.max(1, Math.ceil(total / FB_PAGE_SIZE));
+    if (fbPage > pages) fbPage = pages;
+    if (fbPage < 1) fbPage = 1;
+    var start = (fbPage - 1) * FB_PAGE_SIZE;
+    var pageItems = shown.slice(start, start + FB_PAGE_SIZE);
+    box.innerHTML = pageItems.map(function (it) {
         var who = esc(it.realName || it.username || '') + (it.department ? ' · ' + esc(it.department) : '') + (it.username ? '（' + esc(it.username) + '）' : '');
+        var sum = fbPreviewText(it);
+        var open = fbIsOpen(it);
         var imgs = (it.files || []).map(function (f) {
           return '<a class="fb-img-link" href="' + esc(f.url) + '"><img src="' + esc(f.url) + '" alt="' + esc(f.name) + '"></a>';
         }).join('');
@@ -839,25 +921,64 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
           '<input type="text" class="fb-reply-input" maxlength="4000" value="' + escAttr(it.reply || '') + '" placeholder="填写处理情况，回复给提交者…">' +
           '<button type="button" class="mini" data-act="reply-send" data-id="' + it.id + '">' + (it.reply ? '更新回复' : '发送回复') + '</button>' +
           '</div>';
-        return '<div class="fb-item">' +
-          '<div class="fb-meta"><span class="fb-st ' + esc(it.status || 'new') + '">' + esc(fbLabel(it.status)) + '</span>' +
-          '<span>' + who + '</span><span>' + esc(it.createdAt) + '</span>' +
-          '<span style="margin-left:auto;display:flex;gap:6px">' + ops + '</span></div>' +
+        return '<div class="fb-item' + (open ? '' : ' bd-collapsed') + '" data-id="' + it.id + '">' +
+          '<div class="fb-item-hd" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+          '<svg class="fb-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
+          '<span class="fb-st ' + esc(it.status || 'new') + '">' + esc(fbLabel(it.status)) + '</span>' +
+          '<span class="fb-meta"><span>' + who + '</span><span>' + esc(it.createdAt) + '</span></span>' +
+          '<span class="fb-sum' + (sum.indexOf('（') === 0 ? ' muted' : '') + '">' + esc(sum) + '</span>' +
+          '</div>' +
+          '<div class="fb-item-bd">' +
           (it.content ? '<div class="fb-body">' + esc(it.content) + '</div>' : '<div class="fb-body" style="color:#98a2b6">（无文字，仅截图）</div>') +
           (imgs ? '<div class="fb-imgs">' + imgs + '</div>' : '') +
           replyHtml +
-          '</div>';
-      }).join('');
+          '<div class="fb-ops">' + ops + '</div>' +
+          '</div></div>';
+    }).join('');
+    renderFbPager(total, fbPage, pages);
+  }
+  function loadFeedback() {
+    fetch('/api/feedback').then(function (r) { return r.json(); }).then(function (res) {
+      fbAllItems = (res && res.items) || [];
+      setFbBadge(res && res.unread ? res.unread : 0);
+      renderFeedbackList();
     }).catch(function (e) {
       document.getElementById('fbAdminList').textContent = '加载失败：' + (e.message || '');
+      var pager = document.getElementById('fbAdminPager');
+      if (pager) pager.hidden = true;
     });
   }
   document.querySelectorAll('.fb-filter').forEach(function (btn) {
     btn.addEventListener('click', function () {
       fbFilter = btn.getAttribute('data-st') || '';
+      fbPage = 1;
       document.querySelectorAll('.fb-filter').forEach(function (b) { b.classList.toggle('active', b === btn); });
-      loadFeedback();
+      if (fbAllItems.length) renderFeedbackList();
+      else loadFeedback();
     });
+  });
+  document.getElementById('fbPagePrev').addEventListener('click', function () {
+    if (fbPage <= 1) return;
+    fbPage--;
+    renderFeedbackList();
+    var sec = document.getElementById('sec-feedback');
+    if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  document.getElementById('fbPageNext').addEventListener('click', function () {
+    var pages = Math.max(1, Math.ceil(fbFilteredItems().length / FB_PAGE_SIZE));
+    if (fbPage >= pages) return;
+    fbPage++;
+    renderFeedbackList();
+    var sec = document.getElementById('sec-feedback');
+    if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  document.getElementById('fbExpandAll').addEventListener('click', function () { fbSetAll(true); });
+  document.getElementById('fbCollapseAll').addEventListener('click', function () { fbSetAll(false); });
+  document.getElementById('fbAdminList').addEventListener('keydown', function (ev) {
+    var hd = ev.target.closest ? ev.target.closest('.fb-item-hd') : null;
+    if (!hd || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+    ev.preventDefault();
+    fbToggleItem(hd.closest ? hd.closest('.fb-item') : null);
   });
   var fbPrev = { urls: [], names: [], i: 0, scale: 1, x: 0, y: 0, drag: null };
   var FB_ZOOM_MIN = 0.25, FB_ZOOM_MAX = 8, FB_ZOOM_STEP = 1.25;
@@ -981,7 +1102,21 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     else if (ev.key === '-' || ev.key === '_' || ev.key === 'Subtract') { ev.preventDefault(); fbZoomTo(fbPrev.scale / FB_ZOOM_STEP); }
     else if (ev.key === '0') { ev.preventDefault(); fbResetZoom(); }
   });
+  function fbToggleItem(item) {
+    if (!item) return;
+    var id = item.getAttribute('data-id');
+    var hd = item.querySelector('.fb-item-hd');
+    var next = item.classList.contains('bd-collapsed');
+    fbExpanded[id] = next;
+    item.classList.toggle('bd-collapsed', !next);
+    if (hd) hd.setAttribute('aria-expanded', next ? 'true' : 'false');
+  }
   document.getElementById('fbAdminList').addEventListener('click', function (ev) {
+    var hd = ev.target.closest ? ev.target.closest('.fb-item-hd') : null;
+    if (hd && !(ev.target.closest && ev.target.closest('button'))) {
+      fbToggleItem(hd.closest ? hd.closest('.fb-item') : null);
+      return;
+    }
     var link = ev.target.closest ? ev.target.closest('a.fb-img-link') : null;
     if (link) {
       ev.preventDefault();

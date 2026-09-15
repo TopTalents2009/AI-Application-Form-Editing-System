@@ -571,6 +571,11 @@ button.ghost:hover { border-color: var(--brand2); color: var(--brand); }
 .ptable th { background:#f2f6fc; color:#33415e; white-space:nowrap; }
 .ptable tr.find-miss td { background:#fff8f0; }
 .ptable tr.find-miss .ta-find { border-color:#e8a23a; background:#fffdf6; }
+.ptable tr.manual-fill td { background:#fffbe6; }
+.ptable tr.manual-fill .ta-rep { border-color:#d4a017; background:#fffef5; box-shadow:inset 0 0 0 1px #f0e6b8; }
+.ptable tr.manual-fill .ta-find { border-color:#c9b458; background:#fffef8; }
+.find-cell .loc-hint { margin-top:4px; font-size:11px; line-height:1.45; color:#7a6518; word-break:break-all; }
+.mf-tag { font-size:10px; font-style:normal; color:#9a7b00; font-weight:700; }
 #planEditor .pnote.warn { background:#fff8f0; border-left-color:#e8a23a; color:#7a4d00; }
 .pclause { max-width:none; word-break:break-word; color:#55617a; white-space:pre-wrap; }
 .op-cell { display:flex; flex-direction:column; gap:4px; }

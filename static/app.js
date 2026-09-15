@@ -394,7 +394,7 @@ function renderAppChips() {
   el.innerHTML = pickedApps.map(function (f, i) {
     var bad = !isAppFile(f.name);
     var warnOp = /意见/.test(f.name);
-    var hint = bad ? '非 Word/Excel/PDF' : (isPdf(f.name) ? 'PDF·转Word后修改' : (warnOp ? '名称含“意见”' : ''));
+    var hint = bad ? '非 Word/Excel/PDF' : (isPdf(f.name) ? 'PDF·扫描件OCR后套模板' : (warnOp ? '名称含“意见”' : ''));
     return chip(f.name, bad || warnOp, hint, 'app', i);
   }).join('');
 }
@@ -1254,6 +1254,9 @@ function initUserBox() {
 
 /* ---------- 意见反馈 ---------- */
 var fbFiles = [];
+var fbMineItems = [];
+var fbMinePage = 1;
+var FB_MINE_PAGE_SIZE = 12;
 function fbStatusLabel(st) {
   if (st === 'done') return '已处理';
   if (st === 'read') return '已读';
@@ -1286,26 +1289,60 @@ function closeFb() {
   var mask = $('fbMask');
   if (mask) mask.hidden = true;
 }
+function renderFbMinePager(total, page, pages) {
+  var pager = $('fbMinePager');
+  var info = $('fbMinePageInfo');
+  var prev = $('fbMinePrev');
+  var next = $('fbMineNext');
+  if (!pager) return;
+  if (pages <= 1) {
+    pager.classList.add('hidden');
+    if (info) info.textContent = total ? ('共 ' + total + ' 条') : '';
+    return;
+  }
+  pager.classList.remove('hidden');
+  if (info) info.textContent = '第 ' + page + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
+  if (prev) prev.disabled = page <= 1;
+  if (next) next.disabled = page >= pages;
+}
+function renderMyFeedback() {
+  var box = $('fbMine');
+  if (!box) return;
+  var total = fbMineItems.length;
+  if (!total) {
+    box.textContent = '暂无反馈';
+    renderFbMinePager(0, 1, 1);
+    return;
+  }
+  var pages = Math.max(1, Math.ceil(total / FB_MINE_PAGE_SIZE));
+  if (fbMinePage > pages) fbMinePage = pages;
+  if (fbMinePage < 1) fbMinePage = 1;
+  var start = (fbMinePage - 1) * FB_MINE_PAGE_SIZE;
+  var pageItems = fbMineItems.slice(start, start + FB_MINE_PAGE_SIZE);
+  box.innerHTML = pageItems.map(function (it) {
+    var imgs = (it.files || []).map(function (f) {
+      return '<a href="' + escAttr(f.url) + '" target="_blank" rel="noopener"><img src="' + escAttr(f.url) + '" alt="' + escAttr(f.name) + '"></a>';
+    }).join('');
+    return '<div class="fb-item"><div class="fb-meta"><span class="fb-st ' + escAttr(it.status || 'new') + '">' + esc(fbStatusLabel(it.status)) + '</span><span>' + esc(it.createdAt) + '</span></div>' +
+      (it.content ? '<div class="fb-body">' + esc(it.content) + '</div>' : '') +
+      (imgs ? '<div class="fb-imgs">' + imgs + '</div>' : '') +
+      (it.reply
+        ? '<div class="fb-reply"><span class="fb-rp-meta">管理员回复' + (it.replyAt ? ' · ' + esc(it.replyAt) : '') + '</span><span class="fb-rp-text">' + esc(it.reply) + '</span></div>'
+        : '') +
+      '</div>';
+  }).join('');
+  renderFbMinePager(total, fbMinePage, pages);
+}
 function loadMyFeedback() {
   var box = $('fbMine');
   if (!box) return;
   fetch('/api/feedback').then(readJson).then(function (res) {
-    var items = (res && res.items) || [];
-    if (!items.length) { box.textContent = '暂无反馈'; return; }
-    box.innerHTML = items.map(function (it) {
-      var imgs = (it.files || []).map(function (f) {
-        return '<a href="' + escAttr(f.url) + '" target="_blank" rel="noopener"><img src="' + escAttr(f.url) + '" alt="' + escAttr(f.name) + '"></a>';
-      }).join('');
-      return '<div class="fb-item"><div class="fb-meta"><span class="fb-st ' + escAttr(it.status || 'new') + '">' + esc(fbStatusLabel(it.status)) + '</span><span>' + esc(it.createdAt) + '</span></div>' +
-        (it.content ? '<div class="fb-body">' + esc(it.content) + '</div>' : '') +
-        (imgs ? '<div class="fb-imgs">' + imgs + '</div>' : '') +
-        (it.reply
-          ? '<div class="fb-reply"><span class="fb-rp-meta">管理员回复' + (it.replyAt ? ' · ' + esc(it.replyAt) : '') + '</span><span class="fb-rp-text">' + esc(it.reply) + '</span></div>'
-          : '') +
-        '</div>';
-    }).join('');
+    fbMineItems = (res && res.items) || [];
+    renderMyFeedback();
   }).catch(function (err) {
     box.textContent = '加载失败：' + (err && err.message || err);
+    var pager = $('fbMinePager');
+    if (pager) pager.classList.add('hidden');
   });
 }
 function submitFeedback() {
@@ -1324,6 +1361,7 @@ function submitFeedback() {
     renderFbThumbs();
     if ($('fbFiles')) $('fbFiles').value = '';
     setFbMsg(true, '已提交，管理员可在后台查看');
+    fbMinePage = 1;
     loadMyFeedback();
   }).catch(function (err) {
     setFbMsg(false, '提交失败：' + (err && err.message || err));
@@ -1332,7 +1370,19 @@ function submitFeedback() {
 function initFeedback() {
   var open = $('fbOpenBtn'), mask = $('fbMask'), close = $('fbCloseBtn');
   var input = $('fbFiles'), thumbs = $('fbThumbs'), sub = $('fbSubmitBtn');
+  var minePrev = $('fbMinePrev'), mineNext = $('fbMineNext');
   if (!open || !mask) return;
+  if (minePrev) minePrev.onclick = function () {
+    if (fbMinePage <= 1) return;
+    fbMinePage--;
+    renderMyFeedback();
+  };
+  if (mineNext) mineNext.onclick = function () {
+    var pages = Math.max(1, Math.ceil(fbMineItems.length / FB_MINE_PAGE_SIZE));
+    if (fbMinePage >= pages) return;
+    fbMinePage++;
+    renderMyFeedback();
+  };
   open.onclick = function () { openFb(); };
   if (close) close.onclick = closeFb;
   mask.addEventListener('click', function (ev) { if (ev.target === mask) closeFb(); });
@@ -1506,20 +1556,25 @@ function buildPlanEditor(el, t, plan) {
       hasDoubao: Object.prototype.hasOwnProperty.call(e, 'opinionDoubao'),
       opName: e.opName || '', clauseId: e.clauseId || '',
       section: e._sec || e.section || '其他', appNo: e.appNo || appNo,
-      findOk: e.findOk !== false
+      findOk: e.findOk !== false,
+      manualFill: !!e.manualFill,
+      locationHint: e.locationHint || '',
+      unknownReason: e.unknownReason || ''
     });
   });
-  var preMiss = (plan.edits || []).filter(function (e) { return e && e.findOk === false; }).length;
+  var preMiss = (plan.edits || []).filter(function (e) { return e && e.findOk === false && !e.manualFill; }).length;
+  var manualN = curPlanData.filter(function (e) { return e.manualFill; }).length;
   var loLines = (plan.leftovers || []).join('\n');
 
   var poolSum = (plan && plan.pool && plan.pool.summary) || (t.poolHit && (t.poolHit.talent || t.poolHit.enterprise) && ('人才 ' + (t.poolHit.talent || '无') + '；企业 ' + (t.poolHit.enterprise || '无'))) || '';
   var att = (plan && plan.attachments) || t.attachHit || {};
   var attSum = att.summary || (t.attachHit && t.attachHit.summary) || '';
-  var pnoteCls = preMiss ? 'pnote warn' : 'pnote';
+  var pnoteCls = (preMiss || manualN) ? 'pnote warn' : 'pnote';
   var h = '<div class="' + pnoteCls + '">源文件申报书编号 <b class="pno">' + esc(appNo || '未识别') + '</b>　' + modeBadge(formModeOf(t)) + esc(t.app && t.app.name || '') +
     (poolSum ? '<br>库内检索：' + esc(poolSum) : '') +
     (attSum ? '<br>缺附件检索：' + esc(attSum) : '') +
     '<br>Gemini 已生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>为短摘要；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。' +
+    (manualN ? '<br><b>人工补充：</b>有 <b>' + manualN + '</b> 条因库内无对应数据已定位原文（黄底行），「修改后」已预填原文，请直接改写。' : '') +
     (preMiss ? '<br><b>预检警告：</b>有 <b>' + preMiss + '</b> 条改前摘录在申报书中未找到（橙底行），落盘可能失败，请先修正锚点。' : '') +
     '</div>';
   h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:18%">修改前（定位用，勿改）</th><th style="width:22%">Gemini修改意见</th><th style="width:22%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
@@ -1626,18 +1681,23 @@ function realOp(ta) {
 function buildRow(e, oi, opts) {
   var tr = document.createElement('tr');
   tr.setAttribute('data-oi', oi);
-  if (e.findOk === false) tr.className = 'find-miss';
+  if (e.manualFill) tr.className = 'manual-fill';
+  else if (e.findOk === false) tr.className = 'find-miss';
   var geminiOp = e.opinionGemini || '';
   var emptyHint = (e.hasCompare === false) ? OP_LEGACY : OP_EMPTY;
   var geminiEmpty = geminiOp ? '' : emptyHint;
   var clauseTip = e.opinion ? ' title="' + escAttr(e.opinion) + '"' : (e.opName ? ' title="' + escAttr(e.opName) + '"' : '');
   var findRo = (opts && opts.editableFind) ? '' : ' readonly';
+  var locHint = (e.manualFill && e.locationHint)
+    ? '<div class="loc-hint" title="' + escAttr(e.unknownReason || '') + '">📍 ' + esc(e.locationHint) + '</div>'
+    : '';
+  var secTag = esc(e.section) + (e.manualFill ? ' <em class="mf-tag">人工</em>' : '');
   tr.innerHTML =
     '<td><input type="checkbox" checked></td>' +
     '<td><span class="pno">' + esc(e.appNo || '—') + '</span></td>' +
-    '<td><span class="tag">' + esc(e.section) + '</span></td>' +
+    '<td><span class="tag">' + secTag + '</span></td>' +
     '<td><textarea class="ta-clause" rows="1"' + clauseTip + '>' + escHtml(e.clause) + '</textarea></td>' +
-    '<td><textarea class="ta-find" rows="1"' + findRo + '>' + escHtml(e.find) + '</textarea></td>' +
+    '<td><div class="find-cell"><textarea class="ta-find" rows="1"' + findRo + '>' + escHtml(e.find) + '</textarea>' + locHint + '</div></td>' +
     '<td><div class="op-cell">' +
       '<textarea class="ta-op ta-op-gemini" rows="1" readonly>' + escHtml(geminiOp || geminiEmpty) + '</textarea>' +
       '<button type="button" class="use-op" data-src="gemini"' + (geminiOp ? '' : ' disabled') + '>采用</button>' +

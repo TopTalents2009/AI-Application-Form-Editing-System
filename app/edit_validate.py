@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from .form_reqs import char_count, resolve_limit
-from .hj_form import is_hj_app, remap_hj_section
+from .hj_form import is_hj_app, remap_hj_section, remap_qm_section
 
 _ITEM_MARK = re.compile(r"(论文\s*\d+|项目\s*\d+|专利\s*\d+|论著\s*\d+)", re.I)
 _CHRON_N = re.compile(
@@ -19,8 +19,20 @@ _WRONG_TARGET = re.compile(r"项目成果|成果描述|项目简介|项目名称
 _PAPER_REF = re.compile(r"论文\s*(\d+)|第\s*(\d+)\s*篇|论著\s*(\d+)", re.I)
 _EDU_KW = re.compile(r"学历|本科|硕士|博士|学士|院校|毕业|学位|教育经历|博士后", re.I)
 _JOURNAL_KW = re.compile(r"期刊|影响因子|卷\s*[（(]|页码|发表载体", re.I)
-
-
+_KEY_PROBLEM_OP = re.compile(
+    r"重新拆分|三个技术问题|1、3重复|1、3\s*重复|拟解决的关键技术|关键技术问题.*重复",
+    re.I,
+)
+_FEASIBILITY_OP = re.compile(r"政策|市场|技术发展趋势|可行性论证分析|可行性分析", re.I)
+_SUPPORT_OP = re.compile(
+    r"拟提供申报人支持条件|支持条件|500\s*平米|科研启动经费|空话|贴合实际",
+    re.I,
+)
+_QUESTION_ONLY = re.compile(r"是不是|相当于.*[？?]|是否.*[？?]|吗[？?]\s*$", re.I)
+_DIRECTIVE = re.compile(
+    r"修改|改为|替换|补充|增加|删除|重写|拆分|统一|规范|细化|贴合|调整|删除|写成",
+    re.I,
+)
 def _norm_sid(s) -> str:
     return re.sub(r"[^a-zA-Z0-9]", "", str(s or "")).upper()
 
@@ -293,6 +305,268 @@ def _clause_has_paper_edit(clause: dict, edits: list, app_text: str) -> bool:
     return bool(matched) and not want_idx and not requires_contribution(op)
 
 
+def _clause_by_id(clauses: list) -> dict:
+    out = {}
+    for c in clauses or []:
+        cid = _norm_sid(c.get("cid") or c.get("sourceId") or "")
+        if cid:
+            out[cid] = c
+    return out
+
+
+def is_question_only_opinion(opinion: str) -> bool:
+    op = str(opinion or "").strip()
+    if not op or _DIRECTIVE.search(op):
+        return False
+    if re.search(
+        r"顺序|不一致|语序|错误|翻译|漏|重复|空话|虚高|精简|补充|增加|修改|统一|规范|细化|贴合",
+        op,
+    ):
+        return False
+    if _QUESTION_ONLY.search(op):
+        return True
+    for line in op.splitlines():
+        s = line.strip()
+        if not s or s.startswith("标注原文"):
+            continue
+        if (s.endswith("？") or s.endswith("?")) and not _DIRECTIVE.search(s):
+            return True
+    return False
+
+
+def filter_question_only_edits(edits: list, clauses: list) -> tuple[list, list[str]]:
+    """疑问式意见（核对/是不是）不应自动改写正文。"""
+    by_id = _clause_by_id(clauses)
+    kept, issues = [], []
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        cid = _norm_sid(e.get("clauseId") or "")
+        c = by_id.get(cid, {})
+        op = str(c.get("opinion") or e.get("opinion") or "")
+        if is_question_only_opinion(op):
+            issues.append(
+                "【疑问式意见·已剔除】" + (cid or "?") + "："
+                + str(c.get("clause") or e.get("clause") or "")[:40]
+                + "（核对类问题不自动改正文，请人工确认或写 leftovers）"
+            )
+            continue
+        kept.append(e)
+    return kept, issues
+
+
+def _key_problem_span(app_text: str) -> str:
+    wp = _work_plan_span(app_text)
+    if not wp:
+        return ""
+    start = wp.find("（三）拟解决的关键技术问题")
+    if start < 0:
+        start = wp.find("拟解决的关键技术")
+    if start < 0:
+        return ""
+    end = wp.find("（四）", start + 1)
+    return wp[start:end if end > start else len(wp)]
+
+
+def _feasibility_span(app_text: str) -> str:
+    wp = _work_plan_span(app_text)
+    if not wp:
+        return ""
+    start = wp.find("（五）可行性论证分析")
+    if start < 0:
+        start = wp.find("可行性论证分析")
+    if start < 0:
+        return ""
+    end = wp.find("在匿名评审", start + 1)
+    if end < 0:
+        end = len(wp)
+    return wp[start:end]
+
+
+def _employer_support_span(app_text: str) -> str:
+    raw = str(app_text or "")
+    start = raw.find("拟提供申报人支持条件")
+    if start < 0:
+        start = raw.find("七、用人单位情况及承诺")
+    if start < 0:
+        return ""
+    end = raw.find("(二)企业荣誉", start + 1)
+    if end < 0:
+        end = raw.find("（二）企业荣誉", start + 1)
+    if end < 0:
+        end = min(len(raw), start + 2500)
+    return raw[start:end]
+
+
+def _edit_in_span(edit: dict, span: str) -> bool:
+    f = str(edit.get("find") or "")
+    if not f or not span:
+        return False
+    if f in span:
+        return True
+    k = re.sub(r"\s+", "", f)[:36]
+    return bool(k and k in re.sub(r"\s+", "", span))
+
+
+def _key_problem_nums_hit(edits: list, span: str, cid: str) -> set:
+    nums = set()
+    for e in edits or []:
+        if cid and _norm_sid(e.get("clauseId") or "") != _norm_sid(cid):
+            continue
+        f = str(e.get("find") or "")
+        if span and not _edit_in_span(e, span) and not re.match(r"^\s*[123][\.、．]", f):
+            continue
+        for n in ("1.", "2.", "3.", "1、", "2、", "3、"):
+            if f.strip().startswith(n) or ("\n" + n) in f:
+                nums.add(n[0])
+    return nums
+
+
+def detect_key_problem_rewrite_gaps(clauses: list, edits: list, app_text: str, hj: bool = False) -> list[str]:
+    if hj or is_hj_app(app_text=app_text):
+        return []
+    span = _key_problem_span(app_text)
+    if not span:
+        return []
+    gaps = []
+    for c in clauses or []:
+        op = str(c.get("opinion") or "")
+        if not _KEY_PROBLEM_OP.search(op):
+            continue
+        cid = str(c.get("cid") or c.get("sourceId") or "")
+        nums = _key_problem_nums_hit(edits, span, cid)
+        clause_edits = [e for e in (edits or []) if _norm_sid(e.get("clauseId") or "") == _norm_sid(cid)]
+        if len(nums) >= 3:
+            continue
+        if len(clause_edits) >= 3:
+            continue
+        gaps.append(
+            "【关键问题拆分】" + cid + "：意见要求重写三个独立技术问题，"
+            "须产出 3 条 edit 分别锚定 1./2./3. 条，且第 3 条不得与第 1 条语义重复"
+        )
+    return gaps
+
+
+def remediate_feasibility_edits(
+    edits: list, clauses: list, app_text: str, hj: bool = False,
+) -> tuple[list, list[str]]:
+    if hj or is_hj_app(app_text=app_text):
+        return list(edits or []), []
+    span5 = _feasibility_span(app_text)
+    by_id = _clause_by_id(clauses)
+    out, issues = [], []
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        cid = _norm_sid(e.get("clauseId") or "")
+        c = by_id.get(cid, {})
+        op = str(c.get("opinion") or e.get("opinion") or "")
+        if not _FEASIBILITY_OP.search(op):
+            out.append(e)
+            continue
+        f = str(e.get("find") or "")
+        if span5 and _edit_in_span(e, span5):
+            out.append(e)
+            continue
+        if "【背景】" in f or re.search(r"（二）制定目标依据", f):
+            issues.append(
+                "【可行性落点错误·已剔除】" + (cid or "?")
+                + "：政策/市场/趋势类意见须改（五）可行性论证分析，不得只改（二）【背景】"
+            )
+            continue
+        out.append(e)
+    return out, issues
+
+
+def detect_feasibility_gaps(clauses: list, edits: list, app_text: str, hj: bool = False) -> list[str]:
+    if hj or is_hj_app(app_text=app_text):
+        return []
+    span5 = _feasibility_span(app_text)
+    if not span5:
+        return []
+    gaps = []
+    for c in clauses or []:
+        op = str(c.get("opinion") or "")
+        if not _FEASIBILITY_OP.search(op):
+            continue
+        cid = str(c.get("cid") or c.get("sourceId") or "")
+        ok = any(
+            _norm_sid(e.get("clauseId") or "") == _norm_sid(cid) and _edit_in_span(e, span5)
+            for e in (edits or [])
+        )
+        if not ok:
+            gaps.append(
+                "【可行性论证漏改】" + cid + "：须在（五）可行性论证分析栏补充政策/市场/技术趋势依据"
+            )
+    return gaps
+
+
+def detect_support_conditions_gaps(clauses: list, edits: list, app_text: str, hj: bool = False) -> list[str]:
+    if hj or is_hj_app(app_text=app_text):
+        return []
+    span = _employer_support_span(app_text)
+    if not span:
+        return []
+    gaps = []
+    for c in clauses or []:
+        op = str(c.get("opinion") or "")
+        if not _SUPPORT_OP.search(op):
+            continue
+        cid = str(c.get("cid") or c.get("sourceId") or "")
+        ok = any(
+            _norm_sid(e.get("clauseId") or "") == _norm_sid(cid) and _edit_in_span(e, span)
+            for e in (edits or [])
+        )
+        if not ok:
+            gaps.append(
+                "【支持条件漏改】" + cid + "：须锚定「拟提供申报人支持条件」栏（工作环境/设备/团队等）"
+            )
+    return gaps
+
+
+def _work_plan_span(app_text: str) -> str:
+    raw = str(app_text or "")
+    start = raw.find("申报人拟实现工作目标及可行性论证")
+    if start < 0:
+        start = raw.find("六、工作计划及个人承诺")
+    if start < 0:
+        return ""
+    end = raw.find("七、用人单位情况及承诺", start + 1)
+    return raw[start:end if end > start else len(raw)]
+
+
+def _edit_in_work_plan(edit: dict, wp_span: str) -> bool:
+    f = str(edit.get("find") or "")
+    if not f or not wp_span:
+        return False
+    if f in wp_span:
+        return True
+    k = re.sub(r"\s+", "", f)[:32]
+    return bool(k and k in re.sub(r"\s+", "", wp_span))
+
+
+def detect_work_plan_gaps(clauses: list, edits: list, app_text: str, hj: bool = False) -> list[str]:
+    if hj or is_hj_app(app_text=app_text):
+        return []
+    wp_span = _work_plan_span(app_text)
+    if not wp_span:
+        return []
+    meta = []
+    for c in clauses or []:
+        op = str(c.get("opinion") or "") + str(c.get("clause") or "")
+        sec = remap_qm_section(str(c.get("section") or ""), str(c.get("clause") or ""), op)
+        if sec == "工作计划" or re.search(r"1500\s*字|研发经验和工作基础|四是.*1500", op):
+            meta.append(c)
+    if not meta:
+        return []
+    if any(_edit_in_work_plan(e, wp_span) for e in edits or []):
+        return []
+    cids = "、".join(str(c.get("cid") or c.get("sourceId") or "") for c in meta[:5])
+    return [
+        "【工作计划漏改】" + cids + "：修改意见要求调整1500字「工作目标及可行性论证」栏，但未生成锚定该栏的编辑"
+    ]
+
+
 def detect_row_coverage_gaps(clauses: list, edits: list, app_text: str, hj: bool = False) -> list[str]:
     gaps: list[str] = []
     for c in clauses or []:
@@ -367,8 +641,19 @@ def validate_structured_edits(
     edits, contrib_issues = filter_contribution_edits(edits, clauses)
     issues.extend(contrib_issues)
 
+    edits, q_issues = filter_question_only_edits(edits, clauses)
+    issues.extend(q_issues)
+
+    if not hj:
+        edits, feas_drop = remediate_feasibility_edits(edits, clauses, app_text, hj=hj)
+        issues.extend(feas_drop)
+
     issues.extend(enforce_chronological_counts(clauses, edits, app_text))
     issues.extend(detect_row_coverage_gaps(clauses, edits, app_text, hj=hj))
+    issues.extend(detect_work_plan_gaps(clauses, edits, app_text, hj=hj))
+    issues.extend(detect_key_problem_rewrite_gaps(clauses, edits, app_text, hj=hj))
+    issues.extend(detect_feasibility_gaps(clauses, edits, app_text, hj=hj))
+    issues.extend(detect_support_conditions_gaps(clauses, edits, app_text, hj=hj))
     issues.extend(detect_work_plan_overlimit(edits, app_text))
 
     return edits, issues

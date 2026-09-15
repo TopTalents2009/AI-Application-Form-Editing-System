@@ -38,12 +38,46 @@ _HJ_MARKERS = (
     ("用人单位", ("（8）申报单位", "申报单位（用人单位）")),
 )
 
-QM_SECTION_ENUM = """- 基本信息（申报人基本情况、个人简介、姓名脱敏等）
+QM_SECTION_ORDER = [
+    "基本信息",
+    "教育",
+    "工作",
+    "论文",
+    "项目",
+    "工作计划",
+    "其他",
+]
+
+QM_SECTION_ENUM = """- 基本信息（申报人基本情况 300/500 字、个人简介、姓名脱敏等）
 - 教育（学历、学位、教育经历、时间门槛）
 - 工作（工作经历、任职、履历年限）
-- 论文（代表性论文、论著、期刊、影响因子、引用、预印本）
-- 项目（科研项目、研究方向描述、项目成果）
-- 其他（工作计划/三年目标、成果转化、推荐理由、企业情况、专利、附件材料、格式规范等）"""
+- 论文（代表性论文、论著、期刊、影响因子、引用、预印本、奖励表彰）
+- 项目（工作成果及业绩、科研项目、项目成果 200 字栏）
+- 工作计划（申报人拟实现工作目标及可行性论证 1500 字：项目名称/概述、三年目标、依据、关键技术、创新、可行性分析）
+- 其他（推荐理由、支持条件、企业情况、专利、附件材料、格式规范、无法归入上列者）"""
+
+# 意见关键词 → 强制归入 QM 章（纠正把 1500 字栏丢进「论文/其他」）
+_QM_FORCE = (
+    ("工作计划", (
+        "1500字", "1500 字", "工作目标及可行性", "可行性论证",
+        "未来三年工作目标", "制定目标依据", "拟解决的关键技术", "拟解决关键技术",
+        "关键技术问题", "项目创新之处", "可行性论证分析", "工作计划及个人承诺",
+        "申报人在该领域研发经验和工作基础", "六、工作计划",
+        "高动态虚实融合", "恶劣天气下的视觉感知", "WorDepth",
+        "对齐难题", "对齐不准", "虚实融合对齐", "拆分", "三个技术", "1、3重复",
+        "产业化目标", "研发指标", "测试工况", "基准线", "虚高目标",
+        "政策", "市场", "技术发展趋势", "可行性分析",
+    )),
+    ("论文", ("代表性论文", "论著", "期刊", "影响因子", "一作", "通讯作者", "学术会议邀请报告")),
+    ("项目", ("工作成果及业绩", "项目成果", "简述个人贡献", "完成人排序")),
+    ("教育", ("教育经历", "全日制学历", "实践情况", "导师")),
+    ("工作", ("工作经历", "博士后", "职务职责", "个人贡献")),
+    ("基本信息", ("申报人基本情况", "引进企业基本情况", "重要履历", "技术能力", "标志性成果")),
+    ("其他", (
+        "拟提供申报人支持条件", "支持条件（包括工作和生活", "科研启动经费",
+        "500平米", "500 平米", "工作环境", "设备保障", "团队保障", "生活配套",
+    )),
+)
 
 HJ_SECTION_ENUM = """- 关键申报信息（国籍、姓名、实验室、专业领域、所属二级学科及代码、所属前沿领域等封面栏）
 - 个人基本信息（性别、出生、证件、最高学位信息、回国前/来华前信息、申报情况、破格）
@@ -96,6 +130,89 @@ def is_hj_app(mode: str = "", app_text: str = "", fname: str = "") -> bool:
         return True
     blob = compact(app_text)
     return "国家火炬计划申报书" in blob or "（1）关键申报信息" in blob or "(1)关键申报信息" in blob
+
+
+def _qm_mixed_meta_opinion(clause: str = "", opinion: str = "") -> bool:
+    """市专题/微信长意见同时涉及 300 字基本情况与 1500 字栏时，不整条挪章，由 fan-out 复制到工作计划。"""
+    blob = compact(str(clause or "") + str(opinion or ""))
+    has_wp = bool(re.search(r"1500\s*字|工作目标及可行性", blob))
+    has_bio = bool(re.search(
+        r"(?<![0-9])500\s*字|(?<![0-9])300\s*字|技术能力|重要履历|标志性成果|"
+        r"支持条件|推荐理由|主观|泰斗|知名大佬",
+        blob,
+    ))
+    return has_wp and has_bio
+
+
+def remap_qm_section(section: str, clause: str = "", opinion: str = "") -> str:
+    """用意见原文把误分到「论文/其他/基本信息」的条款纠正到 QM 印刷章。"""
+    if _qm_mixed_meta_opinion(clause, opinion):
+        sec = str(section or "").strip()
+        return sec if sec in QM_SECTION_ORDER else "其他"
+    blob = compact(str(clause or "") + str(opinion or "")).lower()
+    for sec, keys in _QM_FORCE:
+        if any(compact(k).lower() in blob for k in keys):
+            return sec
+    sec = str(section or "").strip()
+    return sec if sec in QM_SECTION_ORDER else "其他"
+
+
+def split_qm_sections(app_text: str) -> dict[str, str]:
+    raw = str(app_text or "")
+    markers = (
+        ("工作计划", ("六、工作计划及个人承诺", "申报人拟实现工作目标及可行性论证")),
+        ("用人单位", ("七、用人单位情况及承诺",)),
+    )
+    hits = []
+    for sec, keys in markers:
+        i = _find_marker(raw, keys)
+        if i >= 0:
+            hits.append((i, sec))
+    hits.sort()
+    out: dict[str, str] = {}
+    for n, (i, sec) in enumerate(hits):
+        end = hits[n + 1][0] if n + 1 < len(hits) else len(raw)
+        chunk = raw[i:end].strip()
+        if chunk:
+            out[sec] = chunk
+    return out
+
+
+def slice_qm_section(app_text: str, sec: str) -> str:
+    """QM 计划生成时只提交本章正文，避免 1500 字栏被「其他」章海量噪音淹没。"""
+    sec = str(sec or "").strip()
+    if sec == "工作计划":
+        parts = split_qm_sections(app_text)
+        body = parts.get("工作计划") or str(app_text or "")
+        extra = (
+            "【本栏为合并大字段】申报人拟实现工作目标及可行性论证(限1500字)，"
+            "含项目名称/概述、（一）未来三年工作目标、（二）制定目标依据、"
+            "（三）拟解决的关键技术问题、（四）创新之处、（五）可行性论证分析。"
+            "修改意见要求细化项目名称、突出 AR-HUD 与行车安全背景、充实研发经验与工作基础时，"
+            "必须产出 find/replace，禁止以「已符合规范」整栏跳过。"
+        )
+        return "【本章节正文 · 工作计划（1500字）】\n" + body + "\n" + extra
+    return str(app_text or "")
+
+
+def slice_qm_employer(app_text: str) -> str:
+    """QM 第七章用人单位栏（含拟提供申报人支持条件 300 字）。"""
+    parts = split_qm_sections(app_text)
+    body = parts.get("用人单位") or ""
+    if not body:
+        raw = str(app_text or "")
+        start = raw.find("七、用人单位情况及承诺")
+        if start < 0:
+            start = raw.find("拟提供申报人支持条件")
+        if start >= 0:
+            body = raw[start:].strip()
+    extra = (
+        "【本栏为合并字段】拟提供申报人支持条件(300字以内)，"
+        "含【工作环境】【设备保障】【团队保障】【生活配套】【政府支持】等。"
+        "修改意见要求贴合企业实际、去空话时，必须在本栏产出 find/replace，"
+        "禁止改到第六章工作计划或仅写 leftovers。"
+    )
+    return "【本章节正文 · 用人单位及支持条件（300字）】\n" + body + "\n" + extra
 
 
 def remap_hj_section(section: str, clause: str = "", opinion: str = "") -> str:

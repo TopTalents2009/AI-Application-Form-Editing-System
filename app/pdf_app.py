@@ -1,9 +1,9 @@
-"""申报书 PDF → Word 工作稿。数字版直接转换；扫描件（无文字层）走 Gemini 视觉 OCR。"""
+"""申报书 PDF 处理。数字版转 Word；扫描件仅 OCR 为文本（落盘时套 QM/HJ 模板，不先转 Word）。"""
 from __future__ import annotations
 import asyncio, os, re, shutil, sys, zipfile
 from pathlib import Path
 
-from .config import PYEXE
+from .config import PYEXE, scan_pdf_settings
 
 WORD_APP_EXT = {".docx", ".docm", ".wps"}
 EXCEL_APP_EXT = {".xlsx", ".xlsm", ".xls"}
@@ -145,6 +145,19 @@ def require_digital_pdf(path: Path) -> str:
     return full
 
 
+def pdf_page_sizes_pt(path: Path) -> dict[int, tuple[float, float]]:
+    """每页物理尺寸（point）。"""
+    doc = _open_pdf(path)
+    try:
+        out: dict[int, tuple[float, float]] = {}
+        for i, page in enumerate(doc):
+            rect = page.rect
+            out[i + 1] = (float(rect.width), float(rect.height))
+        return out
+    finally:
+        doc.close()
+
+
 def rasterize_pdf_pages(path: Path, dpi: int = SCAN_OCR_DPI) -> list[tuple[int, bytes, str, bytes]]:
     """将 PDF 每页渲染为图片。返回 [(页码, OCR用图, mime, 嵌入用PNG), ...]。"""
     from .opinion_extract import _prepare_image_bytes
@@ -229,6 +242,100 @@ def _append_text_blocks(doc, lines: list[str]) -> None:
         i += 1
 
 
+def _deocr_work_text(text: str) -> str:
+    from .scan_text_normalize import deocr_scanned_text
+
+    return deocr_scanned_text(text)
+
+
+def _docx_is_form_like(path: Path) -> bool:
+    """docreconstruct 版式稿是否像申报书表格（多表且多行），否则宁可用清洗后的 OCR 文字稿。"""
+    try:
+        from docx import Document
+
+        doc = Document(str(path))
+        tables = list(doc.tables)
+        if len(tables) < 8:
+            return False
+        multi = sum(1 for t in tables if len(t.rows) >= 3)
+        return multi >= 6
+    except Exception:
+        return False
+
+
+def _collapse_cjk_in_docx(path: Path) -> None:
+    """去掉 Tesseract 插在汉字之间的空格，保留表格结构。"""
+    from docx import Document
+    from docx.oxml.ns import qn
+    from .scan_text_normalize import collapse_cjk_spaces
+
+    doc = Document(str(path))
+    changed = False
+    for t_el in doc.element.body.iter(qn("w:t")):
+        old = t_el.text or ""
+        new = collapse_cjk_spaces(old)
+        if new != old:
+            t_el.text = new
+            changed = True
+    if changed:
+        doc.save(str(path))
+
+
+def _write_scanned_work_docx(text: str, dst: Path, layout_docx: Path | None = None) -> str:
+    """写出扫描件工作稿：优先可用的版式 Word，否则清洗后的 OCR 文字稿。"""
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if layout_docx and Path(layout_docx).is_file() and _is_docx(layout_docx) and _docx_is_form_like(layout_docx):
+        shutil.copyfile(layout_docx, dst)
+        _collapse_cjk_in_docx(dst)
+        return "layout"
+    build_docx_from_text(_deocr_work_text(text), dst)
+    return "text"
+
+
+def _try_layout_preserving_docx(
+    dst: Path,
+    src_pdf: Path,
+    pages: list[tuple[int, bytes, str, bytes]],
+    evidence_dir: Path | None,
+    log_fn=None,
+) -> dict | None:
+    """按原 PDF 页图 + OCR 定位框生成 Word。失败返回 None。"""
+    from .docreconstruct_adapt import extract_page_layout_from_evidence
+    from .layout_docx import build_layout_preserving_docx
+
+    pngs = [(pg, embed) for pg, _d, _m, embed in pages if embed]
+    if not pngs:
+        return None
+    try:
+        sizes = pdf_page_sizes_pt(src_pdf)
+    except Exception:
+        sizes = {}
+    layout_pages = extract_page_layout_from_evidence(evidence_dir) if evidence_dir else {}
+    try:
+        info = build_layout_preserving_docx(dst, pngs, sizes, layout_pages)
+    except Exception as e:
+        if log_fn:
+            log_fn("原版式 Word 生成失败：" + str(e)[:160])
+        if dst.exists():
+            try:
+                dst.unlink()
+            except Exception:
+                pass
+        return None
+    if not info.get("ok") or not dst.exists() or not _is_docx(dst):
+        return None
+    if log_fn:
+        log_fn(
+            "工作稿已按原 PDF 页版式生成（"
+            + str(info.get("pages") or 0)
+            + " 页图，"
+            + str(info.get("textboxes") or 0)
+            + " 个定位文本框）"
+        )
+    return info
+
+
 def build_docx_from_text(text: str, dst: Path) -> None:
     """把 OCR 全文写入最小可用 docx（每行一段，供后续提取与 find/replace）。"""
     from docx import Document
@@ -303,23 +410,27 @@ def finalize_scanned_docx(pdf_path: Path, edited_docx: Path, dst: Path) -> None:
     build_scanned_docx_from_pages(items, dst)
 
 
-async def ocr_scanned_pdf_to_docx(
+async def _ocr_pages_gemini(
     src: Path,
-    dst: Path,
+    pages: list[tuple[int, bytes, str, bytes]],
+    page_filter: set[int] | None = None,
     log_fn=None,
     should_continue=None,
-) -> str:
-    """扫描 PDF：逐页 Gemini OCR → 合成 docx。返回引擎标识。"""
+) -> dict[int, str]:
+    """逐页 Gemini OCR，返回 {页码: 文本}。"""
     from .opinion_extract import APP_PDF_OCR_PROMPT, ocr_image_bytes
 
-    src, dst = Path(src), Path(dst)
-    pages = rasterize_pdf_pages(src)
-    if not pages:
-        raise ValueError("PDF 没有可识别的页面")
+    alive = should_continue or (lambda: True)
+    targets = [
+        (pg, data, mime)
+        for pg, data, mime, _embed in pages
+        if page_filter is None or pg in page_filter
+    ]
+    if not targets:
+        return {}
     sem = asyncio.Semaphore(SCAN_OCR_PAGE_CONCURRENCY)
     done = 0
-    total = len(pages)
-    alive = should_continue or (lambda: True)
+    total = len(targets)
 
     async def _one(pg: int, data: bytes, mime: str) -> tuple[int, str]:
         nonlocal done
@@ -336,11 +447,10 @@ async def ocr_scanned_pdf_to_docx(
                 raise asyncio.CancelledError()
             done += 1
             if log_fn:
-                log_fn("扫描 PDF OCR " + str(done) + "/" + str(total) + " 页")
-            return pg, text
+                log_fn("Gemini 补扫 " + str(done) + "/" + str(total) + " 页")
+            return pg, str(text or "").strip()
 
-    embed_by_pg = {pg: embed for pg, _data, _mime, embed in pages}
-    tasks = [asyncio.create_task(_one(pg, data, mime)) for pg, data, mime, _embed in pages]
+    tasks = [asyncio.create_task(_one(pg, data, mime)) for pg, data, mime in targets]
     try:
         results = await asyncio.gather(*tasks)
     except Exception:
@@ -349,22 +459,252 @@ async def ocr_scanned_pdf_to_docx(
                 tk.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
-    results.sort(key=lambda x: x[0])
-    chunks = []
-    page_items = []
-    for pg, text in results:
-        body = str(text or "").strip()
-        chunks.append("【第" + str(pg) + "页】")
-        chunks.append(body if body else "（本页未识别到文字）")
-        page_items.append((pg, embed_by_pg[pg], body))
-    full = "\n".join(chunks)
+    return {pg: text for pg, text in results}
+
+
+def _write_ocr_report(dst: Path, payload: dict) -> None:
+    try:
+        from .docreconstruct_bridge import write_report
+
+        write_report(dst.with_suffix(".ocr-report.json"), payload)
+    except Exception:
+        pass
+
+
+async def _run_scanned_ocr(
+    src: Path,
+    log_fn=None,
+    should_continue=None,
+    *,
+    gemini_fallback: bool = True,
+    force_gemini: bool = False,
+) -> dict:
+    """扫描 PDF 混合 OCR，返回页文本与元数据（不写 Word）。"""
+    import asyncio as _asyncio
+    from .docreconstruct_adapt import fill_empty_pages_from_bulk, page_needs_gemini, prefer_page_text
+    from .docreconstruct_bridge import availability_status, is_available, run_convert
+
+    src = Path(src)
+    cfg = scan_pdf_settings()
+    pages = rasterize_pdf_pages(src)
+    if not pages:
+        raise ValueError("PDF 没有可识别的页面")
+    total = len(pages)
+
+    if force_gemini or not is_available():
+        if log_fn and not force_gemini:
+            log_fn("docreconstruct 不可用，回退 Gemini OCR：" + availability_status())
+        page_texts = await _ocr_pages_gemini(src, pages, log_fn=log_fn, should_continue=should_continue)
+        return {
+            "page_texts": page_texts,
+            "pages": pages,
+            "total": total,
+            "engine": "ocr-gemini",
+            "need_gemini": sorted(page_texts),
+            "dr_result": None,
+            "cfg": cfg,
+        }
+
+    work_dir = src.parent / "tmp" / "docreconstruct"
+    dr_docx = work_dir / (src.stem + ".dr.docx")
+    if log_fn:
+        log_fn("扫描 PDF：docreconstruct convert 开始（" + str(cfg.get("languages") or "chi_sim+eng") + "）")
+    dr_result = await _asyncio.to_thread(run_convert, src, dr_docx, work_dir, cfg, total)
+
+    page_texts: dict[int, str] = {}
+    engine = "ocr-hybrid"
+    if dr_result.ok and dr_result.page_texts:
+        page_texts = {int(k): str(v or "").strip() for k, v in dr_result.page_texts.items()}
+        page_texts = fill_empty_pages_from_bulk(page_texts, total)
+        if log_fn:
+            log_fn(
+                "docreconstruct 完成，QA="
+                + f"{dr_result.qa_score * 100:.1f}%"
+                + (("，引擎 " + ", ".join(dr_result.providers)) if dr_result.providers else "")
+            )
+    else:
+        if log_fn:
+            log_fn("docreconstruct 失败，将全部使用 Gemini：" + str(dr_result.error or "")[:160])
+        engine = "ocr-hybrid+gemini-full"
+
+    need_gemini: set[int] = set()
+    if gemini_fallback:
+        if engine == "ocr-hybrid+gemini-full":
+            need_gemini = {pg for pg, _d, _m, _e in pages}
+        else:
+            for pg, _d, _m, _e in pages:
+                if pg == 1:
+                    continue
+                if page_needs_gemini(pg, page_texts.get(pg, ""), cfg, total):
+                    need_gemini.add(pg)
+            if int(cfg.get("geminiMaxPages") or 12) < len(need_gemini):
+                ordered = sorted(need_gemini)
+                need_gemini = set(ordered[: int(cfg.get("geminiMaxPages") or 12)])
+    elif not page_texts:
+        if log_fn:
+            log_fn("docreconstruct 未产出有效页文本，回退全量 Gemini OCR")
+        return await _run_scanned_ocr(
+            src, log_fn=log_fn, should_continue=should_continue, force_gemini=True,
+        )
+
+    if need_gemini:
+        if log_fn:
+            log_fn("Gemini 补扫页码：" + ", ".join(str(x) for x in sorted(need_gemini)))
+        gemini_texts = await _ocr_pages_gemini(
+            src, pages, page_filter=need_gemini, log_fn=log_fn, should_continue=should_continue,
+        )
+        for pg, text in gemini_texts.items():
+            page_texts[pg] = prefer_page_text(page_texts.get(pg, ""), text)
+        if gemini_texts and engine == "ocr-hybrid":
+            engine = "ocr-hybrid+gemini"
+
+    return {
+        "page_texts": page_texts,
+        "pages": pages,
+        "total": total,
+        "engine": engine,
+        "need_gemini": sorted(need_gemini),
+        "dr_result": dr_result,
+        "cfg": cfg,
+    }
+
+
+def _finalize_scanned_ocr_text(ocr: dict) -> str:
+    full = _build_paged_text_from_map(ocr["page_texts"], ocr["total"])
+    full = _deocr_work_text(full)
     if _cjk_count(full) < 200:
         raise ValueError("扫描 PDF 识别结果过短，可能不是申报书或图片不清晰")
-    # 工作稿：纯文字层（便于 apply_edits 稳定替换）；版式重排在落盘时 finalize_scanned_docx 完成
-    build_docx_from_text(full, dst)
+    return full
+
+
+async def ocr_scanned_pdf_to_text(
+    src: Path,
+    dst_txt: Path,
+    log_fn=None,
+    should_continue=None,
+) -> str:
+    """扫描 PDF：OCR 识别为纯文本，不生成 Word 工作稿。"""
+    src, dst_txt = Path(src), Path(dst_txt)
+    dst_txt.parent.mkdir(parents=True, exist_ok=True)
+    ocr = await _run_scanned_ocr(src, log_fn=log_fn, should_continue=should_continue)
+    try:
+        full = _finalize_scanned_ocr_text(ocr)
+    except ValueError:
+        if log_fn:
+            log_fn("混合 OCR 结果过短，回退全量 Gemini OCR")
+        ocr = await _run_scanned_ocr(
+            src, log_fn=log_fn, should_continue=should_continue, force_gemini=True,
+        )
+        full = _finalize_scanned_ocr_text(ocr)
+    dst_txt.write_text(full, encoding="utf-8")
+    dr_result = ocr.get("dr_result")
+    cfg = ocr.get("cfg") or scan_pdf_settings()
+    report = {
+        "engine": ocr.get("engine"),
+        "workKind": "text-only",
+        "outputMode": "template",
+        "docreconstructOk": bool(dr_result and dr_result.ok),
+        "docreconstructQa": getattr(dr_result, "qa_score", 0) if dr_result else 0,
+        "docreconstructProviders": getattr(dr_result, "providers", []) if dr_result else [],
+        "docreconstructError": getattr(dr_result, "error", "") if dr_result else "",
+        "geminiPages": ocr.get("need_gemini") or [],
+        "pageChars": {
+            str(pg): len(str((ocr.get("page_texts") or {}).get(pg) or ""))
+            for pg in range(1, int(ocr.get("total") or 0) + 1)
+        },
+    }
+    if cfg.get("keepIntermediates") and dr_result and getattr(dr_result, "work_dir", None):
+        report["workDir"] = str(dr_result.work_dir)
+    _write_ocr_report(dst_txt, report)
+    return str(ocr.get("engine") or "ocr-text")
+
+
+async def ocr_scanned_pdf_to_docx(
+    src: Path,
+    dst: Path,
+    log_fn=None,
+    should_continue=None,
+) -> str:
+    """扫描 PDF：逐页 Gemini OCR → 合成 docx。返回引擎标识。"""
+    src, dst = Path(src), Path(dst)
+    ocr = await _run_scanned_ocr(
+        src, log_fn=log_fn, should_continue=should_continue, force_gemini=True,
+    )
+    full = _finalize_scanned_ocr_text(ocr)
+    layout_info = _try_layout_preserving_docx(dst, src, ocr["pages"], None, log_fn=log_fn)
+    if not (layout_info and int(layout_info.get("textboxes") or 0) > 0):
+        _write_scanned_work_docx(full, dst)
     if not dst.exists() or not _is_docx(dst):
         raise ValueError("扫描 PDF 识别后未得到有效 .docx")
+    _write_ocr_report(dst, {"engine": "ocr-gemini", "geminiPages": sorted(ocr.get("page_texts") or {})})
     return "ocr-gemini"
+
+
+def _build_paged_text_from_map(page_texts: dict[int, str], total_pages: int) -> str:
+    from .docreconstruct_adapt import build_paged_work_text
+
+    merged = {pg: str(page_texts.get(pg) or "").strip() for pg in range(1, total_pages + 1)}
+    return build_paged_work_text(merged)
+
+
+async def hybrid_scanned_pdf_to_docx(
+    src: Path,
+    dst: Path,
+    log_fn=None,
+    should_continue=None,
+    gemini_fallback: bool = True,
+) -> str:
+    """扫描 PDF：docreconstruct 主路径 + 可选 Gemini 按页补扫 → Word（测试/兼容用）。"""
+    from .docreconstruct_bridge import write_report
+
+    src, dst = Path(src), Path(dst)
+    try:
+        ocr = await _run_scanned_ocr(
+            src, log_fn=log_fn, should_continue=should_continue, gemini_fallback=gemini_fallback,
+        )
+        full = _finalize_scanned_ocr_text(ocr)
+    except ValueError:
+        if log_fn:
+            log_fn("混合 OCR 结果过短，回退全量 Gemini OCR")
+        return await ocr_scanned_pdf_to_docx(src, dst, log_fn=log_fn, should_continue=should_continue)
+
+    pages = ocr["pages"]
+    dr_result = ocr.get("dr_result")
+    cfg = ocr.get("cfg") or scan_pdf_settings()
+    engine = str(ocr.get("engine") or "ocr-hybrid")
+    evidence_dir = dr_result.evidence_dir if dr_result and (dr_result.ok or dr_result.evidence_dir) else None
+    layout_info = _try_layout_preserving_docx(dst, src, pages, evidence_dir, log_fn=log_fn)
+    if layout_info and int(layout_info.get("textboxes") or 0) > 0:
+        work_kind = "layout"
+    else:
+        dr_docx = (src.parent / "tmp" / "docreconstruct" / (src.stem + ".dr.docx"))
+        layout_src = dr_result.docx_path if (dr_result and dr_result.ok and dr_result.docx_path) else dr_docx
+        work_kind = _write_scanned_work_docx(full, dst, layout_docx=layout_src)
+        if work_kind == "layout" and log_fn:
+            log_fn("工作稿沿用 docreconstruct 版式 Word（保留表格结构）")
+    if not dst.exists() or not _is_docx(dst):
+        raise ValueError("扫描 PDF 混合识别后未得到有效 .docx")
+
+    report = {
+        "engine": engine,
+        "workKind": work_kind,
+        "layoutPages": (layout_info or {}).get("pages") if work_kind == "layout" else 0,
+        "layoutTextboxes": (layout_info or {}).get("textboxes") if work_kind == "layout" else 0,
+        "outputMode": str(cfg.get("outputMode") or "convert"),
+        "docreconstructOk": bool(dr_result and dr_result.ok),
+        "docreconstructQa": getattr(dr_result, "qa_score", 0) if dr_result else 0,
+        "docreconstructProviders": getattr(dr_result, "providers", []) if dr_result else [],
+        "docreconstructError": getattr(dr_result, "error", "") if dr_result else "",
+        "geminiPages": ocr.get("need_gemini") or [],
+        "pageChars": {
+            str(pg): len(str((ocr.get("page_texts") or {}).get(pg) or ""))
+            for pg in range(1, int(ocr.get("total") or 0) + 1)
+        },
+    }
+    if cfg.get("keepIntermediates") and dr_result and getattr(dr_result, "work_dir", None):
+        report["workDir"] = str(dr_result.work_dir)
+    write_report(dst.with_suffix(".ocr-report.json"), report)
+    return engine
 
 
 def _is_docx(path: Path) -> bool:
@@ -428,12 +768,38 @@ def _pdf2docx_convert(src: Path, dst: Path) -> None:
         cv.close()
 
 
+def _scanned_pdf_engine() -> str:
+    return str(scan_pdf_settings().get("converter") or "hybrid").lower()
+
+
+async def _scanned_pdf_to_docx(
+    src: Path,
+    dst: Path,
+    log_fn=None,
+    should_continue=None,
+) -> str:
+    from .docreconstruct_bridge import is_available, availability_status
+
+    mode = _scanned_pdf_engine()
+    if mode == "gemini":
+        return await ocr_scanned_pdf_to_docx(src, dst, log_fn=log_fn, should_continue=should_continue)
+    if mode == "docreconstruct" and not is_available():
+        if log_fn:
+            log_fn("docreconstruct 不可用，回退 Gemini OCR：" + availability_status())
+        return await ocr_scanned_pdf_to_docx(src, dst, log_fn=log_fn, should_continue=should_continue)
+    if mode == "docreconstruct":
+        return await hybrid_scanned_pdf_to_docx(
+            src, dst, log_fn=log_fn, should_continue=should_continue, gemini_fallback=False,
+        )
+    return await hybrid_scanned_pdf_to_docx(src, dst, log_fn=log_fn, should_continue=should_continue)
+
+
 def convert_pdf_to_docx_sync(src: Path, dst: Path) -> str:
-    """同步转换。数字版：Word COM / pdf2docx；扫描件：Gemini OCR。"""
+    """同步转换。数字版：Word COM / pdf2docx；扫描件：混合 OCR。"""
     src, dst = Path(src), Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if is_scanned_pdf(src):
-        return asyncio.run(ocr_scanned_pdf_to_docx(src, dst))
+        return asyncio.run(_scanned_pdf_to_docx(src, dst))
     require_digital_pdf(src)
     errors = []
     for name, fn in (("word", _word_convert), ("pdf2docx", _pdf2docx_convert)):
@@ -453,7 +819,7 @@ def convert_pdf_to_docx_sync(src: Path, dst: Path) -> str:
 
 
 async def ensure_app_docx(src: Path, dst: Path, log_fn=None, should_continue=None) -> str:
-    """Word/Excel 原样复制；PDF 转为 Word 工作稿。返回 'copy' / 'word' / 'pdf2docx' / 'ocr-gemini'。"""
+    """Word/Excel 原样复制；PDF 转为 Word 工作稿。返回 copy/word/pdf2docx/ocr-gemini/ocr-hybrid 等。"""
     src, dst = Path(src), Path(dst)
     if src.suffix.lower() in WORD_APP_EXT | EXCEL_APP_EXT:
         if src.resolve() != dst.resolve():
@@ -463,19 +829,9 @@ async def ensure_app_docx(src: Path, dst: Path, log_fn=None, should_continue=Non
     if src.suffix.lower() != ".pdf":
         raise ValueError("申报书必须为 " + APP_EXT_HINT)
     if is_scanned_pdf(src):
-        from .opinion_extract import resolve_ocr_timeout
-
-        _, _, _, n_pages = _pdf_text_stats(src)
-        per_page = resolve_ocr_timeout()
-        batches = max(1, (int(n_pages or 1) + SCAN_OCR_PAGE_CONCURRENCY - 1) // SCAN_OCR_PAGE_CONCURRENCY)
-        timeout = max(SCAN_OCR_TIMEOUT_S, per_page * batches)
-        try:
-            return await asyncio.wait_for(
-                ocr_scanned_pdf_to_docx(src, dst, log_fn=log_fn, should_continue=should_continue),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            raise ValueError("扫描 PDF 识别超时，请减少页数或改传 Word / Excel")
+        raise ValueError(
+            "扫描 PDF 请使用 ocr_scanned_pdf_to_text 识别文本；落盘时套 QM/HJ 模板生成申报书，不再先转 Word"
+        )
     proc = await asyncio.create_subprocess_exec(
         PYEXE, "-m", "app.pdf_app", str(src), str(dst),
         cwd=str(ROOT),

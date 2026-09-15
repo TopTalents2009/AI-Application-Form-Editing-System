@@ -128,6 +128,23 @@ def collapse(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip()
 
 
+def collapse_cjk_spaces(s: str) -> str:
+    """Tesseract 常在中文字符间插入空格，合并以便字段/表格解析。"""
+    prev = str(s or "")
+    punct = r"，。、；：！？“”‘’（）《》【】,.;:!?()\[\]"
+    while True:
+        new = re.sub(r"([\u4e00-\u9fff])\s+([\u4e00-\u9fff])", r"\1\2", prev)
+        new = re.sub(rf"([\u4e00-\u9fff])\s+([{punct}])", r"\1\2", new)
+        new = re.sub(rf"([{punct}])\s+([\u4e00-\u9fff])", r"\1\2", new)
+        if new == prev:
+            return new
+        prev = new
+
+
+def deocr_scanned_text(text: str) -> str:
+    return "\n".join(collapse_cjk_spaces(ln) for ln in str(text or "").splitlines())
+
+
 def normalize_scanned_declaration_text(text: str, mode: str = "") -> str:
     """把 Gemini OCR 的申报书全文整理为解析器友好文本。"""
     raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -135,7 +152,7 @@ def normalize_scanned_declaration_text(text: str, mode: str = "") -> str:
     pending_cn = ""
 
     for raw_line in raw.split("\n"):
-        line = re.sub(r"[ \t\u3000]+", " ", raw_line).strip()
+        line = collapse_cjk_spaces(re.sub(r"[ \t\u3000]+", " ", raw_line).strip())
         if not line:
             continue
         if _PAGE_MARK.match(line) or _PAGE_FOOT.match(line) or _STAMP_LINE.match(line):

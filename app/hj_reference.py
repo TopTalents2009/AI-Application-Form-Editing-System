@@ -130,7 +130,53 @@ def degree_cn_en(degree: str) -> tuple[str, str]:
         cn = m.group(1)
         en = {"学士": "Bachelor", "硕士": "Master", "博士": "Doctor"}[cn]
         return cn, en
+    if re.search(r"\bPhD\b|\bPh\.D\.?\b|\bDoctor\b", s, re.I):
+        return "博士", "PhD"
+    if re.search(r"\bMaster\b|\bMaste\b", s, re.I):
+        return "硕士", "Master"
+    if re.search(r"\bBachelor\b", s, re.I):
+        return "学士", "Bachelor"
     return s, s
+
+
+def format_hj_degree_cell(degree: str) -> str:
+    """HJ table2 学位栏：学士（Bachelor） / 博士（PhD）。"""
+    cn, en = degree_cn_en(degree)
+    if not cn:
+        return str(degree or "").strip()
+    en = fix_ocr_english(en)
+    if en in {"Doctor", "doctor"}:
+        en = "PhD"
+    if en and en != cn and re.search(r"[A-Za-z]", en):
+        return f"{cn}（{en}）"
+    return cn
+
+
+_POSITION_PAIRS = (
+    (re.compile(r"Chief\s*Scientist|首席科学家", re.I), "首席科学家/Chief Scientist"),
+    (re.compile(r"Assistant\s*Professor|助理教授", re.I), "助理教授/Assistant Professor"),
+    (re.compile(r"Postdoctoral(?:\s+Research)?\s+Fellow|博士后", re.I), "博士后/Postdoctoral Research Fellow"),
+    (re.compile(r"Research\s*Scientist|研究科学家", re.I), "研究科学家/Research Scientist"),
+    (re.compile(r"Chief\s*Researcher|首席研究员", re.I), "首席研究员/Chief Researcher"),
+    (re.compile(r"\bResearcher\b|研究员", re.I), "研究员/Researcher"),
+)
+
+
+def format_hj_position_cell(text: str) -> str:
+    """HJ table2 职务栏：中文/English（参考洲瓴/仙湖样例）。"""
+    s = fix_ocr_english(str(text or "").strip())
+    if not s:
+        return ""
+    s = re.sub(r"\s*/\s*", " ", s)
+    s = re.sub(r"\s+", " ", s)
+    for pat, pair in _POSITION_PAIRS:
+        if pat.search(s):
+            return pair
+    if re.search(r"[\u4e00-\u9fff]", s) and re.search(r"[A-Za-z]", s):
+        cn, en = split_bilingual(s)
+        if cn and en:
+            return f"{cn}/{en}"
+    return s
 
 
 def highest_degree_from_edu_row(row: dict) -> tuple[str, str]:
@@ -159,15 +205,31 @@ def format_bilingual_pair(cn: str, en: str) -> tuple[str, str]:
 
 def split_certificate_name(name: str) -> tuple[str, str]:
     """有效证件姓名仅保留英文；中文音译名单独提取。"""
-    s = str(name or "").strip()
+    s = re.sub(r"\s+", " ", str(name or "").strip())
     m = re.match(r"^(.+?)\s*[（(]([^）)]+)[）)]\s*$", s)
     if m:
-        return m.group(1).strip(), m.group(2).strip()
-    return s, ""
+        en = fix_ocr_english(m.group(1).strip())
+        cn = re.sub(r"\s+", "", m.group(2).strip())
+        return en, cn
+    m = re.match(r"^([A-Za-z][A-Za-z\s'\"]+?)\s*[\"'“”]\s*[（(]([^）)]+)", s)
+    if m:
+        return fix_ocr_english(m.group(1).strip()), re.sub(r"\s+", "", m.group(2))
+    return fix_ocr_english(s), ""
+
+
+def fix_email_ocr(email: str) -> str:
+    s = str(email or "").strip().replace(" ", "")
+    if not s:
+        return ""
+    s = re.sub(r"@?gmailcom$", "@gmail.com", s, flags=re.I)
+    if "@" not in s and re.search(r"gmail", s, re.I):
+        s = s.replace("gmailcom", "@gmail.com")
+    return s
 
 
 def normalize_hj_cn_field(text: str) -> str:
-    return re.sub(r"[、,，]\s*", "；", str(text or "").strip())
+    s = re.sub(r"\s+", "", str(text or "").strip())
+    return re.sub(r"[、,，]\s*", "；", s)
 
 
 def normalize_hj_en_field(text: str) -> str:

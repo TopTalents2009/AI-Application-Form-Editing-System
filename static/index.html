@@ -44,7 +44,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
       <label class="drop" for="appFile">
         <input type="file" id="appFile" accept=".docx,.docm,.wps,.xlsx,.xlsm,.xls,.pdf" multiple>
         <span class="dz-main">点击选择申报书文件</span>
-        <span class="dz-sub">.docx / .docm / Excel（.xlsx .xlsm .xls）或可复制文字的 PDF；可多次追加，点 × 移除</span>
+        <span class="dz-sub">.docx / .docm / Excel 或 PDF（扫描件 OCR 后套模板生成，不转 Word）；可多次追加，点 × 移除</span>
       </label>
       <div class="chips" id="appName"></div>
     </div>
@@ -185,6 +185,11 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     </div>
     <h3 class="fb-sub">我提交的反馈</h3>
     <div id="fbMine" class="fb-list">暂无反馈</div>
+    <div id="fbMinePager" class="book-pager hidden" style="margin-top:10px">
+      <button type="button" class="ghost mini" id="fbMinePrev">上一页</button>
+      <div class="page-mid"><div class="page-sub" id="fbMinePageInfo">第 1 / 1 页 · 共 0 条</div></div>
+      <button type="button" class="ghost mini" id="fbMineNext">下一页</button>
+    </div>
   </div>
 </div>
 
