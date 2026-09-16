@@ -31,6 +31,7 @@ SCHOOL_COUNTRY_HINTS = (
 _ENTITY_FIXES = (
     (re.compile(r"Western\s+of\s+University", re.I), "Western University"),
     (re.compile(r"University\s+of\s+Western\s+of\s+University", re.I), "University of Western Ontario"),
+    (re.compile(r"AdvEn\s*Industr(?:ial|ies)", re.I), "AdvEn Industries"),
 )
 
 _MAJOR_EN = (
@@ -83,19 +84,19 @@ def major_to_en(major_cn: str) -> str:
 
 
 def cn_list_join(*parts: str) -> str:
-    """参考仙湖/南京样例 table1：中文多项用分号连接。"""
+    """16 表正式申报书 table1：中文多项用中文逗号。"""
     items = [str(p or "").strip() for p in parts if str(p or "").strip()]
     if not items:
         return ""
-    return "；".join(items)
+    return "，".join(items)
 
 
 def en_list_join(*parts: str) -> str:
-    """参考仙湖/南京样例 table1：英文多项用 ; 连接。"""
+    """16 表正式申报书 table1：英文多项用中文逗号。"""
     items = [fix_ocr_english(str(p or "").strip()) for p in parts if str(p or "").strip()]
     if not items:
         return ""
-    return "; ".join(items)
+    return "，".join(items)
 
 
 def split_bilingual(text: str) -> tuple[str, str]:
@@ -140,15 +141,15 @@ def degree_cn_en(degree: str) -> tuple[str, str]:
 
 
 def format_hj_degree_cell(degree: str) -> str:
-    """HJ table2 学位栏：学士（Bachelor） / 博士（PhD）。"""
+    """HJ table2 学位栏：与正式申报书一致，学士/Bachelor、博士/Doctor。"""
     cn, en = degree_cn_en(degree)
     if not cn:
         return str(degree or "").strip()
     en = fix_ocr_english(en)
-    if en in {"Doctor", "doctor"}:
-        en = "PhD"
+    if en in {"PhD", "phd", "Ph.D", "Ph.D."}:
+        en = "Doctor"
     if en and en != cn and re.search(r"[A-Za-z]", en):
-        return f"{cn}（{en}）"
+        return f"{cn}/{en}"
     return cn
 
 
@@ -191,13 +192,13 @@ def highest_degree_from_edu_row(row: dict) -> tuple[str, str]:
 
 
 def format_bilingual_pair(cn: str, en: str) -> tuple[str, str]:
-    """单位/职务：中文；英文（参考样例 table1 分行填写）。"""
-    cn_s = re.sub(r"[、,，]\s*", "；", str(cn or "").strip())
+    """单位/职务：中文，英文（16 表样例 table1 用中文逗号）。"""
+    cn_s = re.sub(r"[、;；]\s*", "，", str(cn or "").strip())
     en_s = fix_ocr_english(str(en or "").strip())
-    en_s = re.sub(r"[、，]\s*", "; ", en_s)
-    en_s = re.sub(r",\s*", "; ", en_s)
-    if cn_s and not en_s and "；" in cn_s:
-        parts = [p.strip() for p in cn_s.split("；", 1)]
+    en_s = re.sub(r"[;；]\s*", "，", en_s)
+    en_s = re.sub(r",\s*", "，", en_s)
+    if cn_s and not en_s and "，" in cn_s:
+        parts = [p.strip() for p in cn_s.split("，", 1)]
         if len(parts) == 2 and re.search(r"[A-Za-z]", parts[1]):
             return parts[0], parts[1]
     return cn_s, en_s
@@ -229,13 +230,13 @@ def fix_email_ocr(email: str) -> str:
 
 def normalize_hj_cn_field(text: str) -> str:
     s = re.sub(r"\s+", "", str(text or "").strip())
-    return re.sub(r"[、,，]\s*", "；", s)
+    return re.sub(r"[、;；]\s*", "，", s)
 
 
 def normalize_hj_en_field(text: str) -> str:
     s = fix_ocr_english(str(text or "").strip())
-    s = re.sub(r"[、，]\s*", "; ", s)
-    return re.sub(r",\s*", "; ", s)
+    s = re.sub(r"[;；]\s*", "，", s)
+    return re.sub(r",\s*", "，", s)
 
 
 def is_academic_title(title: str) -> bool:

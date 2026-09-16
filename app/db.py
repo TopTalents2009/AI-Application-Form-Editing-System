@@ -68,8 +68,10 @@ def init_db() -> dict:
                   status ENUM('active','disabled') NOT NULL DEFAULT 'active',
                   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   last_login_at DATETIME NULL,
+                  must_set_credentials TINYINT(1) NOT NULL DEFAULT 0,
                   PRIMARY KEY (id),
-                  UNIQUE KEY uk_username (username)
+                  UNIQUE KEY uk_username (username),
+                  KEY idx_real_dept (real_name, department)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
@@ -129,6 +131,18 @@ def init_db() -> dict:
                 except OperationalError as e:
                     if e.args and e.args[0] == 1060:
                         continue
+                    raise
+            try:
+                cur.execute(
+                    "ALTER TABLE users ADD COLUMN must_set_credentials TINYINT(1) NOT NULL DEFAULT 0"
+                )
+            except OperationalError as e:
+                if not (e.args and e.args[0] == 1060):
+                    raise
+            try:
+                cur.execute("ALTER TABLE users ADD KEY idx_real_dept (real_name, department)")
+            except OperationalError as e:
+                if not (e.args and e.args[0] in (1060, 1061)):
                     raise
             cur.execute("SELECT COUNT(*) AS n FROM users")
             n = int((cur.fetchone() or {}).get("n") or 0)

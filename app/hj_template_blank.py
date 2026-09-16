@@ -6,12 +6,51 @@ import re
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 
-from .template_fill import _distinct_cells, _edu_work_row_bounds, _looks_like_label, _write_cell
+from .template_fill import _distinct_cells, _edu_work_row_bounds, _looks_like_label, _set_paragraph_text, _write_cell
+
+_PICTURE_LOCALS = frozenset({"drawing", "pict", "object"})
+
+
+def _strip_cell_pictures(cell) -> None:
+    """去掉单元格内的图片/对象，空签字位不保留模板样例签名。"""
+    tc = getattr(cell, "_tc", None)
+    if tc is None:
+        return
+    for el in list(tc.iter()):
+        if el.tag.rsplit("}", 1)[-1] not in _PICTURE_LOCALS:
+            continue
+        parent = el.getparent()
+        if parent is not None:
+            parent.remove(el)
+
+
+def _drop_unused_images(doc: Document) -> None:
+    used = set()
+    embed_attr = qn("r:embed")
+    for el in doc.element.iter():
+        if el.tag.rsplit("}", 1)[-1] != "blip":
+            continue
+        rid = el.get(embed_attr)
+        if rid:
+            used.add(rid)
+    for rel_id, rel in list(doc.part.rels.items()):
+        if "image" not in str(rel.reltype).lower():
+            continue
+        if rel_id not in used:
+            del doc.part.rels[rel_id]
 
 
 def _reset_checkboxes(text: str) -> str:
     return str(text or "").replace("☑", "□").replace("☒", "□")
+
+
+def _reset_cell_checkboxes(cell) -> None:
+    for p in cell.paragraphs:
+        t = str(p.text or "")
+        if "☑" in t or "☒" in t:
+            _set_paragraph_text(p, _reset_checkboxes(t))
 
 
 def _clear_cover_paragraphs(doc: Document) -> None:
@@ -37,9 +76,9 @@ def _clear_cover_paragraphs(doc: Document) -> None:
         if "□" in new_text or "☑" in text:
             new_text = _reset_checkboxes(new_text)
         if re.fullmatch(r"\s+", new_text) or new_text.strip() in {"", " "}:
-            p.text = ""
+            _set_paragraph_text(p, "")
         elif new_text != text:
-            p.text = new_text
+            _set_paragraph_text(p, new_text)
 
     for i, p in enumerate(doc.paragraphs):
         t = str(p.text or "")
@@ -47,11 +86,11 @@ def _clear_cover_paragraphs(doc: Document) -> None:
             for j in range(i + 1, min(i + 4, len(doc.paragraphs))):
                 nxt = doc.paragraphs[j]
                 if not str(nxt.text or "").strip() or str(nxt.text or "").strip().isspace():
-                    nxt.text = ""
+                    _set_paragraph_text(nxt, "")
                 elif "前沿领域" in nxt.text or "关键核心" in nxt.text:
                     break
                 else:
-                    nxt.text = ""
+                    _set_paragraph_text(nxt, "")
 
 
 def _is_data_value(text: str) -> bool:
@@ -67,6 +106,8 @@ def _is_data_value(text: str) -> bool:
     if re.search(r"@|\.com|\.cn|\.jp|\.edu", t, re.I):
         return True
     if re.match(r"^[A-Z]{1,3}\d{5,}$", t):
+        return True
+    if re.match(r"^[+\d][\d\-\s]{6,}$", t):
         return True
     if re.match(r"^[A-Za-z][A-Za-z .·'-]{1,60}$", t):
         return True
@@ -89,7 +130,7 @@ def _clear_identity_tables(doc: Document) -> None:
             if not txt:
                 continue
             if "□" in txt or "☑" in txt:
-                _write_cell(cell, _reset_checkboxes(txt))
+                _reset_cell_checkboxes(cell)
                 continue
             if i >= 2 and not _looks_like_label(txt):
                 _write_cell(cell, "")
@@ -111,7 +152,7 @@ def _clear_identity_tables(doc: Document) -> None:
             if not txt:
                 continue
             if "□" in txt or "☑" in txt:
-                _write_cell(cell, _reset_checkboxes(txt))
+                _reset_cell_checkboxes(cell)
                 continue
             if ri in (0, 1, 2, 3, 4, 5) and i >= len(cells) - 1 and _is_data_value(txt):
                 _write_cell(cell, "")
@@ -149,16 +190,19 @@ def _clear_table2(doc: Document) -> None:
 
 
 def _trim_narrative_cell(cell, keep_lines: int) -> None:
-    lines = [ln for ln in str(cell.text or "").splitlines()]
-    if len(lines) <= keep_lines:
-        body = "\n".join(lines)
-        if "☑" in body:
-            cell.text = _reset_checkboxes(body)
+    paras = list(cell.paragraphs)
+    if not paras:
         return
-    head = "\n".join(lines[:keep_lines]).strip()
-    if "☑" in head:
-        head = _reset_checkboxes(head)
-    cell.text = head
+    kept = 0
+    for p in paras:
+        t = str(p.text or "")
+        if not t.strip():
+            continue
+        kept += 1
+        if "☑" in t or "☒" in t:
+            _set_paragraph_text(p, _reset_checkboxes(t))
+        if kept > keep_lines:
+            _set_paragraph_text(p, "")
 
 
 def _clear_narrative_tables(doc: Document) -> None:
@@ -166,28 +210,54 @@ def _clear_narrative_tables(doc: Document) -> None:
     if n > 4:
         _trim_narrative_cell(doc.tables[4].rows[0].cells[0], 3)
     if n > 5:
-        _trim_narrative_cell(doc.tables[5].rows[0].cells[0], 6)
+        _trim_narrative_cell(doc.tables[5].rows[0].cells[0], 8)
     for ti in range(6, min(11, n)):
         _clear_list_table(doc.tables[ti], tuple(range(1, 6)))
     if n > 11:
         cell = doc.tables[11].rows[0].cells[0]
-        lines = [ln for ln in str(cell.text or "").splitlines() if ln.strip()]
-        cell.text = lines[0] if lines else ""
+        kept = False
+        for p in cell.paragraphs:
+            t = str(p.text or "").strip()
+            if not t:
+                continue
+            if not kept:
+                kept = True
+                continue
+            _set_paragraph_text(p, "")
     if n > 12 and len(doc.tables[12].rows) > 1:
         _write_cell(doc.tables[12].rows[1].cells[0], "")
     if n > 13:
         for ri in range(1, len(doc.tables[13].rows)):
-            txt = _reset_checkboxes(doc.tables[13].rows[ri].cells[0].text)
-            if "□" in txt:
-                doc.tables[13].rows[ri].cells[0].text = txt
+            cell = doc.tables[13].rows[ri].cells[0]
+            _strip_cell_pictures(cell)
+            for p in cell.paragraphs:
+                txt = str(p.text or "")
+                if "☑" in txt or "☒" in txt:
+                    _set_paragraph_text(p, _reset_checkboxes(txt))
     if n > 14:
         cell = doc.tables[14].rows[0].cells[0]
-        lines = [ln for ln in str(cell.text or "").splitlines() if ln.strip()]
-        if lines:
-            cell.text = _reset_checkboxes(lines[0])
+        past_intro = False
+        for p in cell.paragraphs:
+            t = str(p.text or "")
+            if "☑" in t or "☒" in t:
+                _set_paragraph_text(p, _reset_checkboxes(t))
+            if past_intro:
+                _set_paragraph_text(p, "")
+            elif "简介" in t and ("300" in t or "实验室建设" in t):
+                past_intro = True
+            elif "上级部门" in t or "按隶属关系" in t:
+                nt = re.sub(r"([:：])\s*.+$", r"\1 ", t)
+                if nt != t:
+                    _set_paragraph_text(p, nt)
     if n > 15:
-        for ri in range(1, len(doc.tables[15].rows)):
-            _write_cell(doc.tables[15].rows[ri].cells[0], "")
+        cell = doc.tables[15].rows[-1].cells[0]
+        _strip_cell_pictures(cell)
+        for p in cell.paragraphs:
+            t = str(p.text or "")
+            if "推荐理由" in t or "支持条件" in t:
+                continue
+            if t.strip():
+                _set_paragraph_text(p, "")
 
 
 def blank_hj_document(doc: Document) -> None:
@@ -198,6 +268,7 @@ def blank_hj_document(doc: Document) -> None:
         _clear_table2(doc)
         _clear_list_table(doc.tables[3], (1, 2, 3))
     _clear_narrative_tables(doc)
+    _drop_unused_images(doc)
 
 
 def make_blank_template(src: Path, out: Path) -> Path:

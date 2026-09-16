@@ -27,10 +27,24 @@ class NoCacheStatic(BaseHTTPMiddleware):
 app.add_middleware(NoCacheStatic)
 
 # 无需登录即可访问的路径
-PUBLIC_PATHS = ("/login", "/register", "/api/auth/login", "/api/auth/register", "/client-extract")
+PUBLIC_PATHS = (
+    "/login", "/register", "/portal",
+    "/api/auth/login", "/api/auth/register",
+    "/api/auth/portal-config", "/api/auth/portal-login",
+    "/client-extract",
+)
+
+def _is_public(p: str) -> bool:
+    p = str(p or "").rstrip("/") or "/"
+    if p in PUBLIC_PATHS or p.startswith("/public"):
+        return True
+    if p.startswith("/api/auth/portal-"):
+        return True
+    return False
+
 
 class AuthGate(BaseHTTPMiddleware):
-    """校验会话 cookie：未登录页面跳 /login，API 返回 401。"""
+    """校验会话：cookie 或 Authorization Bearer。未登录 API 返回 401，页面跳 /login。"""
 
     async def dispatch(self, request: Request, call_next):
         from . import auth
@@ -39,13 +53,17 @@ class AuthGate(BaseHTTPMiddleware):
             request.state.user = None
             return await call_next(request)
         try:
-            request.state.user = auth.user_by_token(request.cookies.get(auth.COOKIE) or "")
+            request.state.user = auth.user_by_token(auth.session_token_from_request(request))
         except Exception as e:
             return JSONResponse({"detail": "数据库不可用：" + str(e)[:160]}, status_code=503)
-        if request.state.user or p in PUBLIC_PATHS:
+        if request.state.user or _is_public(p):
             return await call_next(request)
         if p.startswith("/api"):
             return JSONResponse({"detail": "未登录"}, status_code=401)
+        # iframe 里 cookie 常被浏览器丢掉；主页面仍下发 HTML，由前端带 Bearer 续上会话
+        shell = p.rstrip("/") or "/"
+        if request.method in ("GET", "HEAD") and shell in ("/", "/admin"):
+            return await call_next(request)
         return RedirectResponse("/login", status_code=303)
 
 app.add_middleware(AuthGate)

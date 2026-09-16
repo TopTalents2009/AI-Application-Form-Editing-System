@@ -19,6 +19,24 @@ class AuthError(Exception):
         self.status = status
 
 
+def session_token_from_request(request) -> str:
+    """cookie 或 Authorization: Bearer，供 iframe 内第三方 Cookie 被拦时续上会话。"""
+    h = ""
+    try:
+        h = request.headers.get("authorization") or ""
+    except Exception:
+        h = ""
+    if str(h).lower().startswith("bearer "):
+        tok = h[7:].strip()
+        if tok:
+            return tok
+    cookies = getattr(request, "cookies", None) or {}
+    try:
+        return cookies.get(COOKIE) or ""
+    except Exception:
+        return ""
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, ITER)
@@ -40,6 +58,8 @@ def verify_password(password: str, stored: str) -> bool:
 def public_user(row: dict | None) -> dict | None:
     if not row:
         return None
+    uname = str(row.get("username") or "")
+    need = bool(int(row.get("must_set_credentials") or 0)) or uname.startswith("_p")
     return {
         "id": int(row["id"]),
         "username": row["username"],
@@ -49,6 +69,7 @@ def public_user(row: dict | None) -> dict | None:
         "status": row["status"],
         "createdAt": _dt(row.get("created_at")),
         "lastLoginAt": _dt(row.get("last_login_at")),
+        "mustSetCredentials": need,
     }
 
 
@@ -116,6 +137,134 @@ def register(body: dict) -> dict:
         conn.close()
 
 
+def extract_portal_identity(body: dict) -> tuple[str, str]:
+    sess = (body or {}).get("session") if isinstance((body or {}).get("session"), dict) else {}
+    nested = []
+    for k in ("user", "profile", "account", "staff"):
+        v = sess.get(k)
+        if isinstance(v, dict):
+            nested.append(v)
+        v2 = (body or {}).get(k)
+        if isinstance(v2, dict):
+            nested.append(v2)
+
+    def pick(blobs, keys):
+        for b in blobs:
+            if not isinstance(b, dict):
+                continue
+            for k in keys:
+                v = str(b.get(k) or "").strip()
+                if v and v not in ("未知", "undefined", "null"):
+                    return v
+        return ""
+
+    name_keys = ("realName", "real_name", "displayName", "fullName", "trueName", "真实姓名", "姓名")
+    dept_keys = ("department", "dept", "orgName", "org", "unit", "deptName", "部门")
+    real_name = pick([body or {}, sess] + nested, name_keys) or pick(nested, ("name",))
+    department = pick([body or {}, sess] + nested, dept_keys)
+    return real_name, department
+
+
+def _issue_session(cur, row: dict) -> tuple[dict, str, datetime]:
+    token = secrets.token_hex(32)
+    exp = _now() + timedelta(days=SESSION_DAYS)
+    cur.execute(
+        "INSERT INTO sessions (token, user_id, expires_at) VALUES (%s,%s,%s)",
+        (token, row["id"], exp),
+    )
+    cur.execute("UPDATE users SET last_login_at=%s WHERE id=%s", (_now(), row["id"]))
+    cur.execute("SELECT * FROM users WHERE id=%s", (row["id"],))
+    return public_user(cur.fetchone()), token, exp
+
+
+def _new_placeholder_username(cur) -> str:
+    for _ in range(8):
+        uname = "_p" + secrets.token_hex(8)
+        cur.execute("SELECT id FROM users WHERE username=%s", (uname,))
+        if not cur.fetchone():
+            return uname
+    raise AuthError("无法分配临时用户名，请重试")
+
+
+def portal_login(*, real_name: str, department: str, ticket: str, portal_id: str = "") -> tuple[dict, str, datetime, bool]:
+    """按协同中心真实姓名+部门找到或创建本系统账号并签发会话。"""
+    real_name = str(real_name or "").strip()
+    department = str(department or "").strip() or "协同中心"
+    ticket = str(ticket or "").strip()
+    if not NAME_RE.fullmatch(real_name):
+        raise AuthError("协同中心未提供有效真实姓名")
+    if not department or len(department) > 64:
+        raise AuthError("协同中心未提供部门")
+    if len(ticket) < 8:
+        raise AuthError("协同中心会话无效，请从侧栏重新打开", 401)
+    conn = db.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM users WHERE real_name=%s AND department=%s AND status='active' "
+                "ORDER BY id ASC",
+                (real_name, department),
+            )
+            row = None
+            for r in cur.fetchall() or []:
+                if str(r.get("username") or "").lower() == "admin":
+                    continue
+                row = r
+                break
+            created = False
+            if not row:
+                uname = _new_placeholder_username(cur)
+                cur.execute(
+                    "INSERT INTO users (username, real_name, department, password_hash, role, status, must_set_credentials) "
+                    "VALUES (%s,%s,%s,%s,'user','active',1)",
+                    (uname, real_name, department, hash_password(secrets.token_urlsafe(32))),
+                )
+                uid = cur.lastrowid
+                cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+                row = cur.fetchone()
+                created = True
+            elif row.get("status") != "active":
+                raise AuthError("账号已停用，请联系管理员", 403)
+            user, token, exp = _issue_session(cur, row)
+            return user, token, exp, created
+    finally:
+        conn.close()
+
+
+def complete_credentials(uid: int, body: dict) -> dict:
+    username = str((body or {}).get("username") or "").strip()
+    password = str((body or {}).get("password") or "")
+    confirm = str((body or {}).get("confirmPassword") or (body or {}).get("confirm") or "")
+    if not USER_RE.fullmatch(username):
+        raise AuthError("用户名为 3–32 位字母、数字或下划线")
+    if username.lower() == "admin":
+        raise AuthError("该用户名不可用")
+    if username.startswith("_p"):
+        raise AuthError("请设置正式用户名，不要使用系统临时名")
+    if len(password) < 6 or len(password) > 64:
+        raise AuthError("密码长度 6–64 位")
+    if password != confirm:
+        raise AuthError("两次输入的密码不一致")
+    conn = db.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+            row = cur.fetchone()
+            if not row:
+                raise AuthError("用户不存在", 404)
+            cur.execute("SELECT id FROM users WHERE username=%s AND id<>%s", (username, uid))
+            if cur.fetchone():
+                raise AuthError("用户名已被占用")
+            cur.execute(
+                "UPDATE users SET username=%s, password_hash=%s, must_set_credentials=0 WHERE id=%s",
+                (username, hash_password(password), uid),
+            )
+            cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+            return public_user(cur.fetchone())
+    finally:
+        conn.close()
+
+
 def login(username: str, password: str) -> tuple[dict, str, datetime]:
     username = str(username or "").strip()
     if not username or not password:
@@ -129,14 +278,7 @@ def login(username: str, password: str) -> tuple[dict, str, datetime]:
                 raise AuthError("用户名或密码错误", 401)
             if row.get("status") != "active":
                 raise AuthError("账号已停用，请联系管理员", 403)
-            token = secrets.token_hex(32)
-            exp = _now() + timedelta(days=SESSION_DAYS)
-            cur.execute(
-                "INSERT INTO sessions (token, user_id, expires_at) VALUES (%s,%s,%s)",
-                (token, row["id"], exp),
-            )
-            cur.execute("UPDATE users SET last_login_at=%s WHERE id=%s", (_now(), row["id"]))
-            return public_user(row), token, exp
+            return _issue_session(cur, row)
     finally:
         conn.close()
 

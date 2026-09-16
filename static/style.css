@@ -238,6 +238,12 @@ select {
   position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; line-height: 20px;
   background: rgba(255,255,255,.92); color: #5b6577;
 }
+.cred-modal { max-width: 440px; }
+.cred-in {
+  width: 100%; padding: 9px 12px; border: 1px solid #d7deea; border-radius: 10px;
+  font-family: inherit; font-size: 14px; color: var(--ink); box-sizing: border-box;
+}
+.cred-in:focus { outline: none; border-color: var(--brand2); }
 .fb-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .fb-sub { margin: 18px 0 8px; font-size: 14px; }
 .fb-list { display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow: auto; }

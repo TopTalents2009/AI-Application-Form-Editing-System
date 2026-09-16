@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py50">
+<link rel="stylesheet" href="/public/style.css?v=py53">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -50,11 +50,11 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
     </div>
 
     <div class="field">
-      <label class="flabel">② 修改意见文档（可选）</label>
+      <label class="flabel">② 修改意见文档（可选，含录音）</label>
       <label class="drop" for="opFiles">
-        <input type="file" id="opFiles" accept=".docx,.docm,.wps,.txt,.md,.xlsx,.xlsm,.xls,.csv,.jpg,.jpeg,.png,.webp,.gif,.tif,.tiff,.bmp,image/*" multiple>
+        <input type="file" id="opFiles" accept=".docx,.docm,.wps,.txt,.md,.xlsx,.xlsm,.xls,.csv,.jpg,.jpeg,.png,.webp,.gif,.tif,.tiff,.bmp,.m4a,.mp3,.wav,.aac,.ogg,.flac,.amr,.wma,.webm,image/*,audio/*" multiple>
         <span class="dz-main">点击选择意见文档</span>
-        <span class="dz-sub">可不传：将读取申报书标注栏（批注）。Word / Excel / 图片 / txt / md，点 × 移除</span>
+        <span class="dz-sub">可不传：将读取申报书标注栏（批注）。Word / Excel / 图片 / 录音（m4a 等，Gemini 转写）/ txt / md，点 × 移除</span>
       </label>
       <div class="chips" id="opNames"></div>
     </div>
@@ -193,6 +193,33 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
   </div>
 </div>
 
-<script src="/public/app.js?v=py50"></script>
+<div id="credMask" class="fb-mask" hidden>
+  <div class="fb-modal cred-modal" role="dialog" aria-labelledby="credTitle">
+    <div class="fb-head">
+      <h2 id="credTitle">设置本系统账号</h2>
+    </div>
+    <p class="fb-hint">已用协同中心的真实姓名和部门为你开通账号。请设置用户名和密码，以后也可在本系统登录页直接登录。</p>
+    <p class="fb-hint" id="credWho"></p>
+    <div class="f-row" style="margin-bottom:12px">
+      <label class="flabel" for="credUser">用户名</label>
+      <input id="credUser" class="cred-in" autocomplete="username" placeholder="3–32 位字母、数字或下划线">
+    </div>
+    <div class="f-row" style="margin-bottom:12px">
+      <label class="flabel" for="credPass">密码</label>
+      <input id="credPass" class="cred-in" type="password" autocomplete="new-password" placeholder="6–64 位">
+    </div>
+    <div class="f-row" style="margin-bottom:12px">
+      <label class="flabel" for="credPass2">确认密码</label>
+      <input id="credPass2" class="cred-in" type="password" autocomplete="new-password" placeholder="再输入一次">
+    </div>
+    <div class="fb-actions">
+      <button type="button" class="primary" id="credSaveBtn">保存并进入</button>
+      <span id="credMsg" class="err"></span>
+    </div>
+  </div>
+</div>
+
+<script src="/public/session.js?v=py52"></script>
+<script src="/public/app.js?v=py53"></script>
 </body>
 </html>

@@ -271,6 +271,7 @@
   </div>
 </div>
 <script src="/public/vendor/tsparticles.bundle.min.js"></script>
+<script src="/public/session.js?v=py52"></script>
 <script>
 (function () {
   /* 全屏星空粒子：仅未开启"减少动效"时加载；交互只有悬停排斥 */
@@ -367,8 +368,9 @@
       return r.json().then(function (j) { return { ok: r.ok, data: j }; });
     }).then(function (res) {
       if (res.ok && res.data && res.data.ok) {
+        if (window.sbSaveSession) sbSaveSession(res.data.token);
         btn.textContent = '注册成功，正在进入…';
-        location.href = '/';
+        location.href = res.data.redirect || '/';
         return;
       }
       fail((res.data && res.data.detail) || '注册失败，请重试');

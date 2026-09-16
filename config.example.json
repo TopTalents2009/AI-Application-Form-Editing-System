@@ -68,9 +68,11 @@
       "permissionMode": "bypassPermissions"
     },
     "generate": {
-      "baseUrl": "http://192.168.2.37:3602",
+      "baseUrl": "http://127.0.0.1:3602",
       "apiKey": "填入 sk- 开头的 AutoRef 系统密钥",
       "path": "/api/external/documents",
+      "generatePath": "/api/external/generate",
+      "projectsPath": "/api/external/projects",
       "method": "POST",
       "timeoutSec": 300,
       "provider": "autoref",
@@ -80,6 +82,10 @@
       },
       "body": {}
     }
+  },
+  "portal": {
+    "sdkUrl": "http://192.168.2.23:8086/api/ext-research/plugin/sdk.js",
+    "portalId": "填入协同中心外部程序 id"
   },
   "mysql": {
     "host": "127.0.0.1",

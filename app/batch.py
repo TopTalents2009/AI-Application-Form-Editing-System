@@ -6,7 +6,7 @@ from .config import BATCHES_DIR, load_config, LLM_TIMEOUT_MATCH, atomic_replace,
 from .llm import chat, extract_json, now_str, created_key
 from . import matcher as M
 from .form_kind import classify as classify_form
-from .opinion_extract import ALLOWED_OPINION_EXT, ensure_txt as extract_to_txt
+from .opinion_extract import ALLOWED_OPINION_EXT, AUDIO_EXT, ensure_txt as extract_to_txt
 from .pdf_app import (
     ALLOWED_APP_EXT, APP_EXT_HINT, ensure_app_docx, ocr_scanned_pdf_to_text,
     pdf_kind, sniff_pdf, work_docx_name,
@@ -66,7 +66,7 @@ class BatchStore:
                 raise ValueError("申报书必须为 " + APP_EXT_HINT + ": " + str(a.get("name")))
         for o in ops:
             if _ext(_sanitize(o.get("name", ""))) not in ALLOWED_OPINION_EXT:
-                raise ValueError("意见类型不支持（Word / Excel / 图片 / txt / md）: " + str(o.get("name")))
+                raise ValueError("意见类型不支持（Word / Excel / 图片 / 录音 / txt / md）: " + str(o.get("name")))
         bid = _rid(); d = self.bdir(bid)
         (d / "input").mkdir(parents=True, exist_ok=True)
         app_names = []
@@ -130,8 +130,12 @@ class BatchStore:
             for n in b["opinions"]:
                 out = txt_dir / (Path(n).stem + ".txt")
                 try:
+                    if _ext(n) in AUDIO_EXT:
+                        self.log(b, "正在用 Gemini 转写录音 " + n + " …")
                     await extract_to_txt(Path(b["dir"]) / "input" / n, out)
                     op_texts[n] = out.read_text(encoding="utf-8")
+                    if _ext(n) in AUDIO_EXT:
+                        self.log(b, "录音已转写为修改意见 " + n)
                 except Exception as e:
                     self.log(b, "提取失败 " + n + ": " + str(e)[:200])
             if not b["opinions"]:

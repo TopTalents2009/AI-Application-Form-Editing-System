@@ -11,7 +11,30 @@ NAME_KEYS = ("项目名称", "课题名称", "grant_title", "project_name", "tit
 EXTRA_KEYS = ("项目来源", "项目性质", "起止时间", "开始时间", "结束时间", "完成人排序", "立项时间", "经费总额", "担任角色", "项目编号")
 URL_RE = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
 FILE_EXT = {".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".zip"}
-SKIP_HOST = ("google.com", "bing.com", "baidu.com", "sogou.com")
+SKIP_HOST = (
+    "google.com", "bing.com", "baidu.com", "sogou.com", "duckduckgo.com",
+    "arxiv.org", "export.arxiv.org",
+    "github.com", "gitlab.com", "gitee.com", "bitbucket.org", "huggingface.co",
+    "openaccess.thecvf.com", "thecvf.com",
+    "ieeexplore.ieee.org", "dl.acm.org",
+    "openreview.net", "paperswithcode.com", "semanticscholar.org",
+    "researchgate.net", "academia.edu",
+    "sciencedirect.com", "springer.com", "link.springer.com",
+    "wiley.com", "mdpi.com", "nature.com", "science.org",
+    "neurips.cc", "icml.cc", "openaccess.acm.org",
+    "scholar.google.com", "scholar.google.",
+    "pubmed.ncbi.nlm.nih.gov", "pmc.ncbi.nlm.nih.gov",
+    "wikipedia.org", "linkedin.com", "orcid.org",
+    "youtube.com", "twitter.com", "x.com", "facebook.com",
+)
+PAPER_TITLE_RE = re.compile(
+    r"\barxiv\b|\bcvpr\b|\biccv\b|\beccv\b|\bneurips\b|\bicml\b|\baacl\b|"
+    r"\bgithub\b|\bgitlab\b|\bpreprint\b|预印本|会议论文|期刊论文|"
+    r"open\s*access\s*(paper|pdf)|doi:\s*10\.\d+/",
+    re.I,
+)
+
+
 def person_name(snap: dict) -> str:
     t = (snap or {}).get("talent") or {}
     n = str(t.get("name") or "").strip()
@@ -141,9 +164,9 @@ def codebuddy_argv(raw: str) -> tuple[list, str]:
 
 def build_search_prompt(person: str, attach_id: str, projects: list) -> str:
     lines = [
-        "请联网检索下列申报人的科研项目证明材料。",
-        "目标：立项批文、任务书、资助公示、NSF/NSFC/UKRI/Horizon 等官方页面、award notice、grant page，优先可下载 PDF。",
-        "必须使用联网搜索。只返回真实公开来源，禁止编造链接或文件。",
+        "任务：为人才申报补「项目证明」附件。只找能证明「该人主持/参与该资助项目」的官方立项材料，不是论文、不是代码。",
+        "必须使用联网搜索。只返回真实公开来源。禁止编造链接、文件名或项目编号。找不到就 found=false。",
+        "",
         "申报人：" + (person or "未知"),
         "人才编号：" + (attach_id or "未知"),
         "项目列表：",
@@ -156,13 +179,33 @@ def build_search_prompt(person: str, attach_id: str, projects: list) -> str:
                     bits.append(str(k) + "=" + str(p.get(k)))
             lines.append(str(i) + ". " + "；".join(bits))
     else:
-        lines.append("（无结构化项目名，请按申报人姓名检索其主持/参与科研项目的官方证明）")
+        lines.append("（无结构化项目名。按申报人姓名检索其作为 PI/课题负责人的官方资助记录，不要用论文题目冒充项目。）")
     lines += [
-        "最终只输出一个 JSON 对象，不要 Markdown 围栏：",
+        "",
+        "检索优先级：",
+        "1. 申报人姓名（含中英文别名）+ 项目编号/资助号 + award/grant/立项/批复/资助公示",
+        "2. 申报人姓名 + 项目名称 + 项目来源机构官网",
+        "3. 到资助机构官方库检索：NSF Award Search、NSFC/科学基金共享服务网、科技部或省科技厅公示、UKRI Gateway to Research、NIH RePORTER、CORDIS/Horizon、NSERC/SSHRC、ARC",
+        "有项目编号时必须带编号搜；有项目来源时必须到对应机构官网搜。不要只搜论文标题。",
+        "",
+        "可接受（须能看出申报人角色或官方项目名/编号）：",
+        "- 立项批文、任务书/合同、结题/验收证书、award notice、grant page、资助公示名单 PDF",
+        "- 资助机构官网的 award/grant 详情页（含 PI、项目编号、起止年、金额）",
+        "- 政府/基金会官网可下载的批复扫描件",
+        "",
+        "禁止返回（即使与项目高度相关也算未找到）：",
+        "- 论文、预印本、会议/期刊页面：arXiv、IEEE Xplore、CVF/CVPR、ACM DL、Springer、ScienceDirect、OpenReview、PubMed",
+        "- 代码仓库：GitHub / GitLab / Gitee / Hugging Face",
+        "- 个人主页、实验室介绍、LinkedIn、Wikipedia、Google Scholar、ResearchGate、新闻稿、博客",
+        "- 搜索引擎结果页。仅论文题目相似、没有资助编号或官方立项页，一律不算项目证明",
+        "",
+        "判定：每条必须证明「该申报人 + 该资助项目」。note 写明：机构、项目编号（若有）、申报人角色（PI/Co-PI/课题负责人）、为何不是论文。",
+        "最多 8 条。优先可下载 PDF。url 必须是 http(s) 直链或官方页面；若已下载到当前工作目录，filename 写文件名。",
+        "",
+        "最终只输出一个 JSON 对象，不要 Markdown 围栏，不要解释：",
         '{"found":true,"items":[{"title":"","url":"https://...","filename":"","note":""}]}',
-        "找不到则输出：",
+        "全部都是论文/代码或找不到则输出：",
         '{"found":false,"items":[]}',
-        "url 必须是 http(s) 直链或官方页面；若本机已下载文件，filename 写当前工作目录中的文件名。",
     ]
     return "\n".join(lines)
 
@@ -254,15 +297,46 @@ def _try_json(text: str):
         return None
 
 
-def _usable_url(url: str) -> str:
+def _host_blocked(host: str) -> bool:
+    h = (host or "").lower()
+    if h.startswith("www."):
+        h = h[4:]
+    for blocked in SKIP_HOST:
+        b = blocked.lower().rstrip(".")
+        if not b:
+            continue
+        if h == b or h.endswith("." + b) or h.startswith(b + "."):
+            return True
+    return False
+
+
+def _looks_like_paper(url: str, title: str = "", filename: str = "") -> bool:
+    blob = " ".join(x for x in (url, title, filename) if x)
+    if PAPER_TITLE_RE.search(blob):
+        path = (urlparse(url).path or "").lower() if url else ""
+        if any(x in path for x in ("/pdf/", "/abs/", "/html/", "/document/", "/doi/")):
+            return True
+        if PAPER_TITLE_RE.search(title or "") or PAPER_TITLE_RE.search(filename or ""):
+            return True
+        host = (urlparse(url).hostname or "").lower() if url else ""
+        if any(x in host for x in ("arxiv", "thecvf", "ieee", "acm.org", "openreview", "github")):
+            return True
+    return False
+
+
+def _usable_url(url: str, title: str = "", filename: str = "") -> str:
     u = str(url or "").strip()
     if not u or FILL_MARK in u:
         return ""
     if u.startswith("file:"):
+        if _looks_like_paper(u, title, filename):
+            return ""
         return u
     if re.match(r"https?://", u, re.I):
         host = (urlparse(u).hostname or "").lower()
-        if any(h in host for h in SKIP_HOST):
+        if _host_blocked(host):
+            return ""
+        if _looks_like_paper(u, title, filename):
             return ""
         return u
     return ""
@@ -299,7 +373,12 @@ def run_codebuddy_search(*, person: str, attach_id: str, projects: list, work_di
     (cwd / "prompt.txt").write_text(prompt, encoding="utf-8")
     if not prefix:
         return {"ok": False, "error": "未找到本机 CodeBuddy CLI（" + (display or "codebuddy") + "）", "items": [], "raw": ""}
-    user_prompt = "请读取当前工作目录中的 prompt.txt（UTF-8），按其中要求联网检索项目证明，只输出 JSON。禁止编造链接。"
+    user_prompt = (
+        "请读取当前工作目录中的 prompt.txt（UTF-8），按其中要求联网检索项目证明。"
+        "只返回立项批文/资助公示/官方 award·grant 页面。"
+        "论文、预印本、GitHub、会议期刊页面一律不算；找不到则 found=false。"
+        "只输出 JSON，禁止编造链接。"
+    )
     args = prefix + [
         "-p", user_prompt,
         "--output-format", "json",
@@ -335,11 +414,12 @@ def run_codebuddy_search(*, person: str, attach_id: str, projects: list, work_di
     items.extend(_collect_local_files(cwd))
     cleaned, seen = [], set()
     for it in items:
-        url = _usable_url(it.get("url") or "")
+        title = str(it.get("title") or "")
         fn = str(it.get("filename") or "").strip()
+        url = _usable_url(it.get("url") or "", title, fn)
         if not url and fn:
             local = cwd / fn
-            if local.exists():
+            if local.exists() and not _looks_like_paper(str(local), title, fn):
                 url = str(local.resolve())
         if not url:
             continue
@@ -386,10 +466,27 @@ def _is_autoref_generate(cfg: dict, path: str) -> bool:
     if provider == "autoref":
         return True
     p = str(path or "").lower()
-    return "/api/external/documents" in p or "/api/external/generate" in p
+    return "/api/external/documents" in p or "/api/external/generate" in p or "/api/external/projects" in p
 
 
-def _build_autoref_body(person: str, company: str, projects: list, attach_id: str) -> dict:
+def find_resume_pdf(task_dir: str | Path | None) -> Path | None:
+    """任务目录里的申报书 PDF，供 /api/external/generate 当 resume 上传。"""
+    if not task_dir:
+        return None
+    root = Path(task_dir)
+    found = []
+    for folder in (root / "input", root / "work" / "input"):
+        if not folder.is_dir():
+            continue
+        for p in folder.glob("*.pdf"):
+            if p.is_file() and p.stat().st_size > 80:
+                found.append(p)
+    if not found:
+        return None
+    return sorted(found, key=lambda p: p.stat().st_size, reverse=True)[0]
+
+
+def _build_autoref_letters(person: str, company: str, projects: list, attach_id: str) -> list:
     custom = []
     for p in projects or []:
         if not isinstance(p, dict):
@@ -424,7 +521,56 @@ def _build_autoref_body(person: str, company: str, projects: list, attach_id: st
     }
     if custom:
         letter["customProjects"] = custom
-    return {"letters": [letter]}
+    return [letter]
+
+
+def _build_autoref_body(person: str, company: str, projects: list, attach_id: str) -> dict:
+    return {"letters": _build_autoref_letters(person, company, projects, attach_id)}
+
+
+def _doc_html(doc: dict) -> str:
+    html = str(doc.get("html") or "").strip()
+    if html:
+        return html
+    fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else {}
+    content = str(fields.get("content") or "").strip()
+    if not content:
+        return ""
+    title = str(doc.get("titleZh") or doc.get("titleEn") or doc.get("kind") or "项目证明")
+    esc = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"/><title>"
+        + title.replace("<", "")
+        + "</title></head><body style=\"font-family:serif;line-height:1.6;padding:24px\">"
+        + "<h1>" + title.replace("<", "") + "</h1><pre style=\"white-space:pre-wrap\">"
+        + esc + "</pre></body></html>"
+    )
+
+
+def _save_word_exports(data: dict, cwd: Path) -> list:
+    out = []
+    exports = data.get("exports") if isinstance(data.get("exports"), dict) else {}
+    rows = exports.get("word") if isinstance(exports.get("word"), list) else []
+    for i, it in enumerate(rows):
+        if not isinstance(it, dict):
+            continue
+        b64 = str(it.get("base64") or it.get("data") or "").strip()
+        if not b64:
+            continue
+        import base64
+        fn = str(it.get("name") or it.get("filename") or ("project-proof-" + str(i + 1) + ".docx"))
+        dest = cwd / Path(fn).name
+        try:
+            dest.write_bytes(base64.b64decode(b64))
+        except Exception:
+            continue
+        out.append({
+            "url": str(dest.resolve()),
+            "filename": dest.name,
+            "title": str(it.get("title") or dest.stem),
+            "note": "AutoRef word",
+        })
+    return out
 
 
 def _save_autoref_documents(data: dict, cwd: Path) -> tuple[list, str]:
@@ -439,7 +585,7 @@ def _save_autoref_documents(data: dict, cwd: Path) -> tuple[list, str]:
         kind = str(doc.get("kind") or "")
         if not kind.startswith("project."):
             continue
-        html = str(doc.get("html") or "").strip()
+        html = _doc_html(doc)
         if not html:
             continue
         fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else {}
@@ -458,6 +604,7 @@ def _save_autoref_documents(data: dict, cwd: Path) -> tuple[list, str]:
             "title": (pname or title)[:200],
             "note": "AutoRef " + kind,
         })
+    saved.extend(_save_word_exports(data, cwd))
     if not saved:
         return [], "AutoRef 未返回项目证明文档（documents 中无 project.* HTML）"
     return saved, ""
@@ -477,11 +624,52 @@ def generate_headers(cfg: dict, rendered: dict | None = None) -> dict:
     return out
 
 
-async def call_generate_api(*, person: str, attach_id: str, company: str, projects: list, work_dir: str | Path) -> dict:
+async def _autoref_post(url: str, headers: dict, payload, timeout: int) -> tuple[dict | None, str, str]:
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8.0), trust_env=httpx_trust_env(), follow_redirects=True) as client:
+            r = await client.post(url, headers=headers, json=payload)
+    except httpx.HTTPError as e:
+        return None, "生成 API 网络错误：" + str(e)[:160], ""
+    text = r.text or ""
+    if r.status_code >= 400:
+        return None, "生成 API HTTP " + str(r.status_code) + "：" + text[:200], text
+    try:
+        data = json.loads(text or "{}")
+    except Exception:
+        return None, "AutoRef 响应不是合法 JSON", text
+    if not isinstance(data, dict):
+        return None, "AutoRef 响应不是 JSON 对象", text
+    if not data.get("ok"):
+        return None, str(data.get("error") or "AutoRef 返回失败"), text
+    return data, "", text
+
+
+def _resume_payload(pdf: Path) -> dict:
+    import base64
+    raw = pdf.read_bytes()
+    return {
+        "resume": {
+            "name": pdf.name or "resume.pdf",
+            "mimeType": "application/pdf",
+            "data": base64.b64encode(raw).decode("ascii"),
+        },
+        "include": {"documents": True, "word": False, "txt": False},
+    }
+
+
+async def call_generate_api(
+    *,
+    person: str,
+    attach_id: str,
+    company: str,
+    projects: list,
+    work_dir: str | Path,
+    resume_pdf: str | Path | None = None,
+) -> dict:
     cfg = (load_config().get("projectProof") or {}).get("generate") or {}
     if not cfg.get("configured"):
         return {"ok": False, "error": "项目证明生成 API 未配置（请填写 config.json 的 projectProof.generate）", "items": []}
-    timeout = _as_int(cfg.get("timeoutSec"), 120)
+    timeout = _as_int(cfg.get("timeoutSec"), 300)
     method = str(cfg.get("method") or "POST").upper()
     if method not in ("GET", "POST", "PUT"):
         method = "POST"
@@ -496,17 +684,50 @@ async def call_generate_api(*, person: str, attach_id: str, company: str, projec
     }
     headers = generate_headers(cfg, _render_value(cfg.get("headers") or {}, ctx))
     path = str(_render_value(cfg.get("path") or "", ctx) or "")
-    url = P.abs_url(cfg.get("baseUrl") or "", path)
+    base = cfg.get("baseUrl") or ""
+    url = P.abs_url(base, path)
     if not url:
         return {"ok": False, "error": "生成 API 地址为空", "items": []}
     autoref = _is_autoref_generate(cfg, path)
-    body = cfg.get("body")
-    if autoref:
-        payload = _build_autoref_body(person, company, projects, attach_id)
-    else:
-        payload = _render_value(body, ctx) if body not in (None, "") else None
     cwd = Path(work_dir)
     cwd.mkdir(parents=True, exist_ok=True)
+    pdf = Path(resume_pdf) if resume_pdf else None
+    if pdf and (not pdf.is_file() or pdf.suffix.lower() != ".pdf"):
+        pdf = None
+
+    if autoref:
+        letters = _build_autoref_letters(person, company, projects, attach_id)
+        data, err, raw_text = None, "", ""
+        used = ""
+        if projects:
+            used = "documents"
+            data, err, raw_text = await _autoref_post(P.abs_url(base, cfg.get("path") or "/api/external/documents"), headers, {"letters": letters}, timeout)
+        elif pdf:
+            used = "generate"
+            data, err, raw_text = await _autoref_post(P.abs_url(base, cfg.get("generatePath") or "/api/external/generate"), headers, _resume_payload(pdf), timeout)
+        else:
+            used = "projects"
+            data, err, raw_text = await _autoref_post(P.abs_url(base, cfg.get("projectsPath") or "/api/external/projects"), headers, {"letters": letters}, timeout)
+            if data and not (data.get("documents") or []):
+                more_letters = data.get("letters") if isinstance(data.get("letters"), list) and data.get("letters") else letters
+                data2, err2, raw2 = await _autoref_post(P.abs_url(base, cfg.get("path") or "/api/external/documents"), headers, {"letters": more_letters}, timeout)
+                if data2:
+                    data, err, raw_text = data2, err2, raw2
+                    used = "projects+documents"
+                elif err2:
+                    err = err2
+                    raw_text = raw2
+        if raw_text:
+            (cwd / "generate.json").write_text(raw_text[:200000], encoding="utf-8")
+        if not data:
+            return {"ok": False, "error": err or ("AutoRef " + used + " 未返回数据"), "items": []}
+        saved, save_err = _save_autoref_documents(data, cwd)
+        if not saved:
+            return {"ok": False, "error": save_err or "AutoRef 未产出项目证明", "items": []}
+        return {"ok": True, "error": "", "items": saved}
+
+    body = cfg.get("body")
+    payload = _render_value(body, ctx) if body not in (None, "") else None
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8.0), trust_env=httpx_trust_env(), follow_redirects=True) as client:
             if method == "GET":
@@ -529,15 +750,6 @@ async def call_generate_api(*, person: str, attach_id: str, company: str, projec
         return {"ok": True, "error": "", "items": [{"url": str(dest.resolve()), "filename": dest.name, "title": dest.stem, "note": "生成 API 二进制"}]}
     text = r.text or ""
     (cwd / "generate.json").write_text(text[:200000], encoding="utf-8")
-    if autoref:
-        try:
-            data = json.loads(text or "{}")
-        except Exception:
-            return {"ok": False, "error": "AutoRef 响应不是合法 JSON", "items": []}
-        saved, err = _save_autoref_documents(data, cwd)
-        if not saved:
-            return {"ok": False, "error": err or "AutoRef 未产出项目证明", "items": []}
-        return {"ok": True, "error": "", "items": saved}
     items = _parse_generate_payload(text, cfg.get("baseUrl") or "")
     if not items:
         return {"ok": False, "error": "生成 API 已响应但未给出文件或下载地址", "items": []}

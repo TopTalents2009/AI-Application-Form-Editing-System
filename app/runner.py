@@ -5,7 +5,7 @@ from pathlib import Path
 from .config import TASKS_DIR, SCRIPTS_DIR, PYEXE, LLM_TIMEOUT_CLASSIFY, LLM_TIMEOUT_SECTION, PLAN_CONCURRENCY, atomic_replace, resolve_gemini, compare_model_profiles, model_family, COMPARE_FAMS, OPINION_FIELDS, fam_tag, scan_pdf_settings
 from .llm import chat, extract_json, extract_json_lenient, now_str, created_key, LlmError
 from . import matcher as M
-from .opinion_extract import ALLOWED_OPINION_EXT, ensure_txt as extract_to_txt
+from .opinion_extract import ALLOWED_OPINION_EXT, AUDIO_EXT, ensure_txt as extract_to_txt
 from .pdf_app import (
     ALLOWED_APP_EXT, APP_EXT_HINT, EXCEL_APP_EXT, WORD_APP_EXT,
     SCAN_OCR_TIMEOUT_S, SCAN_OCR_PAGE_CONCURRENCY,
@@ -392,7 +392,7 @@ class TaskStore:
             raise ValueError("申报书必须为 " + APP_EXT_HINT)
         for o in ops:
             if ext_of(sanitize(o.get("name", ""))) not in ALLOWED_OPINION_EXT:
-                raise ValueError("意见类型不支持（Word / Excel / 图片 / txt / md）: " + str(o.get("name")))
+                raise ValueError("意见类型不支持（Word / Excel / 图片 / 录音 / txt / md）: " + str(o.get("name")))
         tid = rid(); d = self.tdir(tid)
         (d / "input").mkdir(parents=True, exist_ok=True)
         aname = sanitize(apps["name"])
@@ -515,9 +515,15 @@ class TaskStore:
                         t.setdefault("app", {})["ocrEngine"] = engine
                         self.log(t, "数字 PDF 已转为 Word 工作稿 " + work_docx + "（" + str(engine) + "）")
                         await extract_to_txt(work_input / work_docx, target)
+                        self.log(t, "已提取 " + f + " → txt/" + target.name)
                 else:
+                    if ext in AUDIO_EXT:
+                        self.log(t, "正在用 Gemini 转写录音 " + f + " …")
                     await extract_to_txt(work_input / f, target)
-                self.log(t, "已提取 " + f + " → txt/" + target.name)
+                    if ext in AUDIO_EXT:
+                        self.log(t, "录音已转写为修改意见 " + f + " → txt/" + target.name)
+                    else:
+                        self.log(t, "已提取 " + f + " → txt/" + target.name)
             except Exception as e:
                 msg = str(e)[:240]
                 self.log(t, "提取失败 " + f + ": " + msg)

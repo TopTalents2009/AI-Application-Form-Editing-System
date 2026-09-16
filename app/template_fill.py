@@ -8,6 +8,9 @@ from copy import deepcopy
 from pathlib import Path
 
 from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.text.paragraph import Paragraph
 
 try:
     from .form_kind import ROOT_DIR
@@ -35,8 +38,8 @@ except ImportError:
     highest_degree_from_edu_row = lambda row: ("", "")
     format_bilingual_pair = lambda cn, en: (str(cn or ""), str(en or ""))
     split_bilingual = lambda s: (str(s or "").strip(), "")
-    cn_list_join = lambda *parts: "；".join(p for p in parts if p)
-    en_list_join = lambda *parts: "; ".join(p for p in parts if p)
+    cn_list_join = lambda *parts: "，".join(p for p in parts if p)
+    en_list_join = lambda *parts: "，".join(p for p in parts if p)
     fix_entity_name = lambda s: str(s or "").strip()
     is_academic_title = lambda s: False
     normalize_hj_cn_field = lambda s: str(s or "").strip()
@@ -67,7 +70,7 @@ _PAPER_LINE = re.compile(
     r"^\d+\t(\d{4}-\d{2})\t(.+?)\t(.+?)\t(\S+)\t(.+)$"
 )
 _PAPER_ENTRY_START = re.compile(r"(?:^|\s)(\d{1,2})\s+(\d{4}-\d{2})\b")
-_PAPER_DATE_ONLY = re.compile(r"^(\d{4}-\d{2})$")
+_PAPER_DATE_ONLY = re.compile(r"^(\d{4}[-./]\d{2}(?:[-./]\d{2})?)$")
 _PAPER_SERIAL_ONLY = re.compile(r"^(\d{1,2})$")
 _PAPER_RANK = re.compile(r"(\d{1,2}/\d{1,2})")
 _PAPER_VENUE = re.compile(
@@ -136,6 +139,32 @@ _EMPLOYER_TYPE_BLOCK = (
     "□部属高校□地方高校□军队院校\n"
     "□中国科学院□中国工程物理研究院□军队科研院所□其他科研院所\n"
     "□中央企业□地方国有企业□民营企业 □其他"
+)
+_COVER_FRONTIER = (
+    "集成电路", "人工智能", "量子信息", "先进制造", "生命健康",
+    "脑科学", "生物育种", "空天科技", "深地深海", "不属于上述前沿领域",
+)
+_COVER_CORE_TECH = (
+    "集成电路", "人工智能", "量子科技", "生物科技", "石油天然气", "基础原材料",
+    "超级计算机", "信息通讯", "工业软件", "农作物种子", "科学试验用仪器设备",
+    "化学制剂", "药品", "医疗器械", "医用设备", "疫苗", "不涉及上述关键核心技术",
+)
+_EXPERTISE_TITLE = "专长及代表性成果(Expertise and Achievements)"
+_EXPERTISE_INTRO_HEAD = "所从事的专业领域及取得的成绩描述"
+_EXPERTISE_INTRO_HINT = "（概述与所在或拟应聘实验室相关的研究领域、方向及取得的成就，5000字以内）"
+_EXPERTISE_INTRO = _EXPERTISE_INTRO_HEAD + _EXPERTISE_INTRO_HINT
+_EXPERTISE_EN = (
+    "Field of Expertise and Achievements(Please Outline the Research  Field, "
+    "Direction  and  Achievements  Related to Your Current or Expected Laboratory,"
+    "No More than 5000 words)"
+)
+_NARR_HEAD_ONLY = re.compile(
+    r"^(?:"
+    r"[一二三四五六七八九十]+、.{0,40}|"
+    r"\d{1,2}[\.、．\s].{0,36}|"
+    r"[①②③④⑤⑥⑦⑧⑨⑩]\s*.{0,36}|"
+    r"[（(]\d{1,2}[)）]\s*.{0,36}"
+    r")$"
 )
 _SCALAR_LABEL_GARBAGE = re.compile(
     r"(Time of Coming to China|Before Returning|Coming to China|"
@@ -232,14 +261,351 @@ def _distinct_cells(row) -> list:
     return out
 
 
+def _apply_run_font(
+    run,
+    east: str = "宋体",
+    ascii_name: str = "Times New Roman",
+    size_pt: float = 12,
+    color: str = "000000",
+    bold: bool | None = None,
+) -> None:
+    """填写内容统一为宋体/Times New Roman、黑色，避免空段落入主题蓝/灰。"""
+    rPr = run._r.get_or_add_rPr()
+    rf = rPr.find(qn("w:rFonts"))
+    if rf is None:
+        rf = OxmlElement("w:rFonts")
+        rPr.insert(0, rf)
+    rf.set(qn("w:ascii"), ascii_name)
+    rf.set(qn("w:hAnsi"), ascii_name)
+    rf.set(qn("w:eastAsia"), east)
+    rf.set(qn("w:cs"), ascii_name)
+    half = str(int(size_pt * 2))
+    for tag in ("w:sz", "w:szCs"):
+        el = rPr.find(qn(tag))
+        if el is None:
+            el = OxmlElement(tag)
+            rPr.append(el)
+        el.set(qn("w:val"), half)
+    col = rPr.find(qn("w:color"))
+    if col is None:
+        col = OxmlElement("w:color")
+        rPr.append(col)
+    col.set(qn("w:val"), color)
+    theme = qn("w:themeColor")
+    if theme in col.attrib:
+        del col.attrib[theme]
+    hl = rPr.find(qn("w:highlight"))
+    if hl is not None:
+        rPr.remove(hl)
+    if bold is True:
+        if rPr.find(qn("w:b")) is None:
+            rPr.append(OxmlElement("w:b"))
+        if rPr.find(qn("w:bCs")) is None:
+            rPr.append(OxmlElement("w:bCs"))
+    elif bold is False:
+        for tag in ("w:b", "w:bCs"):
+            el = rPr.find(qn(tag))
+            if el is not None:
+                rPr.remove(el)
+
+
+def _run_has_font(run) -> bool:
+    rPr = run._r.find(qn("w:rPr"))
+    if rPr is None:
+        return False
+    return rPr.find(qn("w:rFonts")) is not None or rPr.find(qn("w:sz")) is not None
+
+
+def _paint_paragraph_font(
+    p,
+    east: str = "宋体",
+    ascii_name: str = "Times New Roman",
+    size_pt: float = 12,
+    bold: bool | None = False,
+) -> None:
+    runs = [r for r in p.runs if str(r.text or "")]
+    if not runs:
+        return
+    for r in runs:
+        _apply_run_font(r, east=east, ascii_name=ascii_name, size_pt=size_pt, bold=bold)
+
+
+def _write_runs(p, parts: list[tuple[str, dict]]) -> None:
+    """清空段落 run 后按指定字体写入。"""
+    for r in list(p.runs):
+        r.text = ""
+    first = True
+    for text, kw in parts:
+        if not text:
+            continue
+        if first and p.runs:
+            r = p.runs[0]
+            r.text = text
+            first = False
+        else:
+            r = p.add_run(text)
+            first = False
+        _apply_run_font(r, **kw)
+
+
+def _assign_run_texts(p, new_text: str) -> bool:
+    """按原 run 切分写入，勾选框只改 □/☑，不把后面的黑体/Arial 吞进勾选字体。"""
+    runs = list(p.runs)
+    old = "".join(r.text or "" for r in runs)
+    v = str(new_text or "")
+    if v == old:
+        return True
+    if not runs:
+        return False
+    if len(v) == len(old):
+        i = 0
+        for r in runs:
+            n = len(r.text or "")
+            r.text = v[i:i + n]
+            i += n
+        return True
+    prefix = 0
+    lim = min(len(old), len(v))
+    while prefix < lim and old[prefix] == v[prefix]:
+        prefix += 1
+    extra = len(v) - len(old)
+    consumed = 0
+    i_new = 0
+    placed = False
+    for r in runs:
+        n = len(r.text or "")
+        if consumed + n <= prefix and not placed:
+            i_new += n
+            consumed += n
+            continue
+        keep = max(0, prefix - consumed)
+        take = keep + (n - keep) + (extra if not placed else 0)
+        if take < 0:
+            take = keep
+        r.text = v[i_new:i_new + max(0, take)]
+        i_new += max(0, take)
+        placed = True
+        extra = 0
+        consumed += n
+    if i_new < len(v) and runs:
+        last = runs[-1]
+        last.text = (last.text or "") + v[i_new:]
+    return True
+
+
+def _set_paragraph_text(p, value: str) -> None:
+    """改段落文字，保留原 run 的字体（封面黑体+Arial、表内宋体）。"""
+    v = str(value or "")
+    runs = list(p.runs)
+    if not runs:
+        if v:
+            run = p.add_run(v)
+            _apply_run_font(run)
+        return
+    old = "".join(r.text or "" for r in runs)
+    if old == v:
+        if v and not any(_run_has_font(r) for r in runs if r.text):
+            _paint_paragraph_font(p)
+        return
+    n = 0
+    lim = min(len(old), len(v))
+    while n < lim and old[n] == v[n]:
+        n += 1
+    consumed = 0
+    suffix_done = False
+    for r in runs:
+        t = r.text or ""
+        end = consumed + len(t)
+        if end <= n and not suffix_done:
+            consumed = end
+            continue
+        keep = max(0, n - consumed)
+        if not suffix_done:
+            r.text = t[:keep] + v[n:]
+            if not _run_has_font(r):
+                _apply_run_font(r)
+            suffix_done = True
+        else:
+            r.text = ""
+        consumed = end
+    if not suffix_done:
+        runs[-1].text = (runs[-1].text or "") + v[n:]
+
+
+def _cell_value_paragraph(cell):
+    """正式 HJ / 16 表模板：数值写在单元格最后一段（前面空段撑齐标签）。"""
+    paras = list(cell.paragraphs)
+    if not paras:
+        return None
+    nonempty = [p for p in paras if str(p.text or "").strip()]
+    return nonempty[-1] if nonempty else paras[-1]
+
+
 def _write_cell(cell, value: str) -> None:
+    """写入单元格数据值，不打散空段撑齐结构。"""
     v = str(value or "").strip()
-    if cell.paragraphs:
-        cell.paragraphs[0].text = v
-        for p in cell.paragraphs[1:]:
-            p.text = ""
+    paras = list(cell.paragraphs)
+    if not paras:
+        return
+    target = _cell_value_paragraph(cell)
+    if target is None:
+        return
+    for p in paras:
+        if p is target:
+            continue
+        if str(p.text or "").strip():
+            _set_paragraph_text(p, "")
+    _set_paragraph_text(target, v)
+    _paint_paragraph_font(target)
+
+
+def _mark_checkboxes_in_cell(cell, keywords: tuple[str, ...]) -> None:
+    """勾选框按段落改，避免把中英文两段压进最后一段。"""
+    for p in cell.paragraphs:
+        t = str(p.text or "")
+        if not re.search(r"[□☐口☑]", t):
+            continue
+        nt = _mark_checkbox(t, keywords)
+        if nt != t:
+            if not _assign_run_texts(p, nt):
+                _set_paragraph_text(p, nt)
+            _paint_paragraph_font(p)
+
+
+def _normalize_narr_heading(line: str) -> str:
+    s = str(line or "").strip()
+    s = re.sub(r"^(\d{1,2})[\s,，、．]+", r"\1.", s)
+    return s
+
+
+def _is_major_section_heading(line: str) -> bool:
+    return bool(re.match(r"^[一二三四五六七八九十]+、", str(line or "").strip()))
+
+
+def _is_narr_heading(line: str) -> bool:
+    s = _normalize_narr_heading(line)
+    if not s or len(s) > 48:
+        return False
+    if re.fullmatch(r"\d{1,2}\.?", s):
+        return False
+    if re.search(r"[。！？!?]$", s) and len(s) > 24:
+        return False
+    if "：" in s or ":" in s:
+        head = re.split(r"[：:]", s, 1)[0]
+        if len(s) > len(head) + 12:
+            return False
+    return bool(_NARR_HEAD_ONLY.match(s)) or _is_major_section_heading(s)
+
+
+def _join_wrap_lines(lines: list[str]) -> str:
+    out = ""
+    for ln in lines:
+        s = str(ln or "").strip()
+        if not s:
+            continue
+        if not out:
+            out = s
+            continue
+        if re.search(r"[\u4e00-\u9fff]$", out) and re.search(r"^[\u4e00-\u9fff]", s):
+            out += s
+        else:
+            out = out.rstrip() + " " + s
+    return out.strip()
+
+
+def _split_narrative_paras(text: str) -> list[str]:
+    """按正式 16 表：标题单独成段，正文按句段换段，不整格糊成一段。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    chunks: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        joined = _join_wrap_lines(buf)
+        buf.clear()
+        if joined:
+            chunks.append(joined)
+
+    for ln in str(raw).splitlines():
+        s = ln.strip()
+        if not s:
+            flush()
+            continue
+        if s in {"\\", "/", "|", "—"} or re.fullmatch(r"[-\\/]{1,3}", s):
+            continue
+        if re.fullmatch(r"\d{1,2}\.?", s):
+            continue
+        if _is_narr_heading(s):
+            flush()
+            s = _normalize_narr_heading(s)
+            if _is_major_section_heading(s) and chunks:
+                chunks.append("")
+            chunks.append(s)
+            continue
+        if buf and re.search(r"[。！？]$", buf[-1]) and len(_join_wrap_lines(buf)) >= 40:
+            flush()
+        buf.append(s)
+    flush()
+    return chunks
+
+
+def _insert_para_after(p, text: str):
+    new_el = deepcopy(p._p)
+    p._p.addnext(new_el)
+    new_p = Paragraph(new_el, p._parent)
+    _set_paragraph_text(new_p, text)
+    return new_p
+
+
+def _write_paragraphs_from(cell, start_idx: int, lines: list[str], stop_labels: tuple[str, ...] = (), keep_blank: bool = False) -> None:
+    """从指定段起写入多段正文，不够就按原段样式克隆，避免 _write_cell 压扁。"""
+    if keep_blank:
+        cleaned: list[str] = []
+        for x in lines:
+            s = str(x or "")
+            cleaned.append("" if not s.strip() else s.strip())
+        while cleaned and not cleaned[0]:
+            cleaned.pop(0)
+        while cleaned and not cleaned[-1]:
+            cleaned.pop()
+        lines = cleaned
     else:
-        cell.text = v
+        lines = [str(x or "").strip() for x in lines if str(x or "").strip()]
+    paras = list(cell.paragraphs)
+    if not lines:
+        return
+    if not paras:
+        for ln in lines:
+            cell.add_paragraph(ln)
+        return
+    stop = len(paras)
+    for i, p in enumerate(paras):
+        if i < start_idx:
+            continue
+        t = str(p.text or "")
+        if stop_labels and any(k in t for k in stop_labels):
+            stop = i
+            break
+    src = paras[start_idx] if start_idx < len(paras) else paras[-1]
+    existing = max(0, stop - start_idx)
+    n_fill = min(existing, len(lines))
+    for i in range(n_fill):
+        _set_paragraph_text(paras[start_idx + i], lines[i])
+        if str(lines[i]).strip():
+            _paint_paragraph_font(paras[start_idx + i], bold=False)
+    if existing < len(lines):
+        cursor = paras[start_idx + n_fill - 1] if n_fill else (paras[start_idx - 1] if start_idx else src)
+        for ln in lines[n_fill:]:
+            cursor = _insert_para_after(cursor, ln)
+            if str(ln).strip():
+                _paint_paragraph_font(cursor, bold=False)
+    elif existing > len(lines):
+        for p in paras[start_idx + len(lines):stop]:
+            if stop_labels and any(k in (p.text or "") for k in stop_labels):
+                break
+            if str(p.text or "").strip():
+                _set_paragraph_text(p, "")
 
 
 def _fmt_hj_date(s: str) -> str:
@@ -349,6 +715,21 @@ def _repair_yyyymm_end(start: str, end_raw: str, context: str) -> str:
 
 def _fmt_birth(s: str) -> str:
     return _fmt_hj_date(s)
+
+
+def _normalize_gender(val: str) -> str:
+    s = str(val or "")
+    if re.search(r"女|Female", s, re.I) and not re.search(r"男|Male|Wale", s, re.I):
+        return "女"
+    if re.search(r"男|\bMale\b|\bWale\b|M\s*ale", s, re.I):
+        return "男"
+    return ""
+
+
+def _strip_name_noise(name: str) -> str:
+    s = str(name or "").strip()
+    s = re.split(r"依托单位|用人单位|申报单位|Name of Applicant", s, 1)[0].strip()
+    return re.sub(r"\s+", " ", s).strip(" ：:")
 
 
 def _normalize_country_name(val: str) -> str:
@@ -462,8 +843,11 @@ def _extract_split_ocr_english_name(text: str) -> str:
         if not m:
             continue
         parts = [m.group(1).strip()]
-        if i + 1 < len(lines):
-            nxt = lines[i + 1]
+        j = i + 1
+        while j < len(lines) and not lines[j]:
+            j += 1
+        if j < len(lines):
+            nxt = lines[j]
             if re.match(r"Name of ID", nxt, re.I):
                 tail = re.sub(r"^Name of ID\s*", "", nxt, flags=re.I).strip()
                 if tail and re.match(r"^[A-Z]", tail):
@@ -483,25 +867,27 @@ def _extract_split_ocr_english_name(text: str) -> str:
 
 
 def _fix_concatenated_latin_name(name: str, raw: str = "") -> str:
-    """KALIYAPPANKARTHIKEYAN → KALIYAPPAN KARTHIKEYAN；优先用竖排拆行结果。"""
+    """KALIYAPPANKARTHIKEYAN → KALIYAPPAN KARTHIKEYAN。"""
     split = _extract_split_ocr_english_name(raw)
-    if split:
+    if split and " " in split and len(re.sub(r"\s+", "", split)) >= 16:
         return split
+    colon = ""
+    m = re.search(r"申报人有效证件姓名[^：\n]*[：:]\s*([A-Z][A-Za-z]{8,})", str(raw or ""))
+    if m:
+        colon = re.sub(r"[^A-Za-z].*$", "", m.group(1)).upper()
     s = str(name or "").strip()
-    if not s:
-        return ""
-    if re.search(r"\s", s):
-        return fix_ocr_english(s)
-    upper = re.sub(r"\s+", "", s).upper()
+    upper = re.sub(r"\s+", "", colon or s).upper()
+    if not upper:
+        return split or fix_ocr_english(s)
+    for suffix in ("KARTHIKEYAN", "KALIYAPPAN", "KUMAR", "SINGH"):
+        if upper.endswith(suffix) and len(upper) > len(suffix) + 3:
+            return fix_ocr_english(f"{upper[:-len(suffix)]} {suffix}")
     m = re.search(r"Name of ID\s*([A-Z]{4,})", str(raw or ""), re.I | re.M)
     if m:
         suffix = m.group(1).upper()
         if upper.endswith(suffix) and len(upper) > len(suffix) + 3:
             return fix_ocr_english(f"{upper[:-len(suffix)]} {suffix}")
-    for suffix in ("KARTHIKEYAN", "KALIYAPPAN", "KUMAR", "SINGH"):
-        if upper.endswith(suffix) and len(upper) > len(suffix) + 3:
-            return fix_ocr_english(f"{upper[:-len(suffix)]} {suffix}")
-    return fix_ocr_english(s)
+    return split or fix_ocr_english(s or colon)
 
 
 def _format_chinese_transliteration(cn: str) -> str:
@@ -684,9 +1070,9 @@ def _extract_contact_vertical_fields(text: str) -> dict[str, str]:
         if key == "电子邮箱":
             out[key] = fix_email_ocr(v)
         elif key in ("最高学位中文", "回国前单位职务中文"):
-            out[key] = normalize_hj_cn_field(v.replace("、", "；"))
+            out[key] = normalize_hj_cn_field(v.replace("、", "，").replace("；", "，"))
         else:
-            out[key] = normalize_hj_en_field(v.replace("、", "; ").replace(",", "; "))
+            out[key] = normalize_hj_en_field(v.replace("、", "，").replace(";", "，").replace(",", "，"))
         idx += 1
     return out
 
@@ -826,6 +1212,10 @@ def _clean_value(key: str, val: str) -> str:
         return ""
     v = re.sub(r"^[（(]?\s*Employer\s*[）)]?\s*[：:]\s*", "", v, flags=re.I)
     v = re.sub(r"^Current or Expected Employer Add\.?\s*", "", v, flags=re.I)
+    if key == "性别":
+        return _normalize_gender(v) or v
+    if key == "出生日期":
+        return _fmt_birth(v)
     if key == "出生国家（地区）":
         v = re.split(r"证件号码", v)[0].strip("：: ，,")
     if key in ("申报单位", "现工作单位", "用人单位名称") and v.startswith("（"):
@@ -1503,6 +1893,8 @@ def _clean_narrative(text: str) -> str:
         s = collapse_cjk_spaces(ln.strip())
         if not s or _PAGE_MARK.search(s) or re.match(r"^\d{1,3}/\d{1,3}$", s):
             continue
+        if re.fullmatch(r"-{2,}", s):
+            continue
         if "未提交" in s and len(s) < 48:
             continue
         if s.startswith("I'm now zeroing"):
@@ -1682,11 +2074,14 @@ def _paper_from_block(serial: int, date: str, block: str) -> dict | None:
                 break
     title = _paper_title_from_block(block, date, venue, rank)
     cn_len = len(re.sub(r"[^\u4e00-\u9fff]", "", title))
-    if cn_len < 8 or re.fullmatch(r"(?:\d{4}-\d{2}\s*)+", title):
+    en_len = len(re.sub(r"[^A-Za-z]", "", title))
+    if re.fullmatch(r"(?:\d{4}[-./]\d{2}(?:[-./]\d{2})?\s*)+", title or ""):
+        return None
+    if cn_len < 4 and not (venue and en_len >= 12):
         return None
     role = _paper_role_from_block(block, rank)
     return {
-        "发表时间": date,
+        "发表时间": _fmt_hj_date(date),
         "论文题目": title,
         "发表载体": venue,
         "排序": rank,
@@ -1703,7 +2098,7 @@ def _parse_papers_vertical(text: str) -> list[dict]:
     lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
     anchors: list[tuple[int, int, str]] = []
     for i, ln in enumerate(lines):
-        m = re.match(r"^(\d{1,2})\s+(\d{4}-\d{2})\b", ln)
+        m = re.match(r"^(\d{1,2})\s+(\d{4}[-./]\d{1,2}(?:[-./]\d{1,2})?)\b", ln)
         if m:
             anchors.append((i, int(m.group(1)), m.group(2)))
             continue
@@ -1780,12 +2175,13 @@ def _parse_papers(text: str) -> list[dict]:
         if re.search(r"20\d{2}-\d{2}", title):
             continue
         cn = re.sub(r"[^\u4e00-\u9fff]", "", title)
-        if len(cn) < 8:
+        if len(cn) < 4 and not (row.get("发表载体") and re.search(r"[A-Za-z]{8,}", title)):
             continue
-        if not row.get("发表载体"):
+        if not row.get("发表载体") and len(cn) < 8:
             continue
         row = dict(row)
         row["论文题目"] = _fix_ocr_terms(title)
+        row["发表时间"] = _fmt_hj_date(row.get("发表时间") or "")
         key = cn[:16]
         if key in seen:
             continue
@@ -1815,9 +2211,10 @@ def _parse_projects(text: str) -> list[dict]:
         lambda m: m.group(1) + m.group(2) + m.group(3),
         blob,
     )
-    hits = list(re.finditer(r"(20\d{2}-\d{2}-\d{2})\s*-\s*(20\d{2}-\d{2}-\d{2})", blob))
+    date_pat = r"(20\d{2}[-./]\d{1,2}[-./]\d{1,2})"
+    hits = list(re.finditer(date_pat + r"\s*-\s*" + date_pat, blob))
     if not hits:
-        singles = list(re.finditer(r"20\d{2}-\d{2}-\d{2}", blob))
+        singles = list(re.finditer(r"20\d{2}[-./]\d{1,2}[-./]\d{1,2}", blob))
         paired = []
         i = 0
         while i + 1 < len(singles):
@@ -1841,7 +2238,7 @@ def _parse_projects(text: str) -> list[dict]:
     for i, m in enumerate(hits):
         nxt = hits[i + 1].start() if i + 1 < len(hits) else min(len(blob), m.end() + 360)
         chunk = blob[m.start():nxt]
-        rng = _fmt_hj_range(m.group(1).replace("-", ""), m.group(2).replace("-", ""))
+        rng = _fmt_hj_range(re.sub(r"\D", "", m.group(1)), re.sub(r"\D", "", m.group(2)))
         nature = ""
         nm = re.search(r"项目性质[:：]?\s*([^，,。来职]{2,16})", chunk)
         if nm:
@@ -1862,6 +2259,8 @@ def _parse_projects(text: str) -> list[dict]:
         bm = re.search(r"\b(\d{2,3}(?:\.\d+)?)\b", chunk)
         if bm and not re.fullmatch(r"20\d{2}", bm.group(1)):
             budget = bm.group(1)
+            if budget and "万" not in budget:
+                budget = budget + "万元"
         if title and re.match(r"^(负责|任务|职位|来源|申报人)", title):
             title = ""
         rank = ""
@@ -1872,7 +2271,9 @@ def _parse_projects(text: str) -> list[dict]:
         if "共同主持" in chunk:
             role = "项目共同主持人"
         if rank:
-            role = (role + "，" if role else "") + rank
+            role = ("职位：" + role + " 排序：" + rank) if role else ("排序：" + rank)
+        elif role:
+            role = "职位：" + role
         desc = title or nature
         funders = []
         for lab in ("NSERC", "MITACS", "加拿大创新基金会", "韩国国家研究基金会", "国家自然科学基金", "通用汽车"):
@@ -1907,7 +2308,7 @@ def _parse_projects(text: str) -> list[dict]:
         cn = re.sub(r"[^\u4e00-\u9fff]", "", desc)
         if "测试数" in src:
             continue
-        if len(cn) < 8 or re.match(r"^(负责|任务|职位|来源)", desc):
+        if len(cn) < 4 or re.match(r"^(负责|任务|职位|来源)", desc):
             continue
         if key and key not in seen:
             seen.add(key)
@@ -2090,27 +2491,20 @@ def _finalize_hj_fields(fields: dict[str, str], text: str) -> dict[str, str]:
         out["电子邮箱"] = fix_email_ocr(out["电子邮箱"])
 
     if not out.get("性别"):
-        if re.search(r"☑\s*男", raw):
-            out["性别"] = "男"
-        elif re.search(r"☑\s*女", raw):
-            out["性别"] = "女"
-        elif re.search(r"(?i)\bMale\b|Wale|M\s*ale", raw):
-            out["性别"] = "男"
-        elif re.search(r"(?i)\bFemale\b", raw):
-            out["性别"] = "女"
+        out["性别"] = _normalize_gender(raw)
+    else:
+        out["性别"] = _normalize_gender(out["性别"]) or out["性别"]
 
     if not out.get("出生日期"):
-        m = re.search(r"(?i)Date of Birth[^\d]{0,40}(\d{8})", raw)
+        m = re.search(r"(?:性别|Gender|Wale|Male|Female|出生)[\s\S]{0,160}?\b((?:19|20)\d{6})\b", raw, re.I)
         if m:
             out["出生日期"] = _fmt_birth(m.group(1))
         else:
-            m = re.search(r"性\s*别[^\d]{0,40}(\d{8})", raw)
+            m = re.search(r"(?i)Date of Birth[^\d]{0,80}((?:19|20)\d{6})", raw)
             if m:
                 out["出生日期"] = _fmt_birth(m.group(1))
-            else:
-                m = re.search(r"(?i)Gender[^\d]{0,80}(\d{8})", raw)
-                if m:
-                    out["出生日期"] = _fmt_birth(m.group(1))
+    elif out.get("出生日期"):
+        out["出生日期"] = _fmt_birth(out["出生日期"])
 
     for options, key in (
         (("化学", "材料科学", "工程科学", "环境与地球科学", "信息科学", "生命科学", "医学"), "专业领域勾选"),
@@ -2149,6 +2543,14 @@ def _finalize_hj_fields(fields: dict[str, str], text: str) -> dict[str, str]:
             out["关键技术勾选"] = "新能源"
         elif re.search(r"生命健康|医学|生物", corpus, re.I):
             out["关键技术勾选"] = "生命健康"
+    if not out.get("前沿领域勾选"):
+        hit = _ocr_checked_option(raw, _COVER_FRONTIER)
+        out["前沿领域勾选"] = hit or "不属于上述前沿领域"
+    core = out.get("封面关键技术勾选") or out.get("关键技术勾选") or _ocr_checked_option(raw, _COVER_CORE_TECH)
+    if core in _COVER_CORE_TECH:
+        out["封面关键技术勾选"] = core
+    else:
+        out["封面关键技术勾选"] = "不涉及上述关键核心技术"
 
     if out.get("国籍地区"):
         cn = _normalize_country_name(out["国籍地区"])
@@ -2168,9 +2570,11 @@ def _finalize_hj_fields(fields: dict[str, str], text: str) -> dict[str, str]:
     en_name = _fix_concatenated_latin_name(en_name, raw)
     en_name, cn_name = split_certificate_name(en_name)
     if en_name:
-        out["有效证件姓名"] = en_name
+        out["有效证件姓名"] = _strip_name_noise(en_name)
     if not out.get("申报人姓名"):
-        out["申报人姓名"] = en_name or out.get("有效证件姓名") or ""
+        out["申报人姓名"] = out.get("有效证件姓名") or ""
+    else:
+        out["申报人姓名"] = _strip_name_noise(out["申报人姓名"]) or out["申报人姓名"]
     if out.get("具体研究方向"):
         out["具体研究方向"] = _clean_research_direction(out["具体研究方向"], raw)
     elif "具体研究方向" in raw:
@@ -2235,17 +2639,17 @@ def _build_fields(data: dict, raw_text: str) -> dict[str, str]:
         "中文（音译）名": _extract_chinese_transliteration(text) or _first_group([
             ("中文（音译）名", r"(?i)Name of Chinese Transliteration\t+([^\n\t]+)"),
         ], text),
-        "性别": _first_group([
+        "性别": _normalize_gender(_first_group([
             ("性别", r"(?i)Gender\t+.*?([男女])"),
             ("性别", r"☑\s*(男)"),
             ("性别", r"☑\s*(女)"),
             ("性别", r"(?i)(\bWale\b|\bMale\b)"),
             ("性别", r"(?i)(\bFemale\b)"),
-        ], text),
+            ("性别", r"性别[\s\S]{0,80}?(男|女|Wale|Male|Female)"),
+        ], text)),
         "出生日期": _first_group([
-            ("出生日期", r"(?i)(?:Gender|性别|Wale|Male|Female)[^\d]{0,40}(\d{8})"),
-            ("出生日期", r"(?i)Date of Birth[\s\S]{0,120}?(\d{8})"),
-            ("出生日期", r"(?i)Date of Birth[^\n]*\t+(\d{8})"),
+            ("出生日期", r"(?:性别|Gender|Wale|Male|Female|出生)[\s\S]{0,120}?\b((?:19|20)\d{6})\b"),
+            ("出生日期", r"(?i)Date of Birth[\s\S]{0,160}?\b((?:19|20)\d{6})\b"),
         ], text),
         "出生国家（地区）": _first_group([
             ("出生国家（地区）", r"(?i)Place of Birth\t+([^\n\t]+)"),
@@ -2332,9 +2736,10 @@ def _build_fields(data: dict, raw_text: str) -> dict[str, str]:
             ("填表日期", r"填表日期[^：\n]*[：:]\s*([^\n]+)"),
         ], text),
         "二级学科及代码": _first_group([
-            ("二级学科及代码", r"所属二级学科及代码[^\n]*\n\s*([^\n\d□☑]{2,80}\d{4,6}[^\n]*)"),
+            ("二级学科及代码", r"所属二级学科及代码[\s\S]{0,80}?([\u4e00-\u9fff]{2,20}\s*[,，]?\s*\d{4,6})"),
             ("二级学科及代码", r"所属二级学科及代码[^：\n]*[：:]\s*([^\n]+)"),
             ("二级学科及代码", r"Category II Discipline and Code[：:]\s*([^\n]+)"),
+            ("二级学科及代码", r"(\d{5}[\u4e00-\u9fff]{2,20}|[\u4e00-\u9fff]{2,20}[,，]?\s*\d{5})"),
         ], text),
         "具体研究方向": _first_group([
             ("具体研究方向", r"具体研究方向[^：\n]*[：:]\s*([^\n]+)"),
@@ -2524,12 +2929,17 @@ def _mark_checkbox(text: str, keywords: tuple[str, ...]) -> str:
     if not text.strip():
         return text
     out = re.sub(r"☑", "□", str(text))
+    hit = False
     for kw in sorted((k for k in keywords if k), key=lambda x: len(_norm_cmp(x)), reverse=True):
         for m in re.finditer(r"[□☐口]\s*([^□☐口\n]*)", out):
             seg = m.group(1)
             if _seg_matches_kw(seg, kw):
                 out = out[: m.start()] + "☑" + seg + out[m.end() :]
+                hit = True
                 break
+        if (not hit) and "不涉及" in kw and "不涉及上述关键核心技术" in out:
+            out = re.sub(r"不涉及上述关键核心技术", "☑不涉及上述关键核心技术", out, count=1)
+            hit = True
     return out
 
 
@@ -2538,6 +2948,20 @@ def _format_cover_date(val: str) -> str:
     if m:
         return f"{m.group(1)} 年 {int(m.group(2))} 月 {int(m.group(3))} 日"
     return str(val or "").strip()
+
+
+def _format_hj_discipline(s: str) -> str:
+    """正式封面：代码紧挨学科名，如 14015理论物理学。"""
+    raw = str(s or "").strip()
+    if not raw:
+        return ""
+    m = re.search(r"([\u4e00-\u9fff]{2,30})\s*[,，]\s*(\d{4,6})", raw)
+    if m:
+        return m.group(2) + m.group(1)
+    m = re.search(r"(\d{4,6})\s*[,，]?\s*([\u4e00-\u9fff]{2,30})", raw)
+    if m:
+        return m.group(1) + m.group(2)
+    return re.sub(r"\s+", "", raw)
 
 
 def _fill_cover_paragraphs(doc: Document, fields: dict[str, str]) -> None:
@@ -2566,7 +2990,11 @@ def _fill_cover_paragraphs(doc: Document, fields: dict[str, str]) -> None:
             if key == "填表日期":
                 val = _format_cover_date(val)
             if val and pat.search(cur):
-                cur = pat.sub(lambda m, v=val: m.group(1) + " " + v, cur, count=1)
+                if key == "申报人姓名":
+                    val = _strip_name_noise(val)
+                pad = "                " if key in ("申报人姓名", "申报单位", "实验室名称") else " "
+                tail = (" " * max(0, 28 - len(val))) if key in ("申报人姓名", "申报单位", "实验室名称") else ""
+                cur = pat.sub(lambda m, v=val, p=pad, t=tail: m.group(1) + p + v + t, cur, count=1)
                 break
         kw_major = fields.get("专业领域勾选") or ""
         if kw_major and re.search(r"[□☐口]", cur) and (
@@ -2581,10 +3009,15 @@ def _fill_cover_paragraphs(doc: Document, fields: dict[str, str]) -> None:
             cur = _mark_checkbox(cur, (fields.get("项目类别勾选") or "创新项目",))
         if "前沿领域" in compact and fields.get("前沿领域勾选"):
             cur = _mark_checkbox(cur, (fields.get("前沿领域勾选"),))
-        if "关键核心技术" in compact and fields.get("封面关键技术勾选"):
-            cur = _mark_checkbox(cur, (fields.get("封面关键技术勾选"),))
+        if "关键核心技术" in compact and (fields.get("封面关键技术勾选") or fields.get("关键技术勾选")):
+            cur = _mark_checkbox(cur, (fields.get("封面关键技术勾选") or fields.get("关键技术勾选"),))
         if cur != p.text:
-            p.text = cur
+            old = p.text or ""
+            only_box = re.sub(r"[□☑☐口]", "", old) == re.sub(r"[□☑☐口]", "", cur)
+            if only_box and _assign_run_texts(p, cur):
+                pass
+            else:
+                _set_paragraph_text(p, cur)
     for i, p in enumerate(doc.paragraphs):
         compact = _norm_cmp(p.text)
         for keys, fkey in next_para_rules:
@@ -2596,14 +3029,14 @@ def _fill_cover_paragraphs(doc: Document, fields: dict[str, str]) -> None:
             if re.search(r"[:：]\s*\S", p.text):
                 continue
             if re.search(r"[:：]\s*$", p.text):
-                p.text = p.text.rstrip() + " " + val
+                _set_paragraph_text(p, p.text.rstrip() + " " + val)
                 break
             for j in range(i + 1, min(i + 4, len(doc.paragraphs))):
                 nxt = doc.paragraphs[j]
                 if not str(nxt.text or "").strip():
-                    nxt.text = val
+                    _set_paragraph_text(nxt, val)
                     break
-    disc = fields.get("二级学科及代码") or ""
+    disc = _format_hj_discipline(fields.get("二级学科及代码") or "")
     if disc:
         for i, p in enumerate(doc.paragraphs):
             t = str(p.text or "")
@@ -2612,10 +3045,10 @@ def _fill_cover_paragraphs(doc: Document, fields: dict[str, str]) -> None:
                 for j in range(i + 1, min(i + 4, len(doc.paragraphs))):
                     nxt = doc.paragraphs[j]
                     if not str(nxt.text or "").strip():
-                        nxt.text = disc
+                        _set_paragraph_text(nxt, disc)
                         break
                 else:
-                    p.text = t.rstrip() + "\n" + disc
+                    _set_paragraph_text(p, t.rstrip() + disc)
                 break
 
 
@@ -2642,18 +3075,9 @@ def _fill_hj_table0(table, fields: dict[str, str]) -> None:
     if len(table.rows) > 2:
         cells = _distinct_cells(table.rows[2])
         if fields.get("性别") and len(cells) >= 2:
-            t = cells[1].text
-            if fields["性别"] == "男":
-                if "□" in t or "☑" in t:
-                    t = re.sub(r"[□☐]\s*男", "☑ 男", t)
-                else:
-                    t = "☑ 男"
-            elif fields["性别"] == "女":
-                if "□" in t or "☑" in t:
-                    t = re.sub(r"[□☐]\s*女", "☑ 女", t)
-                else:
-                    t = "☑ 女"
-            _write_cell(cells[1], t)
+            g = _normalize_gender(fields["性别"]) or fields["性别"]
+            # 正式 HJ 样例性别栏直接写「男」「女」，不用勾选框
+            _write_cell(cells[1], g)
         if fields.get("出生日期") and len(cells) >= 4:
             _write_cell(cells[3], fields["出生日期"])
         if fields.get("出生国家（地区）") and len(cells) >= 6:
@@ -2684,13 +3108,19 @@ def _fill_hj_table0(table, fields: dict[str, str]) -> None:
             if "外籍" in row_n:
                 for c in cells:
                     if "外籍" in c.text or "Foreign" in c.text:
-                        _write_cell(c, _mark_checkbox(c.text, ("外籍", "Foreign Nationality")))
+                        _mark_checkboxes_in_cell(c, ("外籍", "Foreign Nationality"))
                         break
+                ethnic = str(fields.get("是否华裔") or "")
+                if "非华裔" in ethnic or (fields.get("国籍地区") and "华裔" not in ethnic):
+                    for c in cells:
+                        if "非华裔" in c.text or "Non-Ethnic" in c.text:
+                            _mark_checkboxes_in_cell(c, ("非华裔", "Non-Ethnic"))
+                            break
         if "passport" in row_n:
             if fields.get("证件类型", "").find("护照") >= 0:
                 for c in cells:
                     if "passport" in _norm(c.text) or "护照" in c.text:
-                        _write_cell(c, _mark_checkbox(c.text, ("护照", "Passport")))
+                        _mark_checkboxes_in_cell(c, ("护照", "Passport"))
                 if fields.get("证件号码"):
                     for c in reversed(cells):
                         if not _looks_like_label(c.text) and "passport" not in _norm(c.text):
@@ -2731,17 +3161,20 @@ def _fill_hj_table1(table, fields: dict[str, str]) -> None:
     c6 = _distinct_cells(rows[6])
     title = str(fields.get("相当于国内职称") or "").strip()
     if title:
-        if is_academic_title(title) and len(c6) >= 3:
+        marked = False
+        for cell in c6:
+            if re.search(r"[□☐口☑]", cell.text):
+                _mark_checkboxes_in_cell(cell, (title,))
+                marked = True
+        if not marked and is_academic_title(title) and len(c6) >= 3:
             _write_cell(c6[2], title)
-        else:
-            for cell in c6:
-                if re.search(r"[□☐口☑]", cell.text):
-                    _write_cell(cell, _mark_checkbox(cell.text, (title,)))
     c7 = _distinct_cells(rows[7])
     if fields.get("回国前单位类型"):
+        extra = {"企业": "Enterprise", "高校": "University", "科研机构": "Research"}
+        kws = (fields["回国前单位类型"], extra.get(fields["回国前单位类型"], "Enterprise"))
         for cell in c7:
             if re.search(r"[□☐口☑]", cell.text):
-                _write_cell(cell, _mark_checkbox(cell.text, (fields["回国前单位类型"], "Enterprise")))
+                _mark_checkboxes_in_cell(cell, kws)
     c8 = _distinct_cells(rows[8])
     for ci, fk in ((1, "回国前所在地"), (3, "拟落地省"), (5, "拟落地市")):
         if fields.get(fk) and ci < len(c8):
@@ -2861,7 +3294,7 @@ def _fill_paper_table(table, papers: list[dict], start: int = 0, direction: str 
         vals = [
             "",
             desc,
-            str(d.get("发表时间") or "").strip(),
+            _fmt_hj_date(str(d.get("发表时间") or "")),
             str(d.get("论文题目") or "").strip(),
             str(d.get("发表载体") or "").strip(),
             role,
@@ -2886,7 +3319,7 @@ def _fill_project_table(table, projects: list[dict], start: int = 0, direction: 
         vals = [
             "",
             str(d.get("描述") or direction or "").strip(),
-            str(d.get("起止时间") or "").strip(),
+            _normalize_hj_range_text(str(d.get("起止时间") or "")),
             str(d.get("性质来源") or "").strip(),
             str(d.get("经费") or "").strip(),
             str(d.get("角色") or "").strip(),
@@ -2916,62 +3349,95 @@ def _fill_hj_table5(table, fields: dict[str, str]) -> None:
     if not table.rows:
         return
     cell = table.rows[0].cells[0]
-    t = str(cell.text or "")
     kws = str(fields.get("研究领域关键词") or "").strip()
-    if kws and "研究领域关键词" in t:
-        t = re.sub(
-            r"(研究领域关键词[^:：\n]*[:：])[^\n]*",
-            r"\1" + kws,
-            t,
-            count=1,
-        )
-    if "Applied Technology Research" not in t and "Type of Research" in t:
-        t = t.rstrip() + "\n□ Applied Technology Research □ Technology Development"
-    if fields.get("研究类型勾选"):
-        extra = {
-            "应用基础研究": "Applied Basic Research",
-            "基础研究": "Basic Research",
-            "应用技术研究": "Applied Technology Research",
-            "技术开发": "Technology Development",
-        }
-        en = extra.get(fields["研究类型勾选"], "")
-        t = _mark_checkbox(t, (fields["研究类型勾选"], en))
-        if en:
-            t = re.sub(r"[□☐口]\s*" + re.escape(en), "☑" + en, t, count=1)
-            t = t.replace("口" + fields["研究类型勾选"], "☑" + fields["研究类型勾选"])
-            t = t.replace("□" + fields["研究类型勾选"], "☑" + fields["研究类型勾选"])
-    cell.text = t
+    kind = str(fields.get("研究类型勾选") or "").strip()
+    extra = {
+        "应用基础研究": "Applied Basic Research",
+        "基础研究": "Basic Research",
+        "应用技术研究": "Applied Technology Research",
+        "技术开发": "Technology Development",
+    }
+    en = extra.get(kind, "")
+    for p in cell.paragraphs:
+        t = str(p.text or "")
+        if not t.strip():
+            continue
+        if kws and "研究领域关键词" in t:
+            t = re.sub(r"(研究领域关键词[^:：\n]*[:：])\s*.*$", r"\1" + kws, t, count=1)
+            _set_paragraph_text(p, t)
+            continue
+        if kind and re.search(r"[□☐口☑]", t):
+            t = _mark_checkbox(t, (kind, en) if en else (kind,))
+            _set_paragraph_text(p, t)
+
+
+def _ensure_cell_para(cell, idx: int):
+    while len(cell.paragraphs) <= idx:
+        cell.add_paragraph("")
+    return cell.paragraphs[idx]
+
+
+def _fill_expertise_cell(cell, body: str) -> None:
+    """按正式 16 表：标题/中英说明 13.5 加粗，空一行后再写宋体 12 正文。"""
+    body = str(body or "").strip()
+    body = re.sub(r"^专长及代表性成果[^\n]*\n?", "", body).strip()
+    body = re.sub(r"^所从事的专业领域及取得的成绩描述[^\n]*\n?", "", body).strip()
+    body = re.sub(r"^Field of Expertise[^\n]*\n?", "", body, flags=re.I).strip()
+    paras = list(cell.paragraphs)
+    if not paras:
+        cell.add_paragraph(_EXPERTISE_TITLE)
+        paras = list(cell.paragraphs)
+    p1 = _ensure_cell_para(cell, 1)
+    _write_runs(p1, [
+        (_EXPERTISE_INTRO_HEAD, {"east": "宋体", "ascii_name": "Times New Roman", "size_pt": 13.5, "bold": True}),
+        (_EXPERTISE_INTRO_HINT, {"east": "方正仿宋_GBK", "ascii_name": "Times New Roman", "size_pt": 13.5, "bold": False}),
+    ])
+    p2 = _ensure_cell_para(cell, 2)
+    _write_runs(p2, [
+        (_EXPERTISE_EN, {"east": "Times New Roman", "ascii_name": "Times New Roman", "size_pt": 13.5, "bold": True}),
+    ])
+    p3 = _ensure_cell_para(cell, 3)
+    _set_paragraph_text(p3, "")
+    lines = _split_narrative_paras(body)
+    _write_paragraphs_from(cell, 4, lines, keep_blank=True)
 
 
 def _fill_hj_table13(table, fields: dict[str, str]) -> None:
     if len(table.rows) < 3:
         return
     cell = table.rows[2].cells[0]
-    t = str(cell.text or "")
     marks = []
     if fields.get("首次申报勾选"):
         marks.append("首次申报")
     if fields.get("省级项目意愿") == "是":
         marks.append("是，请填列意向省份名称")
-    if marks:
-        t = _mark_checkbox(t, tuple(marks))
-        if fields.get("省级项目意愿") == "是":
-            t = re.sub(r"[□☐口]\s*是，请填列意向省份名称", "☑是，请填列意向省份名称", t, count=1)
-    if fields.get("意向省份") and "意向省份名称" in t:
-        t = re.sub(
-            r"(意向省份名称[：:]\s*)([\u4e00-\u9fff]{0,8})",
-            r"\1" + fields["意向省份"],
-            t,
-            count=1,
-        )
-    cell.text = t
+    for p in cell.paragraphs:
+        t = str(p.text or "")
+        if not t.strip():
+            continue
+        nt = t
+        if marks:
+            nt = _mark_checkbox(t, tuple(marks))
+            if fields.get("省级项目意愿") == "是":
+                nt = re.sub(r"[□☐口]\s*是，请填列意向省份名称", "☑是，请填列意向省份名称", nt, count=1)
+        if fields.get("意向省份") and "意向省份名称" in nt:
+            nt = re.sub(
+                r"(意向省份名称[：:]\s*)([\u4e00-\u9fff]{0,8})",
+                r"\1" + fields["意向省份"],
+                nt,
+                count=1,
+            )
+        if nt != t:
+            _set_paragraph_text(p, nt)
     if len(table.rows) >= 4 and fields.get("填表日期"):
         c3 = table.rows[3].cells[0]
         dt = _format_cover_date(fields["填表日期"])
-        body = str(c3.text or "")
-        body = re.sub(r"20\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日", dt.replace(" ", ""), body)
-        body = re.sub(r"20\d{2}Y\s*\d{1,2}\s*M\s*\d{1,2}\s*D", "", body)
-        c3.text = body
+        for p in c3.paragraphs:
+            body = str(p.text or "")
+            if re.search(r"20\d{2}\s*年", body) or "Date" in body:
+                nt = re.sub(r"20\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日", dt.replace(" ", ""), body)
+                if nt != body:
+                    _set_paragraph_text(p, nt)
 
 
 def _clip_employer_intro(intro: str) -> str:
@@ -2994,32 +3460,56 @@ def _fill_hj_table14(table, fields: dict[str, str]) -> None:
         return
     intro = _clip_employer_intro(fields.get("用人单位简介") or "")
     parent = str(fields.get("申报单位上级") or "").strip()
-    t = _EMPLOYER_TYPE_BLOCK
-    if fields.get("用人单位类型"):
-        t = _mark_checkbox(t, (fields["用人单位类型"], "民营企业"))
-    t += "\n2.申报单位(用人单位)的上级部门/地方(按隶属关系): " + parent
-    t += "\n3.申报单位(用人单位)简介(300字以内，主要指实验室建设情况，须另附实验室批复 证明)\n"
-    if intro:
-        t += intro
-    table.rows[0].cells[0].text = t
+    kind = str(fields.get("用人单位类型") or "").strip()
+    cell = table.rows[0].cells[0]
+    intro_idx = None
+    for i, p in enumerate(cell.paragraphs):
+        t = str(p.text or "")
+        if not t.strip():
+            continue
+        if re.search(r"[□☐口☑]", t) and kind:
+            nt = _mark_checkbox(t, (kind, "民营企业"))
+            if nt != t:
+                if not _assign_run_texts(p, nt):
+                    _set_paragraph_text(p, nt)
+                _paint_paragraph_font(p)
+            continue
+        if "上级部门" in t or "按隶属关系" in t:
+            if parent:
+                nt = re.sub(r"([:：])\s*.*$", r"\1 " + parent, t)
+                _set_paragraph_text(p, nt)
+            continue
+        if "简介" in t and ("300" in t or "实验室建设" in t):
+            intro_idx = i
+    if intro and intro_idx is not None:
+        lines = _split_narrative_paras(intro)
+        _write_paragraphs_from(cell, intro_idx + 1, lines)
 
 
-def _fill_expertise_cell(cell, body: str) -> None:
-    raw = str(cell.text or "")
-    title = "专长及代表性成果"
-    if "Expertise and Achievements" in raw:
-        head = raw.split("Expertise and Achievements")[0] + "Expertise and Achievements)"
-        head = re.sub(r"\)+$", ")", head)
-        if "专长及代表性成果" not in head:
-            head = title + "(Expertise and Achievements)"
-    elif title in raw:
-        head = title + "(Expertise and Achievements)"
-    else:
-        head = title + "(Expertise and Achievements)"
-    intro = "所从事的专业领域及取得的成绩描述（概述与所在或拟聘实验室相关的研究领域、方向及取得的成就，5000字以内）"
-    if intro not in body[:120]:
-        body = intro + "\n" + body
-    cell.text = head + "\n" + body.strip()
+def _fill_opinion_cell(cell, rec: str, sup: str) -> None:
+    rec_lines = _split_narrative_paras(rec)
+    sup_lines = _split_narrative_paras(sup)
+    if rec_lines:
+        rec_i = None
+        for i, p in enumerate(cell.paragraphs):
+            if "推荐理由" in (p.text or ""):
+                rec_i = i
+                break
+        if rec_i is not None:
+            _write_paragraphs_from(cell, rec_i + 1, rec_lines, stop_labels=("支持条件",))
+        else:
+            _write_paragraphs_from(cell, 0, ["1.推荐理由(含申报人情况介绍)"] + rec_lines)
+    if sup_lines:
+        sup_i = None
+        for i, p in enumerate(cell.paragraphs):
+            if "支持条件" in (p.text or ""):
+                sup_i = i
+                break
+        if sup_i is not None:
+            _write_paragraphs_from(cell, sup_i + 1, sup_lines)
+        else:
+            cell.add_paragraph("2.支持条件(包括工作和生活等方面)")
+            _write_paragraphs_from(cell, len(cell.paragraphs) - 1, sup_lines)
 
 
 def _fill_narrative_tables(doc: Document, fields: dict[str, str]) -> None:
@@ -3062,7 +3552,7 @@ def _fill_narrative_tables(doc: Document, fields: dict[str, str]) -> None:
     if len(doc.tables) > 5:
         _fill_hj_table5(doc.tables[5], fields)
     if len(doc.tables) > 12 and wp and len(doc.tables[12].rows) > 1:
-        _write_cell(doc.tables[12].rows[1].cells[0], wp)
+        _write_paragraphs_from(doc.tables[12].rows[1].cells[0], 0, _split_narrative_paras(wp))
     if len(doc.tables) > 13:
         _fill_hj_table13(doc.tables[13], fields)
     if len(doc.tables) > 14:
@@ -3073,13 +3563,7 @@ def _fill_narrative_tables(doc: Document, fields: dict[str, str]) -> None:
         rec = re.sub(r"^（含申报人情况介绍）[^\n]*\n?", "", rec).strip()
         rec = re.sub(r"^含申报人情况介绍[^\n]*\n?", "", rec).strip()
         sup = re.sub(r"^（包括工作和生活等方面）[^\n]*\n?", "", str(fields.get("支持条件") or "")).strip()
-        parts = []
-        if rec:
-            parts.append("1.推荐理由(含申报人情况介绍)\n" + rec)
-        if sup:
-            parts.append("2.支持条件(包括工作和生活等方面)\n" + sup)
-        if parts:
-            cell.text = "\n\n".join(parts)
+        _fill_opinion_cell(cell, rec, sup)
 
 
 def _fill_hj_lists(doc: Document, data: dict, raw_text: str, fields: dict[str, str]) -> dict:
@@ -3099,7 +3583,7 @@ def _fill_hj_lists(doc: Document, data: dict, raw_text: str, fields: dict[str, s
     filled_papers = 0
     if len(doc.tables) > 8:
         n8 = min(3, len(papers))
-        _ensure_table_rows(doc.tables[8], 1 + n8)
+        _ensure_table_rows(doc.tables[8], max(6, 1 + n8) if _hj_template_kind(doc) == "full" else 1 + n8)
         filled_papers += _fill_paper_table(doc.tables[8], papers, 0, direction)
     if len(doc.tables) > 9:
         rest = max(0, len(papers) - filled_papers)
@@ -3108,7 +3592,7 @@ def _fill_hj_lists(doc: Document, data: dict, raw_text: str, fields: dict[str, s
     filled_projects = 0
     if len(doc.tables) > 6:
         n6 = min(3, len(projects))
-        _ensure_table_rows(doc.tables[6], 1 + n6)
+        _ensure_table_rows(doc.tables[6], max(6, 1 + n6) if _hj_template_kind(doc) == "full" else 1 + n6)
         filled_projects += _fill_project_table(doc.tables[6], projects, 0, direction)
     if len(doc.tables) > 7:
         rest = max(0, len(projects) - filled_projects)

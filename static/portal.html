@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>协同中心登录 · 申报书智能修改</title>
+<link rel="stylesheet" href="/public/style.css?v=py52">
+<script src="/public/session.js?v=py52"></script>
+<style>
+.portal-page{min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(160deg,#f2f5fa,#e8eef8 55%,#dce6f6);padding:32px 16px}
+.portal-card{width:100%;max-width:440px;background:#fff;border-radius:18px;padding:32px 28px;
+  box-shadow:0 12px 40px -16px rgba(16,32,64,.28);border:1px solid #e6ebf4}
+.portal-card h1{margin:0 0 8px;font-size:20px}
+.portal-card p{margin:0 0 18px;font-size:13.5px;color:#667085;line-height:1.7}
+#out{font-size:13px;line-height:1.7;color:#334155;white-space:pre-wrap;word-break:break-word;
+  background:#f6f8fc;border-radius:10px;padding:12px 14px;min-height:3.2em}
+.portal-card a{color:#2450a4}
+</style>
+</head>
+<body class="portal-page">
+<div class="portal-card">
+  <h1>正在从协同中心登录</h1>
+  <p>请从协同应用中心侧栏打开本页。系统将用你的真实姓名和部门自动创建或登录本系统账号。</p>
+  <pre id="out">正在连接协同中心…</pre>
+  <p style="margin-top:16px;margin-bottom:0"><a href="/login">改用本系统账号登录</a></p>
+</div>
+<script>
+(function () {
+  var out = document.getElementById("out");
+  function show(t) { out.textContent = t; }
+  function pickIdentity(s) {
+    s = s || {};
+    var nested = [s.user, s.profile, s.account, s.staff].filter(function (x) { return x && typeof x === "object"; });
+    function from(obj, keys) {
+      if (!obj) return "";
+      for (var i = 0; i < keys.length; i++) {
+        var v = String(obj[keys[i]] || "").trim();
+        if (v && v !== "undefined" && v !== "null") return v;
+      }
+      return "";
+    }
+    var nameKeys = ["realName", "real_name", "displayName", "fullName", "trueName", "真实姓名", "姓名"];
+    var deptKeys = ["department", "dept", "orgName", "org", "unit", "deptName", "部门"];
+    var realName = from(s, nameKeys);
+    var department = from(s, deptKeys);
+    nested.forEach(function (u) {
+      if (!realName) realName = from(u, nameKeys) || from(u, ["name"]);
+      if (!department) department = from(u, deptKeys);
+    });
+    return { realName: realName, department: department };
+  }
+  function login(session, portalId) {
+    var id = pickIdentity(session);
+    show("已握手。姓名：" + (id.realName || "无") + "　部门：" + (id.department || "无") + "\n正在登录本系统…");
+    return fetch("/api/auth/portal-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        ticket: session && session.ticket,
+        portalId: portalId || (session && session.portal_id) || "",
+        session: session,
+        realName: id.realName,
+        department: id.department
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j, status: r.status }; }); })
+      .then(function (x) {
+        if (!x.ok) {
+          var d = x.j && (x.j.detail || x.j.message);
+          throw new Error(typeof d === "string" ? d : ("登录失败 HTTP " + x.status));
+        }
+        if (window.sbSaveSession) sbSaveSession(x.j && x.j.token);
+        var u = (x.j && x.j.user) || {};
+        var q = x.j.mustSetCredentials ? "?setup=1" : "";
+        show("已登录：" + (u.realName || "") + (u.department ? " · " + u.department : "") + "\n即将进入系统…");
+        location.replace("/" + q);
+      });
+  }
+  fetch("/api/auth/portal-config").then(function (r) { return r.json(); }).then(function (cfg) {
+    if (!cfg || !cfg.sdkUrl) {
+      show("未配置协同中心 SDK 地址。请在 config.json 填写 portal.sdkUrl / portalId，并由管理员把本页加入侧栏。");
+      return;
+    }
+    var s = document.createElement("script");
+    s.src = cfg.sdkUrl;
+    s.onload = function () {
+      if (!window.SfPlugin) {
+        show("SDK 已加载但没有 SfPlugin。请确认脚本地址是协同中心 :8086 的 sdk.js。");
+        return;
+      }
+      var opts = cfg.portalId ? { portalId: cfg.portalId } : {};
+      show("正在握手…");
+      function go(session) { return login(session, cfg.portalId); }
+      window.SfPlugin.ready(opts).then(go).catch(function (err) {
+        var m = String(err && err.message ? err.message : err);
+        if (m === "session denied" && opts.portalId) {
+          show("程序 id 未匹配，改用不带 id 再握手一次…");
+          return window.SfPlugin.ready({}).then(go);
+        }
+        throw err;
+      }).catch(function (err) {
+        var m = String(err && err.message ? err.message : err);
+        if (m === "no host") m = "请从协同应用中心侧栏打开，不要直接在地址栏访问本页。";
+        if (m === "session denied") m = "协同中心拒绝会话：侧栏里的程序 id 必须是 sbedit25k7m2，且程序已启用。";
+        if (m === "session timeout") m = "握手超时：SDK 必须从协同中心 :8086 加载，且父页 origin 要一致。";
+        show(m);
+      });
+    };
+    s.onerror = function () {
+      show("无法加载 SDK：\n" + cfg.sdkUrl + "\n请确认协同中心前端 :8086 可访问。");
+    };
+    document.head.appendChild(s);
+  }).catch(function (e) {
+    show("读取门户配置失败：" + (e && e.message ? e.message : e));
+  });
+})();
+</script>
+</body>
+</html>

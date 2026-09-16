@@ -1,9 +1,12 @@
-"""修改意见文件提取：Word / 文本 / Excel / 图片（Gemini 识字）。"""
+"""修改意见文件提取：Word / 文本 / Excel / 图片（Gemini 识字）/ 录音（Gemini 转写）。"""
 from __future__ import annotations
-import asyncio, base64, csv, io, os, re, shutil
+import asyncio, base64, csv, io, os, re, shutil, tempfile
 from pathlib import Path
 
-from .config import SCRIPTS_DIR, PYEXE, compare_model_profiles
+from .config import (
+    SCRIPTS_DIR, PYEXE, LLM_CONNECT_TIMEOUT, compare_model_profiles,
+    llm_api_base, httpx_trust_env,
+)
 from .llm import chat, LlmError
 
 PYENV = dict(os.environ, PYTHONIOENCODING="utf-8")
@@ -12,10 +15,14 @@ WORD_EXT = {".docx", ".docm", ".wps"}
 TEXT_EXT = {".txt", ".md"}
 EXCEL_EXT = {".xlsx", ".xlsm", ".xls", ".csv"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff", ".bmp"}
-ALLOWED_OPINION_EXT = WORD_EXT | TEXT_EXT | EXCEL_EXT | IMAGE_EXT
+AUDIO_EXT = {".m4a", ".mp3", ".wav", ".aac", ".ogg", ".flac", ".amr", ".wma", ".webm"}
+ALLOWED_OPINION_EXT = WORD_EXT | TEXT_EXT | EXCEL_EXT | IMAGE_EXT | AUDIO_EXT
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
+MAX_AUDIO_BYTES = 50 * 1024 * 1024
+AUDIO_INLINE_SOFT = 12 * 1024 * 1024
 OCR_TIMEOUT_S = 300.0
+AUDIO_TIMEOUT_S = 900.0
 OCR_PAGE_RETRIES = 3
 
 _MIME = {
@@ -27,6 +34,18 @@ _MIME = {
     ".tif": "image/tiff",
     ".tiff": "image/tiff",
     ".bmp": "image/bmp",
+}
+
+_AUDIO_MIME = {
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".amr": "audio/amr",
+    ".wma": "audio/x-ms-wma",
+    ".webm": "audio/webm",
 }
 
 OCR_PROMPT = (
@@ -50,6 +69,21 @@ APP_PDF_OCR_PROMPT = (
     "<<<END>>>"
 )
 
+AUDIO_PROMPT = (
+    "这是申报书专家辅导会/审核会的录音，请转写成中文「申报书修改意见」。\n"
+    "录音文件名：{name}\n"
+    "要求：\n"
+    "1. 只保留与申报书修改、补材料、改写法、格式、证明材料有关的意见；寒暄、点名签到、与申报无关的闲聊可省略。\n"
+    "2. 按条列出，每条单独一行，用「1.」「2.」「3.」编号，便于后续逐条修改。\n"
+    "3. 若发言点名了申报人、单位或申报书编号，写在该条开头，例如「1. 本杰明：论文需补充影响因子」。\n"
+    "4. 一场会若点评了多人，按申报人分段，先写姓名再写其意见。\n"
+    "5. 不要翻译成英文，不要写成会议纪要标题，不要输出思考过程或英文草稿。\n"
+    "必须按下述格式输出，TEXT 与 END 标记各占一行：\n"
+    "<<<TEXT>>>\n"
+    "（此处只放转写后的修改意见正文）\n"
+    "<<<END>>>"
+)
+
 
 def resolve_ocr_timeout(explicit: float | None = None) -> float:
     """OCR 单页超时：显式参数 > Gemini 模型配置 timeoutSec > 默认值。"""
@@ -70,6 +104,12 @@ def resolve_ocr_timeout(explicit: float | None = None) -> float:
         except (TypeError, ValueError):
             pass
     return OCR_TIMEOUT_S
+
+
+def resolve_audio_timeout(explicit: float | None = None) -> float:
+    """录音转写超时：显式参数 > Gemini timeoutSec 与默认 900s 取较大值。"""
+    gem_t = resolve_ocr_timeout(explicit)
+    return max(AUDIO_TIMEOUT_S, gem_t)
 
 
 def ext_of(name: str) -> str:
@@ -299,6 +339,317 @@ async def image_to_text(path: Path) -> str:
     return await ocr_image_bytes(data, mime, p.name)
 
 
+def _sniff_audio(data: bytes, name: str) -> tuple[str, str]:
+    ext = ext_of(name)
+    mime = _AUDIO_MIME.get(ext) or ""
+    head = data[:16]
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return (ext if ext in AUDIO_EXT else ".m4a"), "audio/mp4"
+    if head.startswith(b"ID3") or (len(data) >= 2 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+        return ".mp3", "audio/mpeg"
+    if head.startswith(b"RIFF") and data[8:12] == b"WAVE":
+        return ".wav", "audio/wav"
+    if head.startswith(b"OggS"):
+        return ".ogg", "audio/ogg"
+    if head.startswith(b"fLaC"):
+        return ".flac", "audio/flac"
+    if head.startswith(b"#!AMR"):
+        return ".amr", "audio/amr"
+    if mime:
+        return ext, mime
+    raise ValueError("不是支持的录音格式（m4a / mp3 / wav / aac / ogg / flac）：" + (name or "file"))
+
+
+def _audio_format(mime: str, ext: str) -> str:
+    mime = str(mime or "").lower()
+    ext = str(ext or "").lower().lstrip(".")
+    if "mpeg" in mime or ext == "mp3":
+        return "mp3"
+    if "wav" in mime or ext == "wav":
+        return "wav"
+    if "aac" in mime or ext == "aac":
+        return "aac"
+    if "ogg" in mime or ext == "ogg":
+        return "ogg"
+    if "flac" in mime or ext == "flac":
+        return "flac"
+    if "webm" in mime or ext == "webm":
+        return "webm"
+    if ext == "m4a" or "m4a" in mime:
+        return "m4a"
+    if "mp4" in mime or ext in ("m4a", "mp4"):
+        return "mp4"
+    return ext or "mp3"
+
+
+def _find_ffmpeg() -> str:
+    exe = shutil.which("ffmpeg")
+    if exe and Path(exe).is_file():
+        try:
+            if Path(exe).stat().st_size > 1024 * 1024:
+                return exe
+        except OSError:
+            pass
+    try:
+        import imageio_ffmpeg
+        p = imageio_ffmpeg.get_ffmpeg_exe()
+        if p and Path(p).is_file() and Path(p).stat().st_size > 1024 * 1024:
+            return p
+    except Exception:
+        pass
+    return ""
+
+
+def _ffmpeg_to_mp3(data: bytes, src_name: str) -> tuple[bytes, str, str] | None:
+    ff = _find_ffmpeg()
+    if not ff:
+        return None
+    suffix = ext_of(src_name) or ".m4a"
+    try:
+        with tempfile.TemporaryDirectory(prefix="sb-audio-") as td:
+            src = Path(td) / ("in" + suffix)
+            dst = Path(td) / "out.mp3"
+            src.write_bytes(data)
+            import subprocess
+            r = subprocess.run(
+                [ff, "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", str(dst)],
+                capture_output=True,
+                timeout=180,
+            )
+            if (r.returncode or 0) != 0 or not dst.is_file() or dst.stat().st_size < 64:
+                return None
+            out = dst.read_bytes()
+            if not out:
+                return None
+            return out, "audio/mpeg", (Path(src_name).stem or "audio") + ".mp3"
+    except Exception:
+        return None
+
+
+def _gateway_send_spec(mime: str, name: str) -> tuple[str, str]:
+    """12ai Gemini 白名单：audio/mpeg、audio/mp3、audio/wav、video/mp4。"""
+    ext = ext_of(name)
+    mime = str(mime or "").lower()
+    if ext in (".mp3",) or "mpeg" in mime or mime == "audio/mp3":
+        return "audio/mpeg", name if name.lower().endswith(".mp3") else (Path(name).stem or "audio") + ".mp3"
+    if ext in (".wav",) or "wav" in mime:
+        return "audio/wav", name
+    if ext in (".m4a", ".mp4", ".aac") or "mp4" in mime or "m4a" in mime or "aac" in mime:
+        return "video/mp4", (Path(name).stem or "audio") + ".mp4"
+    return mime or "audio/mpeg", name
+
+
+def _audio_content_variants(prompt: str, b64: str, mime: str, name: str, fmt: str) -> list:
+    send_mime, send_name = _gateway_send_spec(mime, name)
+    data_url = "data:" + send_mime + ";base64," + b64
+    mpeg_url = "data:audio/mpeg;base64," + b64
+    variants = [
+        [
+            {"type": "text", "text": prompt},
+            {"type": "file", "file": {"filename": send_name, "file_data": data_url}},
+        ],
+        [
+            {"type": "text", "text": prompt},
+            {"type": "input_audio", "input_audio": {"data": b64, "format": "mp3" if fmt != "wav" else "wav"}},
+        ],
+    ]
+    if send_mime != "audio/mpeg":
+        variants.insert(1, [
+            {"type": "text", "text": prompt},
+            {"type": "file", "file": {"filename": (Path(name).stem or "audio") + ".mp3", "file_data": mpeg_url}},
+        ])
+    return variants
+
+
+def _payload_shape_retryable(msg: str) -> bool:
+    s = str(msg or "").lower()
+    keys = (
+        "http 400", "http 415", "http 500", "http 413", "invalid", "unsupported",
+        "unknown", "format", "mime", "audio", "m4a", "mp4", "file_data",
+        "input_audio", "audio_url", "unexpected", "未识别", "不支持", "无法解析",
+        "too large", "too long", "payload", "entity", "maximum",
+    )
+    return any(k in s for k in keys)
+
+
+def _looks_like_no_audio(text: str) -> bool:
+    s = str(text or "").strip()
+    if not s:
+        return True
+    low = s.lower()
+    keys = (
+        "no_audio", "未检测", "未听到", "听不到", "没有音频", "没有声音",
+        "请提供录音", "无法播放", "不是音频", "没有听到", "未能识别语音",
+    )
+    if any(k in low or k in s for k in keys) and len(s) < 240:
+        return True
+    return False
+
+
+def _clean_transcript(text: str) -> str:
+    s = _strip_ocr(text)
+    if not s:
+        return ""
+    lines = []
+    for raw in s.replace("\r\n", "\n").split("\n"):
+        t = raw.strip()
+        if not t:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if t.startswith("**") and t.endswith("**") and len(t) < 80:
+            continue
+        ascii_only = bool(re.fullmatch(r"[\x00-\x7f]+", t))
+        if ascii_only and not re.search(r"\d+\.\s", t):
+            if re.match(r"^(I['m\s]|The user|Let |I'm |I've |I've|Begin |Analyzing|Initiating)", t):
+                continue
+            if len(t) > 50:
+                continue
+        lines.append(raw.rstrip())
+    return "\n".join(lines).strip()
+
+
+def _transcript_usable(text: str) -> bool:
+    s = _clean_transcript(text)
+    if not s or _looks_like_no_audio(s):
+        return False
+    return len(re.findall(r"[\u4e00-\u9fa5]", s)) >= 20
+
+
+async def _chat_transcribe_variants(
+    prompt: str,
+    data: bytes,
+    mime: str,
+    name: str,
+    gem: dict,
+    timeout_s: float,
+) -> tuple[str, Exception | None]:
+    fmt = _audio_format(mime, ext_of(name))
+    b64 = base64.b64encode(data).decode("ascii")
+    last_err = None
+    for content in _audio_content_variants(prompt, b64, mime, name, fmt):
+        try:
+            r = await chat(
+                [{"role": "user", "content": content}],
+                json_mode=False,
+                timeout_s=timeout_s,
+                model=gem.get("id"),
+                retries=1,
+                apply_profile_timeout=False,
+            )
+            text = _clean_transcript(str((r or {}).get("content") or ""))
+            if _transcript_usable(text):
+                return text, None
+            last_err = ValueError("Gemini 未从录音中提取到文字：" + name)
+        except LlmError as e:
+            last_err = e
+            if _payload_shape_retryable(str(e)):
+                continue
+            raise
+    return "", last_err
+
+
+async def _transcribe_whisper_endpoint(data: bytes, mime: str, name: str, gem: dict, timeout_s: float) -> str:
+    import httpx
+    url = llm_api_base(gem.get("baseUrl") or "") + "/audio/transcriptions"
+    headers = {"Authorization": "Bearer " + str(gem.get("apiKey") or "")}
+    timeout = httpx.Timeout(timeout_s, connect=LLM_CONNECT_TIMEOUT)
+    trust = httpx_trust_env()
+    files = {"file": (name or "audio.m4a", data, mime or "application/octet-stream")}
+    form = {"model": str(gem.get("id") or "gemini-3.7-flash"), "language": "zh"}
+    async with httpx.AsyncClient(timeout=timeout, trust_env=trust) as client:
+        r = await client.post(url, headers=headers, files=files, data=form)
+    if r.status_code >= 400:
+        raise LlmError("HTTP " + str(r.status_code) + ": " + (r.text or "")[:240])
+    try:
+        obj = r.json()
+    except Exception:
+        return (r.text or "").strip()
+    if isinstance(obj, dict):
+        return str(obj.get("text") or obj.get("content") or "").strip()
+    return str(obj or "").strip()
+
+
+async def transcribe_audio_bytes(
+    data: bytes,
+    mime: str,
+    name: str = "audio.m4a",
+    *,
+    timeout_s: float | None = None,
+) -> str:
+    """Gemini 多模态转写：录音字节 → 修改意见文本。"""
+    if not data:
+        raise ValueError("录音为空：" + name)
+    if len(data) > MAX_AUDIO_BYTES:
+        raise ValueError("录音超过 50MB，请压缩后再上传：" + name)
+    gem = (compare_model_profiles() or {}).get("gemini") or {}
+    if not gem.get("ready"):
+        raise ValueError("录音转写需要 Gemini。请先在模型配置中填好 Gemini 的地址和密钥。")
+    _ext, mime = _sniff_audio(data, name)
+    prompt = AUDIO_PROMPT.replace("{name}", name)
+    effective_timeout = resolve_audio_timeout(timeout_s)
+    last_err = None
+    queue: list[tuple[bytes, str, str]] = []
+    packed = None
+    if _ext not in (".mp3", ".wav") or len(data) > AUDIO_INLINE_SOFT:
+        packed = _ffmpeg_to_mp3(data, name)
+    if packed:
+        queue.append(packed)
+    else:
+        send_mime, send_name = _gateway_send_spec(mime, name)
+        queue.append((data, send_mime, send_name))
+    for send_data, send_mime, send_name in queue:
+        try:
+            text, err = await _chat_transcribe_variants(
+                prompt, send_data, send_mime, send_name, gem, effective_timeout,
+            )
+            if text:
+                return text
+            last_err = err
+        except LlmError as e:
+            last_err = e
+            if not _payload_shape_retryable(str(e)):
+                raise ValueError("Gemini 转写失败（" + name + "）：" + str(e)[:240]) from e
+    if all(m != "audio/mpeg" for _d, m, _n in queue):
+        packed = _ffmpeg_to_mp3(data, name)
+        if packed:
+            send_data, send_mime, send_name = packed
+            try:
+                text, err = await _chat_transcribe_variants(
+                    prompt, send_data, send_mime, send_name, gem, effective_timeout,
+                )
+                if text:
+                    return text
+                last_err = err or last_err
+                send_for_whisper = packed
+            except LlmError as e:
+                last_err = e
+                send_for_whisper = packed
+        else:
+            send_for_whisper = (data, mime, name)
+    else:
+        send_for_whisper = queue[0]
+    try:
+        text = await _transcribe_whisper_endpoint(
+            send_for_whisper[0], send_for_whisper[1], send_for_whisper[2], gem, effective_timeout,
+        )
+        text = _clean_transcript(text)
+        if _transcript_usable(text):
+            return text
+    except Exception as e:
+        if last_err is None:
+            last_err = e
+    msg = str(last_err or "未得到转写结果")[:240]
+    raise ValueError("Gemini 转写失败（" + name + "）：" + msg)
+
+
+async def audio_to_text(path: Path) -> str:
+    p = Path(path)
+    data = p.read_bytes()
+    _ext, mime = _sniff_audio(data, p.name)
+    return await transcribe_audio_bytes(data, mime, p.name)
+
+
 def _strip_ocr(text: str) -> str:
     s = str(text or "").strip()
     if not s:
@@ -353,6 +704,10 @@ async def ensure_txt(src: Path, dst: Path) -> None:
         return
     if ext in IMAGE_EXT:
         text = await image_to_text(src)
+        dst.write_text(text, encoding="utf-8")
+        return
+    if ext in AUDIO_EXT:
+        text = await audio_to_text(src)
         dst.write_text(text, encoding="utf-8")
         return
     if ext in WORD_EXT:

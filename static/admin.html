@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py45">
+<link rel="stylesheet" href="/public/style.css?v=py52">
 <style>
 :root{ --nav-w:216px; }
 *{box-sizing:border-box}
@@ -442,6 +442,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     <button type="button" class="mini" id="arPause" style="font-size:11.5px;padding:2px 7px">暂停</button>
   </div>
 
+<script src="/public/session.js?v=py52"></script>
 <script>
 (function () {
   var me = null;
@@ -1483,7 +1484,10 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
   });
 
   document.getElementById('logoutBtn').addEventListener('click', function () {
-    fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login'; });
+    fetch('/api/auth/logout', { method: 'POST' }).then(function () {
+      if (window.sbClearSession) sbClearSession();
+      location.href = '/login';
+    });
   });
 })();
 </script>

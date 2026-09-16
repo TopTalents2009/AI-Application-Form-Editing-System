@@ -149,6 +149,7 @@ def load_config() -> dict:
     raw_models = c.get("models") if isinstance(c.get("models"), list) else []
     client_inbox = str(c.get("clientInbox") or "").strip()
     project_proof = _project_proof_block(c)
+    portal = _portal_block(c)
     return {
         "baseUrl": base.rstrip("/"),
         "apiKey": key,
@@ -177,7 +178,23 @@ def load_config() -> dict:
         "mysqlConfigured": mysql_ok,
         "clientInbox": client_inbox,
         "projectProof": project_proof,
+        "portal": portal,
         "scanPdf": scan_pdf_settings(),
+    }
+
+
+def _portal_block(c: dict) -> dict:
+    raw = c.get("portal") if isinstance(c.get("portal"), dict) else {}
+    sdk = str(raw.get("sdkUrl") or raw.get("sdk") or "").strip()
+    pid = str(raw.get("portalId") or raw.get("id") or "").strip()
+    if FILL_MARK in sdk:
+        sdk = ""
+    if FILL_MARK in pid:
+        pid = ""
+    return {
+        "sdkUrl": sdk,
+        "portalId": pid,
+        "configured": bool(sdk),
     }
 
 
@@ -198,15 +215,19 @@ def _project_proof_block(c: dict) -> dict:
     gen_base = str(gen.get("baseUrl") or "").strip().rstrip("/")
     gen_path = str(gen.get("path") or "").strip()
     gen_key = _usable_secret(gen.get("apiKey") or gen.get("api_key"))
-    gen_ok = bool(gen_base and gen_path) and FILL_MARK not in gen_base and FILL_MARK not in gen_path
     method = str(gen.get("method") or "POST").upper() or "POST"
     try:
-        gen_timeout = int(float(gen.get("timeoutSec") or 120))
+        gen_timeout = int(float(gen.get("timeoutSec") or 300))
     except (TypeError, ValueError):
-        gen_timeout = 120
+        gen_timeout = 300
     headers = gen.get("headers") if isinstance(gen.get("headers"), dict) else {}
     body = gen.get("body") if isinstance(gen.get("body"), (dict, list, str)) else {}
     provider = str(gen.get("provider") or "").strip().lower()
+    if not gen_path or FILL_MARK in gen_path:
+        gen_path = "/api/external/documents"
+    gen_gen_path = str(gen.get("generatePath") or "/api/external/generate").strip() or "/api/external/generate"
+    gen_proj_path = str(gen.get("projectsPath") or "/api/external/projects").strip() or "/api/external/projects"
+    gen_ok = bool(gen_base) and FILL_MARK not in gen_base and bool(gen_key)
     return {
         "codebuddy": {
             "cmd": cmd,
@@ -219,8 +240,10 @@ def _project_proof_block(c: dict) -> dict:
             "baseUrl": gen_base,
             "apiKey": gen_key,
             "path": gen_path,
+            "generatePath": gen_gen_path,
+            "projectsPath": gen_proj_path,
             "method": method,
-            "timeoutSec": gen_timeout if gen_timeout > 0 else 120,
+            "timeoutSec": gen_timeout if gen_timeout > 0 else 300,
             "provider": provider,
             "headers": headers,
             "body": body,
@@ -703,7 +726,7 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
 
 
 # 恢复默认只回滚 LLM 接入参数；数据库 / 人才库 / 论文 / 收件箱等运行时配置保留当前值
-_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox", "projectProof")
+_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox", "projectProof", "portal")
 
 
 def restore_default_config() -> dict:

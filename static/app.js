@@ -358,6 +358,7 @@ function opExtKind(name) {
   if (/\.(xlsx|xlsm|xls|csv)$/i.test(n)) return 'excel';
   if (/\.(docx|docm|wps)$/i.test(n)) return 'word';
   if (/\.(txt|md)$/i.test(n)) return 'text';
+  if (/\.(m4a|mp3|wav|aac|ogg|flac|amr|wma|webm)$/i.test(n)) return 'audio';
   return '';
 }
 function isOpFile(name) { return !!opExtKind(name); }
@@ -403,7 +404,7 @@ function renderOpChips() {
   if (!el) return;
   el.innerHTML = pickedOps.map(function (f, i) {
     var k = opExtKind(f.name);
-    var hint = !k ? '不支持' : (k === 'image' ? '图片·Gemini识字' : (k === 'excel' ? 'Excel' : ''));
+    var hint = !k ? '不支持' : (k === 'image' ? '图片·Gemini识字' : (k === 'audio' ? '录音·Gemini转写' : (k === 'excel' ? 'Excel' : '')));
     return chip(f.name, !k, hint, 'op', i);
   }).join('');
 }
@@ -1228,13 +1229,47 @@ $('pageNext').onclick = function () { switchBook(currentPage + 1); };
   var _fetch = window.fetch;
   window.fetch = function () {
     return _fetch.apply(this, arguments).then(function (res) {
-      if (res.status === 401 && location.pathname !== '/login') {
+      if (res.status === 401 && location.pathname !== '/login' && location.pathname !== '/portal' && location.pathname !== '/register') {
         location.href = '/login';
       }
       return res;
     });
   };
 })();
+
+function openCredModal(u) {
+  var mask = $('credMask');
+  if (!mask) return;
+  mask.hidden = false;
+  var who = $('credWho');
+  if (who) who.textContent = '当前身份：' + (u.realName || '') + (u.department ? ' · ' + u.department : '');
+  var msg = $('credMsg');
+  if (msg) { msg.className = 'err'; msg.textContent = ''; }
+  var save = $('credSaveBtn');
+  if (save) save.onclick = function () {
+    var username = ($('credUser') && $('credUser').value || '').trim();
+    var password = $('credPass') && $('credPass').value || '';
+    var confirmPassword = $('credPass2') && $('credPass2').value || '';
+    if (msg) msg.textContent = '';
+    fetch('/api/auth/complete-credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password, confirmPassword: confirmPassword })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) {
+          if (msg) msg.textContent = (x.j && x.j.detail) || '保存失败';
+          return;
+        }
+        mask.hidden = true;
+        if (x.j.user && $('userName')) {
+          $('userName').textContent = x.j.user.realName + (x.j.user.department ? ' · ' + x.j.user.department : '');
+        }
+      }).catch(function (e) {
+        if (msg) msg.textContent = e && e.message ? e.message : '网络错误';
+      });
+  };
+}
 
 function initUserBox() {
   var box = $('userBox');
@@ -1247,8 +1282,12 @@ function initUserBox() {
     box.style.display = '';
     var lb = $('logoutBtn');
     if (lb) lb.onclick = function () {
-      fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login'; });
+      fetch('/api/auth/logout', { method: 'POST' }).then(function () {
+        if (window.sbClearSession) sbClearSession();
+        location.href = '/login';
+      });
     };
+    if (u.mustSetCredentials) openCredModal(u);
   });
 }
 

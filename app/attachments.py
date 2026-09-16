@@ -413,6 +413,7 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
             gen = await PP.call_generate_api(
                 person=person, attach_id=aid, company=company, projects=projects,
                 work_dir=work_root / "generate",
+                resume_pdf=PP.find_resume_pdf(task_dir),
             )
             if gen.get("error"):
                 result["generateError"] = str(gen.get("error") or "")
