@@ -109,7 +109,9 @@ function hydrateDraft(cfg) {
     timeoutSec: 300,
     stream: true,
     reasoningEffort: 'medium',
-    temperature: 0.1
+    temperature: 0.1,
+    apiFormat: 'openai',
+    enableSearch: false
   }, e.gemini || {});
   cfgDraft.classifyModel = e.classifyModel || cfgDraft.gemini.id || 'gemini-3.7-flash';
   if (!cfgEditId) cfgEditId = cfgDraft.gemini.id;
@@ -125,6 +127,8 @@ function readFormIntoDraft() {
   else delete d.apiKey;
   d.timeoutSec = Number($('cfgTimeout') && $('cfgTimeout').value) || d.timeoutSec || 0;
   d.stream = !!( $('cfgStream') && $('cfgStream').checked );
+  d.enableSearch = !!( $('cfgSearch') && $('cfgSearch').checked );
+  if ($('cfgFormat')) d.apiFormat = $('cfgFormat').value || 'openai';
   if ($('cfgEffort')) d.reasoningEffort = $('cfgEffort').value;
   if ($('cfgTemp')) d.temperature = Number($('cfgTemp').value);
   cfgDraft[fam] = d;
@@ -142,6 +146,10 @@ function renderCfgForm() {
     options: [['low', '短（low）'], ['medium', '中（medium）'], ['high', '长（high）']]
   });
   html += cfgField('cfgTimeout', '超时（秒）', d.timeoutSec || 300, { type: 'number' });
+  html += cfgField('cfgFormat', 'API 请求格式', d.apiFormat === 'genai' ? 'genai' : 'openai', {
+    type: 'select',
+    options: [['openai', 'OpenAI 兼容（/chat/completions）'], ['genai', 'Google GenAI（generateContent）']]
+  });
   html += cfgField('cfgBase', '请求地址', d.baseUrl || '', { span2: true });
   html += cfgField('cfgKey', '密钥', '', {
     span2: true,
@@ -150,6 +158,7 @@ function renderCfgForm() {
   });
   html += cfgField('cfgTemp', '温度', d.temperature == null ? 0.1 : d.temperature, { type: 'number' });
   html += cfgField('cfgStream', '流式', !!d.stream, { type: 'checkbox' });
+  html += cfgField('cfgSearch', '打开检索', !!d.enableSearch, { type: 'checkbox' });
   html += '</div><div class="cfg-status ' + (d.ready ? 'ok' : 'bad') + '">' +
     (d.ready ? '已就绪' : '未配置：保存前请填写请求地址和密钥') + '</div></div>';
   form.innerHTML = html;
@@ -858,7 +867,7 @@ function renderStepper(status) {
 function lnClass(msg) {
   msg = String(msg || '');
   if (/(失败|跳过|警告|未命中|丢弃|超长|未达标|未检出|中断|不可用)/.test(msg)) return 'ln-warn';
-  if (/(完成|就绪|已改|已生成|返回 \d+)/.test(msg)) return 'ln-ok';
+  if (/(完成|就绪|已改|已生成|返回 \d+|确认写入|确认人)/.test(msg)) return 'ln-ok';
   if (/(同时提交|直连模式|开始按章)/.test(msg)) return 'ln-go';
   if (/(检索|提取|分类|仲裁)/.test(msg)) return 'ln-tool';
   return '';
@@ -881,6 +890,8 @@ function renderDetail(t) {
   $('detailMeta').innerHTML =
     '状态：<b>' + statusText(t.status) + '</b>　·　创建：' + t.createdAt +
     (t.model ? '　·　模型：' + esc(t.modelLabel || t.model) : '') +
+    (t.appliedBy ? '　·　修改人：' + esc(t.appliedBy) : '') +
+    (t.appliedAt ? '　·　确认写入：' + esc(t.appliedAt) : '') +
     (t.finishedAt ? '　·　结束：' + t.finishedAt : '') + warnLine + errLine + retryLine;
   var retryBtn = $('retryTaskBtn');
   if (retryBtn) {
@@ -1344,11 +1355,17 @@ function renderFbMinePager(total, page, pages) {
   if (prev) prev.disabled = page <= 1;
   if (next) next.disabled = page >= pages;
 }
+var fbAuthBlobs = [];
+function revokeFbAuthBlobs() {
+  fbAuthBlobs.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
+  fbAuthBlobs = [];
+}
 function renderMyFeedback() {
   var box = $('fbMine');
   if (!box) return;
   var total = fbMineItems.length;
   if (!total) {
+    revokeFbAuthBlobs();
     box.textContent = '暂无反馈';
     renderFbMinePager(0, 1, 1);
     return;
@@ -1358,9 +1375,10 @@ function renderMyFeedback() {
   if (fbMinePage < 1) fbMinePage = 1;
   var start = (fbMinePage - 1) * FB_MINE_PAGE_SIZE;
   var pageItems = fbMineItems.slice(start, start + FB_MINE_PAGE_SIZE);
+  revokeFbAuthBlobs();
   box.innerHTML = pageItems.map(function (it) {
     var imgs = (it.files || []).map(function (f) {
-      return '<a href="' + escAttr(f.url) + '" target="_blank" rel="noopener"><img src="' + escAttr(f.url) + '" alt="' + escAttr(f.name) + '"></a>';
+      return '<a href="' + escAttr(f.url) + '" data-auth-src="' + escAttr(f.url) + '" target="_blank" rel="noopener"><img data-auth-src="' + escAttr(f.url) + '" alt="' + escAttr(f.name) + '"></a>';
     }).join('');
     return '<div class="fb-item"><div class="fb-meta"><span class="fb-st ' + escAttr(it.status || 'new') + '">' + esc(fbStatusLabel(it.status)) + '</span><span>' + esc(it.createdAt) + '</span></div>' +
       (it.content ? '<div class="fb-body">' + esc(it.content) + '</div>' : '') +
@@ -1370,6 +1388,7 @@ function renderMyFeedback() {
         : '') +
       '</div>';
   }).join('');
+  if (window.sbBindAuthImages) fbAuthBlobs = window.sbBindAuthImages(box, []);
   renderFbMinePager(total, fbMinePage, pages);
 }
 function loadMyFeedback() {

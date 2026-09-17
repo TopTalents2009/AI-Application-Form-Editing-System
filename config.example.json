@@ -14,7 +14,9 @@
       "apiKey": "填入",
       "stream": true,
       "timeoutSec": 300,
-      "reasoningEffort": ""
+      "reasoningEffort": "",
+      "apiFormat": "openai",
+      "enableSearch": false
     },
     {
       "id": "doubao-seed-2-0-mini-260428",

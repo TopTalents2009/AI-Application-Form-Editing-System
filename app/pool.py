@@ -6,6 +6,7 @@ from urllib.parse import urlparse, urlencode, quote
 import httpx
 from .config import load_config, FILL_MARK, httpx_trust_env
 from . import matcher as M
+from . import papers as P
 
 PREFIX = "/api/external-read/v1"
 DROP_KEYS = {
@@ -124,23 +125,18 @@ def extract_pool_keys(fname: str, app_text: str) -> dict:
     prof = M.extract_book_profile(fname, app_text)
     names = []
     lines = M.String_splitlines(app_text)
-    for raw in lines[:15]:
+    for raw in lines[:20]:
         m = re.search(r"申\s*报\s*人\s+(.+)", str(raw or ""))
         if not m:
             continue
-        nm = _clean_person_name(m.group(1))
-        if nm:
-            names.append(nm)
-            break
-    passport = _clean_person_name(_field_after(lines, ("有效证件姓名",)))
-    if passport:
-        names.append(passport)
-    cn = _clean_person_name(_field_after(lines, ("中文(音译)名", "中文（音译）名", "中文音译名")))
-    if cn:
-        names.append(cn)
-    nf = _clean_person_name(str(prof.get("nameFull") or ""))
-    if nf:
-        names.append(nf)
+        names.extend(_split_person_names(m.group(1)))
+        break
+    for label in (
+        "有效证件姓名", "申报人姓名", "Name of Applicant",
+        "中文(音译)名", "中文（音译）名", "中文音译名", "外籍专家中文姓名",
+    ):
+        names.extend(_split_person_names(_field_after(lines, (label,))))
+    names.extend(_split_person_names(str(prof.get("nameFull") or "")))
     company = M.pick_company(
         prof.get("ent"),
         _field_after(lines, ("申报企业", "企业名称")),
@@ -161,7 +157,7 @@ def extract_pool_keys(fname: str, app_text: str) -> dict:
             uniq.append(n)
     return {
         "attachIds": attach,
-        "names": uniq[:4],
+        "names": uniq[:6],
         "creditCodes": codes[:3],
         "company": company,
     }
@@ -192,6 +188,111 @@ def _field_after(lines, keys) -> str:
                 continue
             return v
     return ""
+
+
+def _split_person_names(n) -> list:
+    base = _clean_person_name(n)
+    if not base:
+        return []
+    out = [base]
+    cn = re.search(r"[\u4e00-\u9fa5·•]{2,8}", base)
+    if cn and cn.group(0) != base:
+        out.append(cn.group(0))
+    lat = re.sub(r"[\u4e00-\u9fa5（）()·•]+", " ", base)
+    lat = re.sub(r"\s+", " ", lat).strip(" ，,")
+    if lat and lat.lower() != base.lower() and len(lat) >= 3:
+        out.append(lat)
+    return out
+
+
+def talent_attach_id(item: dict | None) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for k in ("attach_id", "attachId", "talent_id", "talentId", "人才编号"):
+        aid = P.norm_attach_id(item.get(k))
+        if aid:
+            return aid
+    return ""
+
+
+def _pool_mode(snap: dict | None = None) -> str:
+    want = ""
+    if isinstance(snap, dict):
+        t = snap.get("talent") or {}
+        want = str(t.get("mode") or "").strip().upper()
+    if want not in ("QM", "HJ"):
+        want = str(load_config().get("poolMode") or "all")
+    return want
+
+
+async def resolve_attach_ids(snap: dict | None, app_no: str = "") -> tuple[list, list]:
+    """先用编号；没有编号时按申报人姓名检索人才库，回填 attach_id。"""
+    snap = snap if isinstance(snap, dict) else {}
+    keys = snap.get("keys")
+    if not isinstance(keys, dict):
+        keys = {}
+        snap["keys"] = keys
+    cached = keys.get("_resolvedAttachIds")
+    if isinstance(cached, list):
+        return list(cached), []
+    notes, ids, seen = [], [], set()
+
+    def add(raw) -> None:
+        aid = P.norm_attach_id(raw)
+        if aid and aid not in seen:
+            seen.add(aid)
+            ids.append(aid)
+
+    def finish():
+        keys["_resolvedAttachIds"] = list(ids)
+        if ids:
+            keys["attachIds"] = list(dict.fromkeys(list(keys.get("attachIds") or []) + ids))
+        return ids, notes
+
+    talent = snap.get("talent") if isinstance(snap.get("talent"), dict) else {}
+    for raw in list(keys.get("attachIds") or []) + [talent_attach_id(talent), app_no]:
+        add(raw)
+    if ids:
+        return finish()
+
+    names = []
+    for n in list(keys.get("names") or []) + [talent.get("name"), talent.get("real_name"), talent.get("realName")]:
+        for x in _split_person_names(n):
+            k = _norm_name(x)
+            if k and x not in names:
+                names.append(x)
+    if not names:
+        notes.append("无人才编号且未识别到申报人姓名，无法检索人才库")
+        return finish()
+    notes.append("无人才编号，按姓名检索：" + " / ".join(names[:4]))
+    mode = _pool_mode(snap)
+    hit = None
+    used = ""
+    try:
+        for nm in names[:6]:
+            hit = await _talent_by_q(nm, mode, names)
+            if hit:
+                used = nm
+                break
+        if hit:
+            hit = await _detail("talent", hit)
+            aid = talent_attach_id(hit)
+            if aid:
+                add(aid)
+                notes.append("姓名「" + used + "」命中人才编号 " + aid)
+            else:
+                notes.append("姓名「" + used + "」命中人才记录，但记录无编号")
+            if hit and not snap.get("talent"):
+                snap["talent"] = hit
+            elif hit and isinstance(snap.get("talent"), dict):
+                for k, v in hit.items():
+                    snap["talent"].setdefault(k, v)
+    except PoolError as e:
+        notes.append("姓名检索失败：" + e.code + " " + e.message)
+        return finish()
+    if not ids:
+        notes.append("按姓名未命中人才库（" + " / ".join(names[:4]) + "）")
+    return finish()
 
 
 def _clean_person_name(n) -> str:
@@ -320,6 +421,11 @@ async def lookup_for_app(fname: str, app_text: str, mode: str | None = None) -> 
     mode = want
     try:
         talent = None
+        if not keys["attachIds"]:
+            if keys["names"]:
+                snap["notes"].append("无人才编号，按姓名检索：" + " / ".join(keys["names"][:4]))
+            else:
+                snap["notes"].append("无人才编号且未识别到申报人姓名，未查人才库")
         for aid in keys["attachIds"]:
             talent = await _talent_by_attach(aid, mode)
             if talent:
@@ -333,8 +439,14 @@ async def lookup_for_app(fname: str, app_text: str, mode: str | None = None) -> 
                     break
         if talent:
             snap["talent"] = await _detail("talent", talent)
+            aid = talent_attach_id(snap["talent"])
+            if aid and aid not in keys["attachIds"]:
+                keys["attachIds"].append(aid)
+                snap["notes"].append("回填人才编号 " + aid)
         else:
-            snap["notes"].append("人才未命中（编号 " + "/".join(keys["attachIds"] or ["无"]) + "）")
+            miss = "/".join(keys["attachIds"] or []) or "无编号"
+            extra = "；姓名 " + " / ".join(keys["names"][:4]) if keys["names"] else ""
+            snap["notes"].append("人才未命中（" + miss + extra + "）")
 
         ent = None
         for code in keys["creditCodes"]:
@@ -353,7 +465,7 @@ async def lookup_for_app(fname: str, app_text: str, mode: str | None = None) -> 
 
         t = snap["talent"] or {}
         e = snap["enterprise"] or {}
-        tlabel = " ".join(x for x in (str(t.get("attach_id") or ""), str(t.get("name") or "")) if x).strip()
+        tlabel = " ".join(x for x in (talent_attach_id(t) or str(t.get("attach_id") or ""), str(t.get("name") or "")) if x).strip()
         elabel = str(e.get("company_name") or e.get("credit_code") or "").strip()
         snap["hit"] = {"talent": tlabel, "enterprise": elabel, "ok": bool(t or e)}
         snap["ok"] = bool(t or e)

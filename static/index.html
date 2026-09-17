@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py53">
+<link rel="stylesheet" href="/public/style.css?v=py55">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -61,7 +61,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 
     <div class="field">
       <label class="flabel">模型配置</label>
-      <p class="cfg-hint">当前只用 Gemini 生成修改意见（思考中度，温度 0.1）。Grok / 火山配置在管理后台。</p>
+      <p class="cfg-hint">当前只用 Gemini 生成修改意见。请求格式可选 OpenAI 兼容或 Google GenAI；打开检索后会启用 Google Search。</p>
       <div class="cfg-toolbar">
         <div class="cfg-dd-col">
           <span class="cfg-mini">编辑配置</span>
@@ -219,7 +219,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
   </div>
 </div>
 
-<script src="/public/session.js?v=py52"></script>
-<script src="/public/app.js?v=py53"></script>
+<script src="/public/session.js?v=py55"></script>
+<script src="/public/app.js?v=py56"></script>
 </body>
 </html>

@@ -442,7 +442,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     <button type="button" class="mini" id="arPause" style="font-size:11.5px;padding:2px 7px">暂停</button>
   </div>
 
-<script src="/public/session.js?v=py52"></script>
+<script src="/public/session.js?v=py54"></script>
 <script>
 (function () {
   var me = null;
@@ -894,6 +894,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     var shown = fbFilteredItems();
     var total = shown.length;
     if (!total) {
+      revokeFbAuthBlobs();
       box.innerHTML = '<div class="files-muted">暂无反馈</div>';
       renderFbPager(0, 1, 1);
       return;
@@ -908,7 +909,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
         var sum = fbPreviewText(it);
         var open = fbIsOpen(it);
         var imgs = (it.files || []).map(function (f) {
-          return '<a class="fb-img-link" href="' + esc(f.url) + '"><img src="' + esc(f.url) + '" alt="' + esc(f.name) + '"></a>';
+          return '<a class="fb-img-link" href="' + esc(f.url) + '" data-auth-src="' + esc(f.url) + '"><img data-auth-src="' + esc(f.url) + '" alt="' + esc(f.name) + '"></a>';
         }).join('');
         var ops = '';
         if (it.status === 'new') ops += '<button type="button" class="mini" data-act="read" data-id="' + it.id + '">标为已读</button>';
@@ -936,6 +937,8 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
           '<div class="fb-ops">' + ops + '</div>' +
           '</div></div>';
     }).join('');
+    revokeFbAuthBlobs();
+    if (window.sbBindAuthImages) fbAuthBlobs = window.sbBindAuthImages(box, []);
     renderFbPager(total, fbPage, pages);
   }
   function loadFeedback() {
@@ -981,6 +984,11 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     ev.preventDefault();
     fbToggleItem(hd.closest ? hd.closest('.fb-item') : null);
   });
+  var fbAuthBlobs = [];
+  function revokeFbAuthBlobs() {
+    fbAuthBlobs.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
+    fbAuthBlobs = [];
+  }
   var fbPrev = { urls: [], names: [], i: 0, scale: 1, x: 0, y: 0, drag: null };
   var FB_ZOOM_MIN = 0.25, FB_ZOOM_MAX = 8, FB_ZOOM_STEP = 1.25;
   function fbPreviewClose() {
@@ -1031,8 +1039,24 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     var img = document.getElementById('fbPreviewImg');
     var cap = document.getElementById('fbPreviewCap');
     if (img) {
-      img.src = fbPrev.urls[fbPrev.i];
       img.alt = fbPrev.names[fbPrev.i] || '';
+      var url = fbPrev.urls[fbPrev.i] || '';
+      if (url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) {
+        img.src = url;
+      } else if (window.sbAuthBlob && url) {
+        var idx = fbPrev.i;
+        img.removeAttribute('src');
+        window.sbAuthBlob(url).then(function (u) {
+          fbAuthBlobs.push(u);
+          if (fbPrev.i !== idx) return;
+          fbPrev.urls[idx] = u;
+          img.src = u;
+        }).catch(function () {
+          if (fbPrev.i === idx) img.alt = '图片无法加载';
+        });
+      } else {
+        img.src = url;
+      }
     }
     if (cap) cap.textContent = fbPrev.names[fbPrev.i] || '';
     var many = fbPrev.urls.length > 1;
@@ -1123,7 +1147,11 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       ev.preventDefault();
       var wrap = link.closest ? link.closest('.fb-imgs') : null;
       var links = wrap ? Array.prototype.slice.call(wrap.querySelectorAll('a.fb-img-link')) : [link];
-      fbPrev.urls = links.map(function (a) { return a.getAttribute('href') || ''; }).filter(Boolean);
+      fbPrev.urls = links.map(function (a) {
+        var im = a.querySelector('img');
+        if (im && im.src && im.src.indexOf('blob:') === 0) return im.src;
+        return a.getAttribute('data-auth-src') || a.getAttribute('href') || '';
+      }).filter(Boolean);
       fbPrev.names = links.map(function (a) {
         var im = a.querySelector('img');
         return (im && im.getAttribute('alt')) || '';
@@ -1214,6 +1242,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       var k = el.getAttribute('data-k');
       if (k === 'apiKey' || k === 'password') { if (el.value.trim()) p[k] = el.value.trim(); }
       else if (k === 'stream') p.stream = el.checked;
+      else if (k === 'enableSearch') p.enableSearch = el.checked;
       else if (k === 'timeoutSec') { var n = parseInt(el.value, 10); if (n > 0) p.timeoutSec = n; }
       else if (k === 'temperature') { var t = parseFloat(el.value); if (!isNaN(t)) p.temperature = t; }
       else if (k === 'id') { if (el.value.trim()) p.id = el.value.trim(); }
@@ -1254,7 +1283,11 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
             '</select></div></div>'
           : '') +
         (f.key === 'gemini'
-          ? '<div class="f-row"><label>温度</label><div class="inp"><input type="number" step="0.1" min="0" max="2" data-f="gemini" data-k="temperature" value="' + esc(m.temperature == null ? 0.1 : m.temperature) + '"></div></div>'
+          ? '<div class="f-row"><label>温度</label><div class="inp"><input type="number" step="0.1" min="0" max="2" data-f="gemini" data-k="temperature" value="' + esc(m.temperature == null ? 0.1 : m.temperature) + '"></div></div>' +
+            '<div class="f-row"><label>API 请求格式</label><div class="inp"><select data-f="gemini" data-k="apiFormat" class="role-sel" style="width:100%;height:46px;padding:0 10px">' +
+              [['openai','OpenAI 兼容（/chat/completions）'],['genai','Google GenAI（generateContent）']].map(function (v) { return '<option value="' + v[0] + '"' + ((m.apiFormat || 'openai') === v[0] ? ' selected' : '') + '>' + v[1] + '</option>'; }).join('') +
+            '</select></div></div>' +
+            '<div class="f-row"><label>检索</label><div class="chk"><input type="checkbox" data-f="gemini" data-k="enableSearch"' + (m.enableSearch ? ' checked' : '') + '> 打开检索（Google Search）</div></div>'
           : '') +
         (f.key !== 'grok'
           ? '<div class="f-row"><label>流式</label><div class="chk"><input type="checkbox" data-f="' + f.key + '" data-k="stream"' + (m.stream ? ' checked' : '') + '> 使用流式输出</div></div>'

@@ -171,9 +171,11 @@ async def _talent_pack_files(snap: dict, app_no: str) -> tuple[list, list]:
     acc, notes = [], []
     if not load_config().get("poolConfigured"):
         return acc, notes
-    ids = _attach_ids(snap, app_no)
+    ids, extra = await POOL.resolve_attach_ids(snap, app_no)
+    notes.extend(extra)
     if not ids:
-        notes.append("无法确定人才编号，未查人才库附件包")
+        if not extra:
+            notes.append("无法确定人才编号，未查人才库附件包")
         return acc, notes
     last_err = ""
     for aid in ids:
@@ -230,7 +232,7 @@ def _attach_ids(snap: dict, app_no: str) -> list:
     ids, seen = [], set()
     keys = (snap or {}).get("keys") or {}
     talent = (snap or {}).get("talent") or {}
-    for raw in list(keys.get("attachIds") or []) + [talent.get("attach_id"), app_no]:
+    for raw in list(keys.get("attachIds") or []) + [POOL.talent_attach_id(talent), app_no]:
         aid = P.norm_attach_id(raw)
         if aid and aid not in seen:
             seen.add(aid)
@@ -318,10 +320,12 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
             result["papersError"] = "论文 API 未配置（config.json papers.apiKey）"
             result["notes"].append(result["papersError"])
         else:
-            ids = _attach_ids(snap, app_no)
+            ids, extra = await POOL.resolve_attach_ids(snap, app_no)
+            result["notes"].extend(extra)
             if not ids:
-                result["papersError"] = "无法确定人才编号，论文系统只能按 attach_id 查询"
-                result["notes"].append(result["papersError"])
+                result["papersError"] = extra[-1] if extra else "无法确定人才编号，论文系统只能按 attach_id 查询"
+                if result["papersError"] not in result["notes"]:
+                    result["notes"].append(result["papersError"])
             else:
                 last_err = ""
                 for aid in ids:
@@ -376,7 +380,8 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
         person = PP.person_name(snap)
         projects = PP.extract_projects(snap, app_text)
         company = str(((snap or {}).get("keys") or {}).get("company") or "")
-        ids = _attach_ids(snap, app_no)
+        ids, extra = await POOL.resolve_attach_ids(snap, app_no)
+        result["notes"].extend(extra)
         aid = ids[0] if ids else str(app_no or "")
         if not result.get("codebuddyFetched"):
             result["codebuddyFetched"] = True

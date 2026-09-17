@@ -31,6 +31,41 @@ def llm_api_base(url: str) -> str:
     return u + "/v1"
 
 
+def api_format_of(val) -> str:
+    """openai = Chat Completions；genai = Google Generative Language generateContent。"""
+    s = str(val or "").strip().lower().replace("-", "").replace("_", "")
+    if s in ("genai", "google", "gemini", "generativelanguage", "v1beta", "googlegenai"):
+        return "genai"
+    return "openai"
+
+
+def llm_root(url: str) -> str:
+    """去掉 /chat/completions、/openai、/v1beta、/v1 等后缀，得到网关根。"""
+    u = str(url or "").strip().rstrip("/")
+    if not u:
+        return ""
+    if u.endswith("/chat/completions"):
+        u = u[: -len("/chat/completions")].rstrip("/")
+    u = re.sub(r"/openai$", "", u, flags=re.I)
+    u = re.sub(r"/v1beta$", "", u, flags=re.I)
+    u = re.sub(r"/v\d+$", "", u)
+    return u.rstrip("/")
+
+
+def llm_chat_url(base: str) -> str:
+    return llm_api_base(base) + "/chat/completions"
+
+
+def llm_genai_url(base: str, model: str, *, stream: bool = False) -> str:
+    root = llm_root(base) or "https://generativelanguage.googleapis.com"
+    mid = str(model or "").strip() or "gemini-3.7-flash"
+    action = "streamGenerateContent" if stream else "generateContent"
+    url = root + "/v1beta/models/" + mid + ":" + action
+    if stream and "alt=" not in url:
+        url += "?alt=sse"
+    return url
+
+
 def httpx_trust_env() -> bool:
     """仅当显式设置了 HTTP(S)_PROXY 时才走代理。
 
@@ -375,11 +410,13 @@ def catalog_entries() -> list:
         if not mid or FILL_MARK in mid or mid in seen:
             return
         seen.add(mid)
+        fmt = api_format_of(raw.get("apiFormat") or raw.get("requestFormat") or raw.get("protocol"))
+        enable_search = bool(raw.get("enableSearch") or raw.get("googleSearch") or raw.get("search"))
         own_base = str(raw.get("baseUrl") or "").strip()
         if own_base:
-            base = llm_api_base(own_base)
+            base = llm_api_base(own_base) if fmt == "openai" else own_base.rstrip("/")
         else:
-            base = llm_api_base(cfg.get("baseUrl") or "")
+            base = llm_api_base(cfg.get("baseUrl") or "") if fmt == "openai" else llm_root(cfg.get("baseUrl") or "")
         key = ""
         if isinstance(raw, dict):
             key = _usable_secret(raw.get("apiKey") or raw.get("api_key"))
@@ -422,6 +459,8 @@ def catalog_entries() -> list:
             "stream": stream,
             "timeoutSec": timeout,
             "temperature": temp,
+            "apiFormat": fmt,
+            "enableSearch": enable_search,
             "ready": ready,
         })
 
@@ -621,13 +660,22 @@ def _merge_gemini(raw: dict, gemini: dict):
         "timeoutSec": 300,
         "reasoningEffort": "medium",
         "temperature": LLM_TEMPERATURE,
+        "apiFormat": "openai",
+        "enableSearch": False,
     }
     if gemini.get("id"):
         entry["id"] = str(gemini.get("id") or "").strip() or entry.get("id") or "gemini-3.7-flash"
     if gemini.get("label"):
         entry["label"] = str(gemini.get("label") or "Gemini").strip() or "Gemini"
+    fmt = api_format_of(gemini.get("apiFormat") if "apiFormat" in gemini else entry.get("apiFormat"))
+    entry["apiFormat"] = fmt
+    if "enableSearch" in gemini or "googleSearch" in gemini or "search" in gemini:
+        entry["enableSearch"] = bool(gemini.get("enableSearch") or gemini.get("googleSearch") or gemini.get("search"))
+    else:
+        entry["enableSearch"] = bool(entry.get("enableSearch"))
     if gemini.get("baseUrl") is not None:
-        entry["baseUrl"] = llm_api_base(str(gemini.get("baseUrl") or "https://cdn.12ai.org"))
+        raw_url = str(gemini.get("baseUrl") or "https://cdn.12ai.org").strip()
+        entry["baseUrl"] = llm_api_base(raw_url) if fmt == "openai" else raw_url.rstrip("/")
     new_key = _usable_secret(gemini.get("apiKey")) if "apiKey" in gemini else ""
     if new_key:
         entry["apiKey"] = new_key
@@ -794,6 +842,8 @@ def editor_config() -> dict:
         }
         if fam == "gemini":
             out["temperature"] = temp
+            out["apiFormat"] = api_format_of(p.get("apiFormat"))
+            out["enableSearch"] = bool(p.get("enableSearch"))
         return out
 
     grok = pack("grok", "grok-4.6", "Grok", False, LLM_TIMEOUT_DEFAULT)

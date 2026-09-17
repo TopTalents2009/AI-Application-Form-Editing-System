@@ -5,7 +5,7 @@ import httpx
 from urllib.parse import urlparse
 from .config import (
     LLM_TIMEOUT_DEFAULT, LLM_CONNECT_TIMEOUT, LLM_TEMPERATURE, LLM_RETRIES, LLM_STREAM,
-    llm_api_base, resolve_llm, httpx_trust_env, catalog_entries,
+    llm_chat_url, llm_genai_url, api_format_of, resolve_llm, httpx_trust_env, catalog_entries,
 )
 
 FENCE = chr(96) * 3
@@ -45,6 +45,102 @@ def _choice_text(obj: dict) -> str:
         or _as_text(msg.get("reasoning_content"))
         or ""
     )
+
+
+def _data_url(url: str) -> tuple[str, str]:
+    s = str(url or "").strip()
+    m = re.match(r"^data:([^;,]+)?(;base64)?,(.+)$", s, re.I | re.S)
+    if not m:
+        return "", ""
+    mime = (m.group(1) or "image/jpeg").strip() or "image/jpeg"
+    if (m.group(2) or "").lower() != ";base64":
+        return mime, ""
+    return mime, re.sub(r"\s+", "", m.group(3) or "")
+
+
+def _genai_parts(raw) -> list:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [{"text": raw}] if raw else []
+    if isinstance(raw, list):
+        out = []
+        for x in raw:
+            out.extend(_genai_parts(x) if not isinstance(x, dict) else _genai_part_dict(x))
+        return out
+    if isinstance(raw, dict):
+        return _genai_part_dict(raw)
+    return [{"text": str(raw)}]
+
+
+def _genai_part_dict(x: dict) -> list:
+    t = str(x.get("type") or "").lower()
+    if t in ("text", "") and (x.get("text") or x.get("content")) and "image_url" not in x:
+        txt = str(x.get("text") or x.get("content") or "")
+        return [{"text": txt}] if txt else []
+    iu = x.get("image_url")
+    url = ""
+    if isinstance(iu, dict):
+        url = str(iu.get("url") or "")
+    elif iu:
+        url = str(iu)
+    elif t in ("image_url", "image"):
+        url = str(x.get("url") or x.get("data") or "")
+    if url:
+        mime, b64 = _data_url(url)
+        if b64:
+            return [{"inline_data": {"mime_type": mime or "image/jpeg", "data": b64}}]
+        return [{"file_data": {"file_uri": url}}]
+    txt = str(x.get("text") or x.get("content") or "")
+    return [{"text": txt}] if txt else []
+
+
+def _openai_to_genai_body(messages) -> dict:
+    system_parts, contents = [], []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "user").lower()
+        parts = _genai_parts(m.get("content"))
+        if not parts:
+            continue
+        if role == "system":
+            system_parts.extend(parts)
+            continue
+        grole = "model" if role in ("assistant", "model") else "user"
+        if contents and contents[-1].get("role") == grole:
+            contents[-1]["parts"].extend(parts)
+        else:
+            contents.append({"role": grole, "parts": parts})
+    body = {"contents": contents or [{"role": "user", "parts": [{"text": " "}]}]}
+    if system_parts:
+        body["system_instruction"] = {"parts": system_parts}
+    return body
+
+
+def _genai_text(obj: dict) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    err = obj.get("error")
+    if err:
+        if isinstance(err, dict):
+            raise LlmError(_trunc(str(err.get("message") or err.get("status") or err), 300))
+        raise LlmError(_trunc(str(err), 300))
+    cands = obj.get("candidates") or []
+    if not cands:
+        pf = obj.get("promptFeedback") or {}
+        br = pf.get("blockReason") or pf.get("block_reason")
+        if br:
+            raise LlmError("Gemini 拒绝生成：" + str(br))
+        return _choice_text(obj)
+    parts = (((cands[0] or {}).get("content") or {}).get("parts")) or []
+    texts = []
+    for p in parts:
+        if not isinstance(p, dict) or p.get("thought"):
+            continue
+        if p.get("text"):
+            texts.append(str(p.get("text") or ""))
+    return "".join(texts)
 
 async def _read_sse(resp: httpx.Response) -> tuple[str, dict]:
     parts, usage, buf = [], {}, ""
@@ -119,14 +215,70 @@ def _explain(e: Exception, url: str, timeout_s: float) -> LlmError:
     return LlmError(type(e).__name__ + ": " + msg[:300])
 
 
+def _temp_of(prof) -> float:
+    temp = (prof or {}).get("temperature")
+    try:
+        return float(temp) if temp not in (None, "") else LLM_TEMPERATURE
+    except (TypeError, ValueError):
+        return LLM_TEMPERATURE
+
+
+async def _read_genai_sse(resp: httpx.Response) -> tuple[str, dict]:
+    parts, usage, buf = [], {}, ""
+    async for chunk in resp.aiter_text():
+        buf += chunk
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            line = line.strip()
+            if not line or line.startswith(":"):
+                continue
+            data = line[5:].strip() if line.lower().startswith("data:") else line
+            if data == "[DONE]":
+                return "".join(parts), usage
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            um = obj.get("usageMetadata") or obj.get("usage") or {}
+            if um:
+                usage = um
+            piece = _genai_text(obj)
+            if piece:
+                parts.append(piece)
+    leftover = buf.strip()
+    if leftover.lower().startswith("data:"):
+        leftover = leftover[5:].strip()
+    if leftover and leftover != "[DONE]":
+        try:
+            obj = json.loads(leftover)
+            if isinstance(obj, dict):
+                um = obj.get("usageMetadata") or obj.get("usage") or {}
+                if um:
+                    usage = um
+                piece = _genai_text(obj)
+                if piece:
+                    parts.append(piece)
+        except (json.JSONDecodeError, LlmError):
+            pass
+    return "".join(parts), usage
+
+
 async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIMEOUT_DEFAULT, model=None, retries=None, apply_profile_timeout: bool = True):
     try:
         prof = resolve_llm(model)
     except ValueError as e:
         raise LlmError(str(e))
-    url = llm_api_base(prof["baseUrl"]) + "/chat/completions"
     if apply_profile_timeout and prof.get("timeoutSec"):
         timeout_s = float(prof["timeoutSec"])
+    if api_format_of(prof.get("apiFormat")) == "genai":
+        return await _chat_genai(prof, messages, json_mode=json_mode, timeout_s=timeout_s, retries=retries)
+    return await _chat_openai(prof, messages, json_mode=json_mode, timeout_s=timeout_s, retries=retries)
+
+
+async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, retries):
+    url = llm_chat_url(prof["baseUrl"])
     use_stream = bool(prof.get("stream")) if "stream" in prof else bool(LLM_STREAM)
     headers = {
         "Content-Type": "application/json",
@@ -137,24 +289,25 @@ async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIME
     with_effort = bool(prof.get("reasoningEffort"))
     with_json = bool(json_mode)
     with_stream_opts = True
+    with_search = bool(prof.get("enableSearch"))
+    search_style = "google" if with_search else ""
     trust = httpx_trust_env()
     timeout = httpx.Timeout(timeout_s, connect=LLM_CONNECT_TIMEOUT)
     n_try = int(retries) if retries is not None else LLM_RETRIES
     if n_try < 1:
         n_try = 1
     for attempt in range(1, n_try + 1):
-        temp = prof.get("temperature")
-        try:
-            temp = float(temp) if temp not in (None, "") else LLM_TEMPERATURE
-        except (TypeError, ValueError):
-            temp = LLM_TEMPERATURE
-        payload = {"model": prof["model"], "messages": messages, "temperature": temp, "stream": use_stream}
+        payload = {"model": prof["model"], "messages": messages, "temperature": _temp_of(prof), "stream": use_stream}
         if use_stream and with_stream_opts:
             payload["stream_options"] = {"include_usage": True}
         if with_effort and prof.get("reasoningEffort"):
             payload["reasoning_effort"] = prof["reasoningEffort"]
         if with_json:
             payload["response_format"] = {"type": "json_object"}
+        if with_search and search_style == "google":
+            payload["tools"] = [{"google_search": {}}]
+        elif with_search and search_style == "type":
+            payload["tools"] = [{"type": "google_search"}]
         try:
             async with httpx.AsyncClient(timeout=timeout, trust_env=trust) as client:
                 if use_stream:
@@ -177,6 +330,12 @@ async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIME
         except Exception as e:  # noqa: BLE001
             last_err = e
             m = str(e)
+            if with_search and m.startswith("HTTP 400") and re.search("tool|search|google_search|unknown|unexpected|invalid", m, re.I):
+                if search_style == "google":
+                    search_style = "type"
+                    continue
+                with_search = False
+                continue
             if with_effort and m.startswith("HTTP 400") and re.search("reason|thinking|effort|未知|unknown|unexpected|invalid", m, re.I):
                 with_effort = False
                 continue
@@ -187,6 +346,89 @@ async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIME
                 with_stream_opts = False
                 continue
             if use_stream and m.startswith("HTTP 400") and re.search("stream", m, re.I):
+                use_stream = False
+                continue
+            if isinstance(e, (asyncio.TimeoutError, httpx.TimeoutException)):
+                break
+            if m.startswith("HTTP 4") and "HTTP 429" not in m:
+                break
+            await asyncio.sleep(5 * min(attempt, 2))
+    raise _explain(last_err or LlmError("LLM 调用失败"), url, timeout_s)
+
+
+async def _chat_genai(prof, messages, *, json_mode: bool, timeout_s: float, retries):
+    use_stream = bool(prof.get("stream")) if "stream" in prof else bool(LLM_STREAM)
+    url = llm_genai_url(prof.get("baseUrl") or "", prof.get("model") or prof.get("id") or "", stream=use_stream)
+    key = str(prof.get("apiKey") or "")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + key,
+        "x-goog-api-key": key,
+        "Accept": "text/event-stream" if use_stream else "application/json",
+    }
+    last_err = None
+    with_effort = bool(prof.get("reasoningEffort"))
+    with_json = bool(json_mode)
+    with_search = bool(prof.get("enableSearch"))
+    search_style = "google" if with_search else ""
+    trust = httpx_trust_env()
+    timeout = httpx.Timeout(timeout_s, connect=LLM_CONNECT_TIMEOUT)
+    n_try = int(retries) if retries is not None else LLM_RETRIES
+    if n_try < 1:
+        n_try = 1
+    body_base = _openai_to_genai_body(messages)
+    for attempt in range(1, n_try + 1):
+        url = llm_genai_url(prof.get("baseUrl") or "", prof.get("model") or prof.get("id") or "", stream=use_stream)
+        payload = dict(body_base)
+        gen_cfg = {"temperature": _temp_of(prof)}
+        if with_json:
+            gen_cfg["responseMimeType"] = "application/json"
+        if with_effort and prof.get("reasoningEffort"):
+            gen_cfg["thinkingConfig"] = {
+                "thinkingLevel": str(prof.get("reasoningEffort") or "medium").lower(),
+            }
+        payload["generationConfig"] = gen_cfg
+        if with_search and search_style == "google":
+            payload["tools"] = [{"google_search": {}}]
+        elif with_search and search_style == "retrieval":
+            payload["tools"] = [{"google_search_retrieval": {}}]
+        try:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=trust) as client:
+                if use_stream:
+                    async with client.stream("POST", url, headers=headers, json=payload) as r:
+                        if r.status_code >= 400:
+                            body = (await r.aread()).decode("utf-8", "replace")
+                            raise LlmError(f"HTTP {r.status_code}: {_trunc(body, 300)}")
+                        content, usage = await asyncio.wait_for(_read_genai_sse(r), timeout=timeout_s)
+                else:
+                    r = await client.post(url, headers={**headers, "Accept": "application/json"}, json=payload)
+                    if r.status_code >= 400:
+                        raise LlmError(f"HTTP {r.status_code}: {_trunc(r.text, 300)}")
+                    try:
+                        data = r.json()
+                    except json.JSONDecodeError:
+                        data = _decode_json_object(r.text or "")
+                    if not isinstance(data, dict):
+                        data = {}
+                    content = _genai_text(data)
+                    usage = data.get("usageMetadata") or data.get("usage") or {}
+            return {"content": content or "", "usage": usage or {}}
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            m = str(e)
+            if with_search and m.startswith("HTTP 400") and re.search("tool|search|google_search|retrieval|unknown|unexpected|invalid", m, re.I):
+                if search_style == "google":
+                    search_style = "retrieval"
+                    continue
+                with_search = False
+                continue
+            if with_effort and m.startswith("HTTP 400") and re.search("think|reason|effort|unknown|unexpected|invalid|未知", m, re.I):
+                with_effort = False
+                continue
+            if with_json and m.startswith("HTTP 400") and re.search("json|mime|responseMimeType|schema", m, re.I):
+                with_json = False
+                continue
+            if use_stream and m.startswith("HTTP 400") and re.search("stream|sse|alt", m, re.I):
                 use_stream = False
                 continue
             if isinstance(e, (asyncio.TimeoutError, httpx.TimeoutException)):
@@ -241,7 +483,7 @@ async def probe_models(model_id=None) -> dict:
         except Exception as e:
             item["ms"] = int((time.monotonic() - t0) * 1000)
             item["ok"] = False
-            item["error"] = str(_explain(e, llm_api_base(p.get("baseUrl") or "") + "/chat/completions", 25))[:240]
+            item["error"] = str(_explain(e, llm_chat_url(p.get("baseUrl") or "") if api_format_of(p.get("apiFormat")) != "genai" else llm_genai_url(p.get("baseUrl") or "", p.get("id") or ""), 25))[:240]
         out.append(item)
     return {"ok": all(x.get("ok") for x in out), "results": out}
 

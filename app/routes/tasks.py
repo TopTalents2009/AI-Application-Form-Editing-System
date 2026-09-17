@@ -79,7 +79,9 @@ def create_router(runner):
         leftovers = [str(x) for x in (body.get("leftovers") or []) if str(x).strip()]
         if not edits and not leftovers:
             raise HTTPException(400, "没有可应用的编辑（请至少保留一条有效行）")
-        await runner.apply_confirmed(t, edits, leftovers)
+        u = _user(request)
+        actor = str(u.get("realName") or u.get("real_name") or "").strip() or str(u.get("username") or "").strip()
+        await runner.apply_confirmed(t, edits, leftovers, actor=actor)
         out = {
             "id": tid,
             "status": t["status"],

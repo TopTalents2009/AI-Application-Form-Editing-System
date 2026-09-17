@@ -14,6 +14,7 @@ from .pdf_app import (
 )
 from .opinion_extract import resolve_ocr_timeout
 from .pool import lookup_for_app, format_pool_prompt, save_snapshot
+from .edu_resume import enrich_education, save_snapshot as save_edu_snapshot
 from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block, public_attach_hit
 from .report_docx import write_compare_docx
 from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits, enforce_edit_limits, limit_hint
@@ -373,6 +374,7 @@ class TaskStore:
         for t in arr:
             self._ensure_app_mode(t)
             out.append({"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": t["app"], "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId"), "owner": t.get("owner") or "",
+                 "appliedBy": t.get("appliedBy") or "", "appliedAt": t.get("appliedAt") or "",
                  "deliverables": [{"name": o["name"], "size": o.get("size", 0)} for o in (t.get("deliverables") or [])]})
         return out
 
@@ -860,6 +862,16 @@ class TaskStore:
         self.log(t, "" + (snap.get("summary") or "无库内匹配") + (("（" + "；".join(snap.get("notes") or []) + "）") if snap.get("notes") else ""))
         pool_text = format_pool_prompt(snap)
         opinion_blob = [c.get("opinion") or "" for c in clauses] + [c.get("clause") or "" for c in clauses]
+        edu = {"needed": False, "prompt": "", "notes": [], "leftover": ""}
+        try:
+            edu = await enrich_education(snap, opinion_blob, app_no=app_no, task_dir=t["dir"])
+            save_edu_snapshot(t["dir"], edu)
+        except Exception as e:
+            edu["notes"] = list(edu.get("notes") or []) + ["教育信息检索失败：" + str(e)[:160]]
+        if edu.get("prompt"):
+            pool_text = str(pool_text or "") + "\n\n" + str(edu.get("prompt") or "")
+        if edu.get("needed"):
+            self.log(t, "教育信息缺失：已检索人才库原始简历" + (("（" + "；".join(edu.get("notes") or []) + "）") if edu.get("notes") else ""))
         attach = {"needed": [], "items": [], "private": {}, "notes": [], "summary": ""}
         self.log(t, "检索缺失附件（人才库优先；项目证明再走联网检索/生成接口）…")
         try:
@@ -1319,6 +1331,9 @@ class TaskStore:
                 continue
             leftovers.append(line)
             lo_blob += "\n" + line
+        edu_lo = str(edu.get("leftover") or "").strip()
+        if edu_lo and edu_lo not in leftovers:
+            leftovers.append(edu_lo)
 
         edits, leftovers, manual_n = promote_unknown_to_manual_edits(
             clauses, edits, leftovers, texts["appText"], app_no=app_no, hj=hj_mode,
@@ -1374,10 +1389,16 @@ class TaskStore:
             t["finishedAt"] = now_str(); self.persist(t)
 
     # ---------- ② 人工确认后写入文件 ----------
-    async def apply_confirmed(self, t, edits, leftovers):
+    async def apply_confirmed(self, t, edits, leftovers, actor: str = ""):
+        actor = str(actor or "").strip()
+        who = ("，确认人：" + actor) if actor else ""
         try:
-            t["status"] = "running"; t["error"] = None; t.pop("applyWarning", None); self.persist(t)
-            self.log(t, "人工确认完成（" + str(len(edits)) + " 条编辑），开始写入文件…")
+            t["status"] = "running"; t["error"] = None; t.pop("applyWarning", None)
+            if actor:
+                t["appliedBy"] = actor
+                t["appliedAt"] = now_str()
+            self.persist(t)
+            self.log(t, "人工确认完成（" + str(len(edits)) + " 条编辑），开始写入文件" + who)
             tmp_dir = Path(t["dir"]) / "work" / "tmp"; tmp_dir.mkdir(parents=True, exist_ok=True)
             plan_path = tmp_dir / "plan.json"
             plan_clauses = []
@@ -1580,7 +1601,7 @@ class TaskStore:
             if not await self.verify_outputs(t):
                 t["status"] = "failed"; t["error"] = "成品校验未通过（详见产出校验信息）"; return
             t["status"] = "done"
-            self.log(t, "完成：编辑 " + str(hits) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件")
+            self.log(t, "完成：编辑 " + str(hits) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件" + who)
         except ValueError as e:
             t["status"] = "failed"; t["error"] = str(e)
         except LlmError as e:
