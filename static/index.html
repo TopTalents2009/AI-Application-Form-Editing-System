@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py55">
+<link rel="stylesheet" href="/public/style.css?v=py57">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -24,9 +24,19 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
   </div>
   <div class="grow"></div>
   <div id="userBox" style="display:none">
-    <span class="tuser" id="userName"></span>
-    <a id="adminLink" class="tbtn" href="/admin" style="display:none">用户管理</a>
-    <button type="button" class="tbtn" id="logoutBtn">退出登录</button>
+    <div class="user-menu" id="userMenu">
+      <button type="button" class="tuser-btn" id="userMenuBtn" aria-haspopup="true" aria-expanded="false">
+        <span id="userName"></span>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="user-dd" id="userMenuDrop" hidden>
+        <button type="button" id="apiApplyBtn">API 申请</button>
+        <a href="/api/openapi/guide" id="apiDocDl">下载 API 文档</a>
+        <a id="adminLink" href="/admin" style="display:none">管理后台</a>
+        <div class="sep"></div>
+        <button type="button" class="danger" id="logoutBtn">退出登录</button>
+      </div>
+    </div>
   </div>
   <button type="button" class="tbtn" id="fbOpenBtn">意见反馈</button>
   <div class="live"><span class="dot"></span><span id="liveStatus">服务运行中</span></div>
@@ -193,6 +203,25 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
   </div>
 </div>
 
+<div id="apiApplyMask" class="fb-mask" hidden>
+  <div class="fb-modal" role="dialog" aria-labelledby="apiApplyTitle">
+    <div class="fb-head">
+      <h2 id="apiApplyTitle">API 申请</h2>
+      <button type="button" class="ghost" id="apiApplyClose">关闭</button>
+    </div>
+    <p class="fb-hint">填写用途后提交，管理员审核通过后会发放 API Key。密钥明文只显示一次，请立即复制保存。也可在用户菜单下载对接文档。</p>
+    <textarea id="apiApplyPurpose" class="fb-ta" rows="4" maxlength="500" placeholder="说明调用场景，例如：对接本单位系统自动提交申报书…"></textarea>
+    <div class="fb-actions">
+      <button type="button" class="primary" id="apiApplySubmit">提交申请</button>
+      <span id="apiApplyMsg" class="err"></span>
+    </div>
+    <h3 class="fb-sub">我的申请</h3>
+    <div id="apiApplyList" class="fb-list">加载中…</div>
+    <h3 class="fb-sub">已发放的密钥</h3>
+    <div id="apiKeyMine" class="fb-list">暂无</div>
+  </div>
+</div>
+
 <div id="credMask" class="fb-mask" hidden>
   <div class="fb-modal cred-modal" role="dialog" aria-labelledby="credTitle">
     <div class="fb-head">
@@ -220,6 +249,6 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </div>
 
 <script src="/public/session.js?v=py55"></script>
-<script src="/public/app.js?v=py56"></script>
+<script src="/public/app.js?v=py59"></script>
 </body>
 </html>

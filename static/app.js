@@ -10,6 +10,46 @@ var listExpanded = {};
 
 function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+var TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+function validTaskId(id) {
+  return TASK_ID_RE.test(String(id || ''));
+}
+function loginUrl() {
+  var p = location.pathname || '/';
+  if (/^\/t\/[A-Za-z0-9._-]+$/.test(p)) return '/login?next=' + encodeURIComponent(p);
+  return '/login';
+}
+function taskIdFromLocation() {
+  var m = (location.pathname || '').match(/^\/t\/([^\/?#]+)$/);
+  var raw = '';
+  if (m) raw = m[1];
+  else {
+    try { raw = new URLSearchParams(location.search || '').get('t') || ''; } catch (e) { raw = ''; }
+  }
+  try { raw = decodeURIComponent(raw); } catch (e) {}
+  raw = String(raw || '').trim();
+  return validTaskId(raw) ? raw : '';
+}
+function syncTaskUrl(id, mode) {
+  id = String(id || '').trim();
+  if (id && !validTaskId(id)) id = '';
+  var path = id ? '/t/' + encodeURIComponent(id) : '/';
+  var search = '';
+  if (!id) {
+    try {
+      var sp = new URLSearchParams(location.search || '');
+      sp.delete('t');
+      var s = sp.toString();
+      if (s) search = '?' + s;
+    } catch (e2) {}
+  }
+  var next = path + search;
+  var cur = (location.pathname || '/') + (location.search || '');
+  if (cur === next) return;
+  var state = { taskId: id };
+  if (mode === 'replace') history.replaceState(state, '', next);
+  else history.pushState(state, '', next);
+}
 function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
 function apiMsg(res, fallback) {
   if (!res) return fallback || '请求失败';
@@ -827,6 +867,7 @@ function refreshList() {
     var n = rows.length;
     $('emptyHint').style.display = n ? 'none' : 'block';
     patchList(tb, rows);
+    syncSiblingsFromList();
     var pill = $('listCount');
     if (pill) {
       if (n) { pill.textContent = n + ' 条'; pill.classList.remove('hidden'); }
@@ -1000,8 +1041,29 @@ function switchBook(i) {
   resetPlanView();
   showDetail(currentSiblings[i].id, false);
 }
-function showDetail(id, scroll) {
+function syncSiblingsFromList() {
+  if (!currentDetail) return;
+  if (currentSiblings && currentSiblings.some(function (s) { return String(s.id) === String(currentDetail); })) {
+    updatePager();
+    return;
+  }
+  var tb = $('taskTable') && $('taskTable').querySelector('tbody');
+  if (!tb) return;
+  Array.prototype.forEach.call(tb.querySelectorAll('tr'), function (tr) {
+    var row = tr._row;
+    if (!row || row.kind !== 'batch' || !row.sibs) return;
+    var idx = -1;
+    row.sibs.forEach(function (s, i) { if (s && String(s.id) === String(currentDetail)) idx = i; });
+    if (idx < 0) return;
+    currentSiblings = row.sibs.map(asSib);
+    currentPage = idx;
+    updatePager();
+  });
+}
+function showDetail(id, scroll, fromUrl) {
+  if (!id || !validTaskId(id)) return;
   currentDetail = id;
+  syncTaskUrl(id, fromUrl ? 'replace' : 'push');
   $('matchCard').classList.add('hidden');
   $('detailCard').classList.remove('hidden');
   updatePager();
@@ -1009,6 +1071,15 @@ function showDetail(id, scroll) {
   pollDetail();
   pollTimer = setInterval(pollDetail, 1500);
   if (scroll !== false) $('detailCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function hideDetail(fromUrl) {
+  $('detailCard').classList.add('hidden');
+  currentDetail = null;
+  currentSiblings = null;
+  currentPage = 0;
+  updatePager();
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (!fromUrl) syncTaskUrl('', 'push');
 }
 var failStreak = 0;
 function pollDetail() {
@@ -1073,7 +1144,8 @@ function hideSharedMatch() {
 function pollBatch(id) {
   currentBatch = id;
   $('matchCard').classList.remove('hidden');
-  $('detailCard').classList.add('hidden');
+  if (currentDetail) hideDetail();
+  else $('detailCard').classList.add('hidden');
   $('batchId').textContent = id;
   $('matchErr').textContent = '';
   fetch('/api/batches/' + id).then(readJson).then(renderMatch).catch(function(){});
@@ -1224,14 +1296,20 @@ function onChipRemove(ev) {
 }
 $('appName').addEventListener('click', onChipRemove);
 $('opNames').addEventListener('click', onChipRemove);
-$('closeDetail').onclick = function () {
-  $('detailCard').classList.add('hidden');
-  currentDetail = null;
-  currentSiblings = null;
-  currentPage = 0;
-  updatePager();
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-};
+$('closeDetail').onclick = function () { hideDetail(); };
+window.addEventListener('popstate', function () {
+  var id = taskIdFromLocation();
+  if (id) {
+    if (String(currentDetail) !== String(id)) resetPlanView();
+    if (currentSiblings && !currentSiblings.some(function (s) { return String(s.id) === String(id); })) {
+      currentSiblings = null;
+      currentPage = 0;
+    }
+    showDetail(id, false, true);
+    return;
+  }
+  hideDetail(true);
+});
 $('pagePrev').onclick = function () { switchBook(currentPage - 1); };
 $('pageNext').onclick = function () { switchBook(currentPage + 1); };
 
@@ -1241,7 +1319,7 @@ $('pageNext').onclick = function () { switchBook(currentPage + 1); };
   window.fetch = function () {
     return _fetch.apply(this, arguments).then(function (res) {
       if (res.status === 401 && location.pathname !== '/login' && location.pathname !== '/portal' && location.pathname !== '/register') {
-        location.href = '/login';
+        location.href = loginUrl();
       }
       return res;
     });
@@ -1287,12 +1365,17 @@ function initUserBox() {
   if (!box) return;
   fetch('/api/auth/me').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
     var u = j && j.user;
-    if (!u) { location.href = '/login'; return; }
+    if (!u) { location.href = loginUrl(); return; }
     $('userName').textContent = u.realName + (u.department ? ' · ' + u.department : '');
-    if (u.role === 'admin') $('adminLink').style.display = '';
+    if (u.role === 'admin') {
+      var al = $('adminLink');
+      if (al) al.style.display = '';
+    }
     box.style.display = '';
+    bindUserMenu();
     var lb = $('logoutBtn');
     if (lb) lb.onclick = function () {
+      closeUserMenu();
       fetch('/api/auth/logout', { method: 'POST' }).then(function () {
         if (window.sbClearSession) sbClearSession();
         location.href = '/login';
@@ -1301,6 +1384,201 @@ function initUserBox() {
     if (u.mustSetCredentials) openCredModal(u);
   });
 }
+
+function closeUserMenu() {
+  var menu = $('userMenu');
+  var drop = $('userMenuDrop');
+  var btn = $('userMenuBtn');
+  if (menu) menu.classList.remove('open');
+  if (drop) drop.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function bindUserMenu() {
+  var btn = $('userMenuBtn');
+  var drop = $('userMenuDrop');
+  var menu = $('userMenu');
+  if (!btn || !drop || btn.getAttribute('data-bound')) return;
+  btn.setAttribute('data-bound', '1');
+  btn.onclick = function (e) {
+    e.stopPropagation();
+    if (drop.hidden) {
+      drop.hidden = false;
+      if (menu) menu.classList.add('open');
+      btn.setAttribute('aria-expanded', 'true');
+    } else closeUserMenu();
+  };
+  document.addEventListener('click', function (e) {
+    if (menu && menu.contains(e.target)) return;
+    closeUserMenu();
+  });
+  var applyBtn = $('apiApplyBtn');
+  if (applyBtn) applyBtn.onclick = function () {
+    closeUserMenu();
+    openApiApplyModal();
+  };
+  var doc = $('apiDocDl');
+  if (doc) doc.onclick = function (e) {
+    e.preventDefault();
+    closeUserMenu();
+    downloadApiGuide();
+  };
+}
+
+function downloadApiGuide() {
+  fetch('/api/openapi/guide').then(function (r) {
+    if (!r.ok) throw new Error('下载失败');
+    var dis = r.headers.get('content-disposition') || '';
+    var name = '申报书开放API文档.md';
+    var m = /filename\*=UTF-8''([^;]+)/i.exec(dis);
+    if (m) {
+      try { name = decodeURIComponent(m[1]); } catch (err) {}
+    }
+    return r.blob().then(function (b) { return { blob: b, name: name }; });
+  }).then(function (x) {
+    var url = URL.createObjectURL(x.blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = x.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+  }).catch(function () {
+    location.href = '/api/openapi/guide';
+  });
+}
+
+function setApiApplyMsg(ok, text) {
+  var el = $('apiApplyMsg');
+  if (!el) return;
+  el.className = ok ? 'err ok' : 'err';
+  el.textContent = text || '';
+}
+
+function apiReqStatus(it) {
+  var st = typeof it === 'string' ? it : (it && it.status) || '';
+  var ks = (it && it.keyStatus) || '';
+  if (st === 'revoked' || ks === 'revoked' || ks === 'disabled') return { cls: 'new', t: '密钥已被停用' };
+  if (st === 'approved') return { cls: 'done', t: '已通过' };
+  if (st === 'rejected') return { cls: 'new', t: '已拒绝' };
+  return { cls: 'read', t: '待审核' };
+}
+
+function renderApiApplyMine(data) {
+  var list = $('apiApplyList');
+  var keysEl = $('apiKeyMine');
+  var reqs = (data && data.requests) || [];
+  var keys = (data && data.keys) || [];
+  if (list) {
+    if (!reqs.length) list.innerHTML = '<div class="fb-item"><div class="fb-body" style="color:#98a2b6">还没有申请</div></div>';
+    else list.innerHTML = reqs.map(function (it) {
+      var st = apiReqStatus(it);
+      var extra = '';
+      if (it.status === 'rejected' && it.rejectReason) extra += '<div class="fb-reply"><span class="fb-rp-meta">拒绝原因</span><span class="fb-rp-text">' + esc(it.rejectReason) + '</span></div>';
+      if (st.t === '密钥已被停用') extra += '<div class="fb-reply"><span class="fb-rp-meta">密钥已被停用</span><span class="fb-rp-text">管理员已删除或停用该 API Key，无法继续调用。如需使用请重新申请。</span></div>';
+      if (it.secret && st.t !== '密钥已被停用') {
+        extra += '<div class="api-secret-row"><code id="apiSecret' + it.id + '">' + esc(it.secret) + '</code>' +
+          '<button type="button" class="ghost mini" data-copy-secret="' + it.id + '">复制</button>' +
+          '<button type="button" class="primary mini" data-ack-secret="' + it.id + '">我已保存</button></div>' +
+          '<p class="fb-hint" style="margin:8px 0 0">请立即保存，关闭或点「我已保存」后将无法再查看明文。</p>';
+      }
+      return '<div class="fb-item"><div class="fb-meta"><span class="fb-st ' + st.cls + '">' + st.t + '</span><span>' +
+        esc(it.createdAt) + '</span></div><div class="fb-body">' + esc(it.purpose) + '</div>' + extra + '</div>';
+    }).join('');
+  }
+  if (keysEl) {
+    var cards = (keys || []).map(function (k) {
+      var on = k.status === 'active';
+      return '<div class="fb-item"><div class="fb-meta"><span class="fb-st ' + (on ? 'done' : 'new') + '">' +
+        (on ? '启用' : '密钥已被停用') + '</span><span class="mono">' + esc(k.display) + '</span><span>调用 ' +
+        (k.callCount || 0) + ' 次</span></div><div class="fb-body">' + esc(k.name) + (k.note ? ' · ' + esc(k.note) : '') +
+        (on ? '' : '<div class="fb-hint" style="margin:6px 0 0">管理员已停用该密钥，无法继续调用。</div>') + '</div></div>';
+    });
+    (reqs || []).forEach(function (it) {
+      if (it.status !== 'revoked' && it.keyStatus !== 'revoked') return;
+      cards.push(
+        '<div class="fb-item"><div class="fb-meta"><span class="fb-st new">密钥已被停用</span></div>' +
+        '<div class="fb-body">管理员已删除该 API Key，无法继续调用。如需使用请重新申请。</div></div>'
+      );
+    });
+    if (!cards.length) keysEl.innerHTML = '<div class="fb-item"><div class="fb-body" style="color:#98a2b6">暂无已发放密钥</div></div>';
+    else keysEl.innerHTML = cards.join('');
+  }
+}
+
+function loadApiApplyMine() {
+  fetch('/api/openapi/mine').then(function (r) { return r.json(); }).then(function (j) {
+    if (!j || !j.ok) {
+      if ($('apiApplyList')) $('apiApplyList').textContent = (j && j.detail) || '加载失败';
+      return;
+    }
+    renderApiApplyMine(j);
+  }).catch(function (e) {
+    if ($('apiApplyList')) $('apiApplyList').textContent = e.message || '加载失败';
+  });
+}
+
+function openApiApplyModal() {
+  var mask = $('apiApplyMask');
+  if (!mask) return;
+  mask.hidden = false;
+  setApiApplyMsg(false, '');
+  loadApiApplyMine();
+}
+
+function closeApiApplyModal() {
+  var mask = $('apiApplyMask');
+  if (mask) mask.hidden = true;
+}
+
+function bindApiApplyModal() {
+  var mask = $('apiApplyMask');
+  if (!mask || mask.getAttribute('data-bound')) return;
+  mask.setAttribute('data-bound', '1');
+  var close = $('apiApplyClose');
+  if (close) close.onclick = closeApiApplyModal;
+  mask.addEventListener('click', function (e) { if (e.target === mask) closeApiApplyModal(); });
+  var sub = $('apiApplySubmit');
+  if (sub) sub.onclick = function () {
+    var purpose = ($('apiApplyPurpose') && $('apiApplyPurpose').value || '').trim();
+    if (purpose.length < 4) { setApiApplyMsg(false, '请填写申请用途（至少 4 字）'); return; }
+    sub.disabled = true;
+    fetch('/api/openapi/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purpose: purpose })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) { setApiApplyMsg(false, (x.j && x.j.detail) || '提交失败'); return; }
+        if ($('apiApplyPurpose')) $('apiApplyPurpose').value = '';
+        setApiApplyMsg(true, '已提交，请等待管理员审核');
+        loadApiApplyMine();
+      }).catch(function (e) { setApiApplyMsg(false, e.message || '网络错误'); })
+      .finally(function () { sub.disabled = false; });
+  };
+  var list = $('apiApplyList');
+  if (list) list.addEventListener('click', function (e) {
+    var ack = e.target.closest ? e.target.closest('[data-ack-secret]') : null;
+    var copy = e.target.closest ? e.target.closest('[data-copy-secret]') : null;
+    if (copy) {
+      var cid = copy.getAttribute('data-copy-secret');
+      var code = $('apiSecret' + cid);
+      var t = code ? code.textContent : '';
+      if (t && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(t).then(function () { setApiApplyMsg(true, '已复制密钥'); });
+      }
+      return;
+    }
+    if (!ack) return;
+    var id = ack.getAttribute('data-ack-secret');
+    fetch('/api/openapi/requests/' + id + '/ack', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function () { setApiApplyMsg(true, '已确认保存'); loadApiApplyMine(); });
+  });
+}
+
+bindApiApplyModal();
 
 /* ---------- 意见反馈 ---------- */
 var fbFiles = [];
@@ -1477,6 +1755,11 @@ initUserBox();
 initFeedback();
 refreshList();
 setInterval(refreshList, 3000);
+(function bootFromUrl() {
+  var id = taskIdFromLocation();
+  if (!id) return;
+  showDetail(id, true, true);
+})();
 /* ---------- 计划编辑器（模型出计划 → 人工修订 → 确认写入） ---------- */
 var curPlanTaskId = null;
 var curPlanData = [];

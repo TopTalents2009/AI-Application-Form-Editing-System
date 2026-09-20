@@ -85,6 +85,11 @@
       "body": {}
     }
   },
+  "wecomChat": {
+    "baseUrl": "http://127.0.0.1:8767",
+    "apiKey": "填入",
+    "groups": []
+  },
   "portal": {
     "sdkUrl": "http://192.168.2.23:8086/api/ext-research/plugin/sdk.js",
     "portalId": "填入协同中心外部程序 id"

@@ -10,17 +10,31 @@ from .routes import batches as batches_routes
 from .routes import auth as auth_routes
 from .routes import admin as admin_routes
 from .routes import feedback as feedback_routes
+from .routes import wecom_board as wecom_board_routes
+from .routes import openapi as openapi_routes
+from .routes import api_apply as api_apply_routes
 
 runner = TaskStore()
 batches = BatchStore(runner=runner)
 
 app = FastAPI(title="申报书智能修改系统", docs_url=None, redoc_url=None)
 
+def _is_app_shell(p: str) -> bool:
+    """首页与任务深链、后台页：未登录也先下发 HTML，由前端跳登录并带回 next。"""
+    p = str(p or "").rstrip("/") or "/"
+    if p in ("/", "/admin"):
+        return True
+    if p.startswith("/t/"):
+        tid = p[3:]
+        return bool(tid) and "/" not in tid
+    return False
+
+
 class NoCacheStatic(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
         p = request.url.path
-        if p == "/" or p.startswith("/public"):
+        if p == "/" or p.startswith("/public") or p.startswith("/t/"):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
@@ -49,7 +63,7 @@ class AuthGate(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         from . import auth
         p = request.url.path
-        if p.startswith("/public"):
+        if p.startswith("/public") or p.startswith("/api/v1"):
             request.state.user = None
             return await call_next(request)
         try:
@@ -61,12 +75,12 @@ class AuthGate(BaseHTTPMiddleware):
         if p.startswith("/api"):
             return JSONResponse({"detail": "未登录"}, status_code=401)
         # iframe 里 cookie 常被浏览器丢掉；主页面仍下发 HTML，由前端带 Bearer 续上会话
-        shell = p.rstrip("/") or "/"
-        if request.method in ("GET", "HEAD") and shell in ("/", "/admin"):
+        if request.method in ("GET", "HEAD") and _is_app_shell(p):
             return await call_next(request)
         return RedirectResponse("/login", status_code=303)
 
 app.add_middleware(AuthGate)
+app.add_middleware(openapi_routes.OpenApiGate)
 
 tasks_router = tasks_routes.create_router(runner)
 batches_router = batches_routes.create_router(runner, batches)
@@ -75,6 +89,9 @@ app.include_router(batches_router)
 app.include_router(auth_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(feedback_routes.router)
+app.include_router(wecom_board_routes.router)
+app.include_router(openapi_routes.create_router(runner))
+app.include_router(api_apply_routes.router)
 
 @app.get("/api/config")
 def api_config(request: Request):
@@ -146,6 +163,11 @@ async def api_papers_health():
 
 @app.get("/")
 def index():
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+
+@app.get("/t/{tid}")
+def index_task(tid: str):
+    """任务深链：与首页同一套 SPA，地址栏显示当前任务 id。"""
     return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 @app.get("/client-extract")

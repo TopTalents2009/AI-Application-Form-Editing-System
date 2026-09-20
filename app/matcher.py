@@ -6,7 +6,7 @@ NOISE_CODE = re.compile(r"^(iso|qs|ocr|sd|ma|q|a|p|gb|ieee)\d*", re.I)
 DATE_CODE = re.compile(r"^2[56]\d{4}$")
 MDATE_CODE = re.compile(r"^0\d{3}$")  # 文件名里的月日残留，如 0310
 CN_STOP = {"申报", "人才", "项目", "企业", "论文", "专利", "附件", "材料", "意见"}
-NAME_STOP = CN_STOP | {"青年", "创新", "团队", "博士", "教授", "总结", "修改", "个人", "基本情况"}
+NAME_STOP = CN_STOP | {"青年", "创新", "团队", "博士", "教授", "总结", "修改", "个人", "基本情况", "冶金园", "修订", "意向协议", "意向书", "协议", "合同"}
 LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z\s.',\-]{3,}$")
 CN_NAME = re.compile(r"^[\u4e00-\u9fa5]{2,4}$")
 TRUNC_CO = re.compile(r"(有限公|股份有限|有限责|股份有|责任公|有限$|股份$|公司（[^）]*$|（[^）]*$)$")
@@ -160,19 +160,27 @@ def extract_book_profile(fname: str, txt: str) -> dict:
     lines = String_splitlines(txt)
     nl = next((l for l in lines if "申报人" in l and "有效证件姓名" in l and not re.search(r"填写|一致|护照|身份证", l)), None)
     if nl:
-        m = re.search(r"申报人\s*(.*?)\s*有效证件姓名", nl)
+        nm = ""
+        m = re.search(r"有效证件姓名\s*[:：]\s*(.+)", nl)
         if m:
-            nm = m.group(1)
-        else:
-            tmp = re.sub(r"有效证件姓名.*", "", nl)
-            m2 = re.search(r"申报人\s*(.*)", tmp)
-            nm = m2.group(1) if m2 else ""
+            nm = re.split(r"依托单位|申报企业|用人单位|项目类别", m.group(1), 1)[0].strip()
+        if not nm:
+            m = re.search(r"申报人\s*(.*?)\s*有效证件姓名", nl)
+            if m:
+                nm = m.group(1)
+            else:
+                tmp = re.sub(r"有效证件姓名.*", "", nl)
+                m2 = re.search(r"申报人\s*(.*)", tmp)
+                nm = m2.group(1) if m2 else ""
         full, toks = accept_person_name(nm)
         if full:
             p["nameFull"], p["tokens"] = full, toks
     if not p["nameFull"]:
-        fnm = re.sub(r"^有企业\+?", "", fname).split("申报书")[0]
+        fnm = str(fname or "").replace("\\", "/").split("/")[-1]
+        fnm = re.sub(r"^(冶金园|有企业)[-_＋+]*", "", fnm)
+        fnm = fnm.split("申报书")[0]
         fnm = re.split(r"[+＋]", fnm)[0].strip()
+        fnm = re.sub(r"[-_]?修订$", "", fnm)
         fnm = re.sub(r"\.\w+$", "", fnm)
         full, toks = accept_person_name(fnm)
         if full:

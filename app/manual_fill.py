@@ -20,14 +20,22 @@ _UNKNOWN_OP = re.compile(
     r"贴合实际|务实|佐证|核对.*对应|职称.*对应|聘书|立项金额|累计.*吗",
     re.I,
 )
-_SKIP_MANUAL_OP = re.compile(r"是不是.*首创|是否.*首创|首创.*[？?]", re.I)
+_SKIP_MANUAL_OP = re.compile(
+    r"是不是.*首创|是否.*首创|首创.*[？?]|"
+    r"具体产品|应用推广|产品信息|依托哪些公司转化|转化等信息",
+    re.I,
+)
+_REWRITE_FROM_BOOK = re.compile(
+    r"具体产品|应用推广|产品信息|依托哪些公司转化|转化等信息|产品名称",
+    re.I,
+)
 
 _SECTION_MARKERS = (
     ("工作计划", ("六、工作计划及个人承诺", "工作目标及可行性论证", "拟解决的关键技术", "可行性论证分析")),
     ("用人单位", ("七、用人单位情况及承诺", "拟提供申报人支持条件", "企业基本情况", "申报人推荐理由")),
     ("基本信息", ("申报人基本情况", "引进企业基本情况", "一、申报人", "相当于国内职务情况")),
     ("论文", ("代表性论文", "三、代表性论文", "奖励表彰", "五、代表性")),
-    ("项目", ("工作成果及业绩", "四、工作成果", "科研项目")),
+    ("项目", ("工作成果及业绩", "四、工作成果", "科研项目", "成果转化情况")),
     ("教育", ("教育经历", "主要学历", "二、主要学历")),
     ("工作", ("工作经历", "职务职责", "三、工作经历")),
 )
@@ -163,12 +171,83 @@ def _field_label_find(app_text: str, anchor: str, max_len: int) -> tuple[str, st
     return "", ""
 
 
-def locate_anchor(app_text: str, anchor: str, max_len: int = 80, section: str = "") -> tuple[str, str]:
+def is_rewrite_from_book(text: str) -> bool:
+    return bool(_REWRITE_FROM_BOOK.search(str(text or "")))
+
+
+def _prefer_hay(app_text: str, opinion: str, section: str) -> tuple[str, int]:
+    """意见点成果转化/基本情况时，先在对应栏检索，避免短锚点命中「产业」。"""
+    op = str(opinion or "")
+    full = str(app_text or "")
+    if re.search(r"成果转化|依托.*(?:公司|企业)转化|转化等信息|转化的公司", op):
+        i = full.find("成果转化情况")
+        if i >= 0:
+            j = full.find("工作计划", i + 8)
+            if j < 0:
+                j = min(len(full), i + 2800)
+            return full[i:j], i
+    if re.search(r"产品名称|应用推广", op):
+        i = full.find("申报人基本情况")
+        if i >= 0:
+            j = full.find("工作成果及业绩", i + 8)
+            if j < 0:
+                j = min(len(full), i + 2800)
+            return full[i:j], i
+    hay = _slice_section(full, section) if section else full
+    off = full.find(hay) if hay and hay != full and hay in full else 0
+    return hay or full, max(0, off)
+
+
+def _sentence_at(app_text: str, pos: int, max_len: int = 180) -> str:
+    if pos < 0 or not app_text:
+        return ""
+    start = max(0, pos - 220)
+    chunk = app_text[start: pos + 220]
+    rel = pos - start
+    left = max(chunk.rfind("。", 0, rel), chunk.rfind("！", 0, rel), chunk.rfind("\n\n", 0, rel))
+    rights = [x for x in (chunk.find("。", rel), chunk.find("！", rel)) if x >= 0]
+    right = (min(rights) + 1) if rights else len(chunk)
+    if left < 0:
+        left = 0
+    else:
+        left += 1
+    sent = re.sub(r"[ \t]+\n", "\n", chunk[left:right]).strip()
+    if len(sent) > max_len:
+        sent = sent[:max_len]
+    return sent
+
+
+def _pick_hit(text: str, needle: str, opinion: str = "") -> int:
+    if not text or not needle:
+        return -1
+    hits = []
+    i = 0
+    while True:
+        j = text.find(needle, i)
+        if j < 0:
+            break
+        hits.append(j)
+        i = j + 1
+    if not hits:
+        return -1
+    if len(hits) == 1 or len(re.sub(r"\s+", "", needle)) >= 4:
+        return hits[0]
+    op = str(opinion or "")
+    if re.search(r"转化|量产|产业化|产品", op):
+        for j in reversed(hits):
+            ctx = text[max(0, j - 16): j + 16]
+            if any(k in ctx for k in ("量产", "转化", "产品名称", "胶粘")):
+                return j
+        return hits[-1]
+    return hits[0]
+
+
+def locate_anchor(app_text: str, anchor: str, max_len: int = 160, section: str = "", opinion: str = "") -> tuple[str, str]:
     anchor = str(anchor or "").strip()
     if not anchor or not app_text:
         return "", ""
-    hay = _slice_section(app_text, section) if section else app_text
     full = app_text
+    hay, offset = _prefer_hay(full, opinion, section)
 
     if anchor.startswith("项目成果"):
         proj = _slice_section(app_text, "项目")
@@ -176,24 +255,27 @@ def locate_anchor(app_text: str, anchor: str, max_len: int = 80, section: str = 
         if hit:
             return hit, hint
 
+    def _finish(pos: int) -> tuple[str, str]:
+        short = len(_norm(anchor)) < 8 or anchor in _FIELD_LABELS
+        if short:
+            sent = _sentence_at(full, pos, max_len)
+            if sent:
+                return sent, _hint_at(full, pos)
+            return _expand_short_context(full, pos, anchor, max_len), _hint_at(full, pos)
+        return _expand_snippet(full, pos, len(anchor), max_len), _hint_at(full, pos)
+
     def _search(text: str, full_pos_offset: int = 0) -> tuple[str, str]:
-        if anchor in text:
-            pos = text.index(anchor)
-            abs_pos = full_pos_offset + pos
-            if len(_norm(anchor)) < 4 or anchor in _FIELD_LABELS:
-                return _expand_short_context(full, abs_pos, anchor, max_len), _hint_at(full, abs_pos)
-            return _expand_snippet(full, abs_pos, len(anchor), max_len), _hint_at(full, abs_pos)
+        pos = _pick_hit(text, anchor, opinion)
+        if pos >= 0:
+            return _finish(full_pos_offset + pos)
         pat = _anchor_pat(anchor)
         if pat:
             m = pat.search(text)
             if m:
-                abs_pos = full_pos_offset + m.start()
-                if len(_norm(anchor)) < 4 or anchor in _FIELD_LABELS:
-                    return _expand_short_context(full, abs_pos, anchor, max_len), _hint_at(full, abs_pos)
-                return _expand_snippet(full, abs_pos, m.end() - m.start(), max_len), _hint_at(full, abs_pos)
+                return _finish(full_pos_offset + m.start())
         return "", ""
 
-    hit, hint = _search(hay, app_text.find(hay) if hay != app_text and hay in app_text else 0)
+    hit, hint = _search(hay, offset)
     if hit:
         return hit, hint
     hit, hint = _field_label_find(hay, anchor, max_len)
@@ -245,12 +327,18 @@ def _collect_targets(clauses: list, edits: list, leftovers: list) -> dict[str, s
             continue
         cid = extract_cid(text)
         if cid:
+            c = by_id.get(cid)
+            blob = (str((c or {}).get("opinion") or "") + str((c or {}).get("clause") or ""))
+            if is_rewrite_from_book(blob) or _SKIP_MANUAL_OP.search(blob):
+                continue
             out[cid] = text
             continue
         for cid2, c in by_id.items():
             if cid2 in out:
                 continue
             blob = str(c.get("opinion") or "") + str(c.get("clause") or "")
+            if _SKIP_MANUAL_OP.search(blob) or is_rewrite_from_book(blob):
+                continue
             if _UNKNOWN_OP.search(blob):
                 out[cid2] = text
 
@@ -273,12 +361,12 @@ def _make_manual_edit(clause: dict, reason: str, app_text: str, app_no: str, hj:
     opinion = str(clause.get("opinion") or "")
     sec = _clause_section(clause, app_text, hj)
     anchor = extract_anchor(opinion)
-    find, hint = locate_anchor(app_text, anchor, section=sec)
+    find, hint = locate_anchor(app_text, anchor, section=sec, opinion=opinion)
     if not find and anchor:
-        find, hint = locate_anchor(app_text, anchor[: max(6, len(anchor) // 2)], section=sec)
+        find, hint = locate_anchor(app_text, anchor[: max(6, len(anchor) // 2)], section=sec, opinion=opinion)
     if not find:
         cl = str(clause.get("clause") or "")
-        find, hint = locate_anchor(app_text, cl[:40], section=sec)
+        find, hint = locate_anchor(app_text, cl[:40], section=sec, opinion=opinion)
     if not find:
         return None
     cid = extract_cid(clause.get("cid") or clause.get("sourceId") or "")

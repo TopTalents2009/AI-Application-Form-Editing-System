@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py52">
+<link rel="stylesheet" href="/public/style.css?v=py56">
 <style>
 :root{ --nav-w:216px; }
 *{box-sizing:border-box}
@@ -172,10 +172,12 @@ table.tbl td.ops{overflow:visible;white-space:nowrap}
 .cfg-grid .span2{grid-column:1 / -1}
 .f-row{margin-bottom:14px;min-width:0}
 .f-row label{display:block;font-size:13px;font-weight:600;color:#3c465a;margin-bottom:6px}
-.inp input,.inp select{
-  width:100%;max-width:100%;height:42px;padding:0 12px;border:1px solid #d7deea;border-radius:10px;
+.inp input,.inp select,.inp textarea{
+  width:100%;max-width:100%;padding:0 12px;border:1px solid #d7deea;border-radius:10px;
   font-family:inherit;font-size:13px;background:#fff;min-width:0;box-sizing:border-box;
 }
+.inp input,.inp select{height:42px}
+.inp textarea{padding:10px 12px;min-height:72px;resize:vertical;line-height:1.5}
 .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:#3c465a;padding-top:8px}
 .cfg-tag{
   font-size:11px;padding:2px 9px;border-radius:6px;background:#e9f0fc;color:var(--brand);font-weight:700;
@@ -234,6 +236,122 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 .model-row .mn{font-weight:700;flex-shrink:0;max-width:8em}
 .model-row .mid{font-family:Consolas,monospace;font-size:12px;color:var(--sub);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .model-row span:last-child{flex-shrink:0}
+
+/* ===== 各群记录看板 ===== */
+.wecom-status{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-bottom:14px;font-size:13px}
+.wecom-board{display:grid;grid-template-columns:280px 1fr;gap:0;min-height:560px;border:1px solid #e6ebf4;border-radius:14px;overflow:hidden;background:#fff}
+.wecom-side{border-right:1px solid #e6ebf4;display:flex;flex-direction:column;min-width:0;background:#f7f9fc}
+.wecom-side-hd,.wecom-chat-hd{padding:12px 14px;border-bottom:1px solid #e6ebf4;background:#fff}
+.wecom-side-hd input,.wecom-chat-hd input[type="text"],.wecom-chat-hd input[type="date"]{
+  width:100%;border:1px solid #e1e6ef;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;background:#fff
+}
+.wecom-src{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.wecom-chip{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;color:#46506a}
+.wecom-chip.on{background:#2450a4;border-color:#2450a4;color:#fff}
+.wecom-list{flex:1;overflow:auto;max-height:520px}
+.wecom-item{display:block;width:100%;text-align:left;border:none;background:none;padding:10px 14px;cursor:pointer;font:inherit;border-bottom:1px solid #eef1f6}
+.wecom-item:hover{background:#eef4fd}
+.wecom-item.on{background:#e8f0fb}
+.wecom-item b{display:block;font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wecom-item span{display:block;font-size:11.5px;color:#8a93a6;margin-top:3px}
+.wecom-chat{display:flex;flex-direction:column;min-width:0;min-height:560px}
+.wecom-chat-hd{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.wecom-chat-hd .grow{flex:1;min-width:140px}
+.wecom-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.wecom-filters input[type="date"]{width:138px}
+.wecom-stream{flex:1;overflow:auto;padding:14px 16px;background:#f4f6fa;max-height:520px}
+.wecom-empty{color:#8a93a6;font-size:13.5px;padding:40px 16px;text-align:center;line-height:1.7}
+.wecom-msg{background:#fff;border:1px solid #e9edf5;border-radius:12px;padding:10px 12px;margin:0 0 10px;box-shadow:0 1px 2px rgba(16,32,64,.04)}
+.wecom-msg .meta{display:flex;gap:10px;align-items:baseline;font-size:12px;color:#8a93a6;margin-bottom:4px}
+.wecom-msg .who{font-weight:700;color:#2450a4}
+.wecom-msg .body{font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.wecom-msg .file{margin-top:6px;font-size:12px;color:#5b6577;background:#f0f4fb;display:inline-block;padding:3px 8px;border-radius:6px}
+.wecom-msg img.wecom-thumb{max-width:min(280px,100%);max-height:200px;border-radius:8px;display:block;margin-top:8px;border:1px solid #e6ebf4;background:#fff;cursor:zoom-in}
+.wecom-file{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-top:8px;padding:8px 10px;border:1px solid #e6ebf4;border-radius:12px;background:#f7f9fc;max-width:420px}
+.wecom-file .ext{width:36px;height:36px;border-radius:8px;background:#fff;border:1px solid #e6ebf4;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#5b6577;flex-shrink:0}
+.wecom-file .nm{flex:1;min-width:0;font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wecom-file .st{flex:1 1 100%;font-size:11.5px;color:#8a93a6;line-height:1.55;margin:0}
+.wecom-file .st.ok{color:var(--ok)}
+.wecom-file .st.bad{color:var(--bad)}
+.wecom-file .st.wait{color:var(--warn)}
+.wecom-pcs{display:flex;flex-wrap:wrap;gap:4px;flex:1 1 100%}
+.wecom-pc{font-size:10.5px;padding:1px 7px;border-radius:999px;background:#eef2f8;color:#5b6577}
+.wecom-pc.hit{background:#e5f7ee;color:var(--ok)}
+.wecom-pc.miss{background:#fdecee;color:var(--bad)}
+.wecom-pc.wait{background:#fff6e5;color:var(--warn)}
+.wecom-orig{border:none;background:none;padding:0;font:inherit;font-size:12px;color:#2450a4;cursor:pointer;text-decoration:underline}
+.wecom-preview{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:24px}
+.wecom-preview[hidden]{display:none !important}
+.wecom-preview img{max-width:92vw;max-height:92vh;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.wecom-chip .tag{font-size:10px;opacity:.8;margin-left:3px}
+.wecom-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;border-top:1px solid #e6ebf4;background:#fff;font-size:12.5px;color:#5b6577}
+.wecom-locate{position:fixed;inset:0;z-index:85;background:rgba(16,32,64,.38);display:flex;align-items:flex-start;justify-content:center;padding:48px 16px 24px}
+.wecom-locate[hidden]{display:none !important}
+.wecom-locate-card{width:min(720px,100%);max-height:86vh;overflow:auto;background:#fff;border-radius:16px;box-shadow:0 18px 50px -18px rgba(16,32,64,.45);border:1px solid #e6ebf4}
+.wecom-locate-hd{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #e6ebf4}
+.wecom-locate-hd h3{margin:0;font-size:16px}
+.wecom-locate-keys{padding:10px 16px;font-size:12.5px;color:#5b6577;line-height:1.7;background:#f7f9fc}
+.wecom-locate-item{padding:12px 16px;border-bottom:1px solid #eef1f6}
+.wecom-locate-item:last-child{border-bottom:none}
+.wecom-locate-item .ttl{font-weight:700;font-size:13.5px}
+.wecom-locate-item .meta{font-size:12px;color:#8a93a6;margin-top:4px}
+.wecom-locate-item .why{font-size:12px;color:#46506a;margin-top:6px}
+.wecom-locate-item .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.wecom-locate-item .acts a.mini{text-decoration:none;color:inherit;display:inline-block}
+.wecom-locate-item .acts a.mini.primary{background:#2450a4;color:#fff;border-color:#2450a4}
+.wecom-split-check{margin-right:8px}
+.wecom-locate-win{display:flex;gap:6px;align-items:center;font-size:12px;color:#5b6577}
+.wecom-conf{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;margin-left:6px}
+.wecom-conf.high{background:#e5f7ee;color:var(--ok)}
+.wecom-conf.medium{background:#fff6e5;color:var(--warn)}
+.wecom-conf.low{background:#eef2f8;color:#5b6577}
+
+/* ===== 开放 API ===== */
+.api-docs{font-size:13.5px;line-height:1.75;color:#3c465a}
+.api-docs h1{margin:0 0 10px;font-size:20px;color:var(--ink);font-weight:800}
+.api-docs h2{margin:22px 0 10px;font-size:16px;color:var(--ink);padding-bottom:6px;border-bottom:1px solid #eef1f6}
+.api-docs h3{margin:16px 0 8px;font-size:14px;color:var(--ink)}
+.api-docs p{margin:0 0 10px}
+.api-docs ul,.api-docs ol{margin:0 0 12px;padding-left:1.3em}
+.api-docs li{margin:3px 0}
+.api-docs hr{border:none;border-top:1px dashed #e4eaf3;margin:16px 0}
+.api-docs table{width:100%;border-collapse:collapse;margin:0 0 14px;font-size:13px}
+.api-docs th,.api-docs td{border:1px solid #e6ebf4;padding:7px 10px;text-align:left;vertical-align:top}
+.api-docs th{background:#f6f8fc;color:#5a6577;font-weight:600}
+.api-docs code,.api-secret{
+  font-family:Consolas,ui-monospace,monospace;font-size:12.5px;
+  background:#f4f6fb;border:1px solid #e6ebf4;border-radius:6px;padding:1px 6px
+}
+.api-docs pre{
+  margin:8px 0 14px;padding:12px 14px;background:#0f1a30;color:#e8eef8;border-radius:10px;
+  overflow:auto;font-size:12px;line-height:1.55;font-family:Consolas,ui-monospace,monospace
+}
+.api-docs pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit}
+.api-create{display:grid;grid-template-columns:1.2fr 1fr 1fr auto auto;gap:10px;align-items:end;margin-bottom:14px}
+.api-create .f-row{margin:0}
+.api-secret-box{
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+  padding:12px 14px;border-radius:10px;background:#eef7f1;border:1px solid #cce7d4;margin-bottom:12px
+}
+.api-secret-box .api-secret{flex:1;min-width:180px;word-break:break-all;background:#fff}
+table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-all;line-height:1.45}
+.api-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.api-filters input,.api-filters select{height:34px;padding:0 10px;border:1px solid #d7deea;border-radius:8px;font:inherit;font-size:12.5px;background:#fff}
+.api-filters input[type="search"]{min-width:160px}
+.api-modal{position:fixed;inset:0;z-index:90;background:rgba(16,32,64,.38);display:flex;align-items:flex-start;justify-content:center;padding:72px 16px 24px}
+.api-modal[hidden]{display:none!important}
+.api-modal-card{width:min(560px,100%);background:#fff;border-radius:16px;border:1px solid #e6ebf4;box-shadow:0 18px 50px -18px rgba(16,32,64,.45);padding:20px 22px}
+.api-modal-card h3{margin:0 0 8px;font-size:16px}
+.api-modal-card p{margin:0 0 14px;font-size:13px;color:var(--sub);line-height:1.7}
+.st-2xx{color:#188038;background:#e7f5ec}
+.st-4xx{color:#b26a00;background:#fdf3e2}
+.st-5xx{color:#c5221f;background:#fdecea}
+@media (max-width:900px){
+  .api-create{grid-template-columns:1fr 1fr}
+  .wecom-board{grid-template-columns:1fr}
+  .wecom-side{border-right:none;border-bottom:1px solid #e6ebf4}
+  .wecom-list,.wecom-stream{max-height:320px}
+}
 
 /* ===== 响应式 ===== */
 @media (max-width:860px){
@@ -354,6 +472,120 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
         </div>
       </section>
 
+      <!-- 各群记录 -->
+      <section class="content-sec" id="sec-wecom">
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>各群记录</h2>
+        <p class="sec-desc">同一群在多台电脑上只显示一条。可按日期窗「拆解任务」：识别申报书，并把附近的修改意见（群聊文本或意见文档）挂上后上传；其它文件不当申报书。生成计划后仍需人工确认才会写入。</p>
+        <div class="acard" style="margin-bottom:0">
+          <div class="wecom-status" id="wecomStatus">检测解析服务…</div>
+          <div class="wecom-board">
+            <aside class="wecom-side">
+              <div class="wecom-side-hd">
+                <div class="wecom-src" id="wecomSources"></div>
+                <input type="search" id="wecomGroupQ" placeholder="筛选群名" autocomplete="off">
+                <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;color:#5b6577">
+                  <input type="checkbox" id="wecomOnlyGroup" checked> 仅群聊
+                </label>
+              </div>
+              <div class="wecom-list" id="wecomSessions"><div class="wecom-empty">正在按群合并各电脑会话…</div></div>
+            </aside>
+            <div class="wecom-chat">
+              <div class="wecom-chat-hd">
+                <div class="grow">
+                  <div id="wecomChatTitle" style="font-weight:700;font-size:14px">未选择会话</div>
+                  <div id="wecomChatSub" style="font-size:12px;color:#8a93a6;margin-top:2px">从左侧点开群；重复群已合并</div>
+                </div>
+                <div class="wecom-filters">
+                  <input type="date" id="wecomStart" title="开始日期">
+                  <input type="date" id="wecomEnd" title="结束日期">
+                  <input type="text" id="wecomMsgQ" placeholder="关键词搜索" style="width:160px" autocomplete="off">
+                  <button type="button" class="mini" id="wecomSplitBtn">拆解任务</button>
+                  <button type="button" class="mini" id="wecomReload">刷新</button>
+                </div>
+              </div>
+              <div class="wecom-stream" id="wecomStream"><div class="wecom-empty">选择群后显示消息。解析服务未启动时无法读取本地企业微信库。</div></div>
+              <div class="wecom-pager" id="wecomPager" hidden>
+                <button type="button" class="ghost mini" id="wecomPrev">更早</button>
+                <span id="wecomPageInfo">—</span>
+                <button type="button" class="ghost mini" id="wecomNext">更晚</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 开放 API -->
+      <section class="content-sec" id="sec-openapi">
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>开放 API</h2>
+        <p class="sec-desc">向对接方发放 API Key，对方即可用 HTTP 调用本系统创建任务、查询进度并下载产出。管理员可在密钥列表查看并复制完整 Key。</p>
+        <div class="stat-grid" id="apiStatGrid">
+          <div class="stat" style="--sc:#2450a4"><div class="sn" id="apiStKeys">—</div><div class="sl">启用中的密钥</div></div>
+          <div class="stat" style="--sc:#6b4fa0"><div class="sn" id="apiStToday">—</div><div class="sl">今日调用</div></div>
+          <div class="stat" style="--sc:#c5221f"><div class="sn" id="apiStErr">—</div><div class="sl">今日失败</div></div>
+        </div>
+        <div class="acard">
+          <h3>用户申请 <span style="font-size:12px;font-weight:500;color:var(--sub)">主界面下拉菜单提交，通过后密钥会显示给申请人和此处各一次</span></h3>
+          <div id="apiReqList"><div class="files-muted">加载中…</div></div>
+        </div>
+        <div class="acard">
+          <h3>创建密钥 <span style="font-size:12px;font-weight:500;color:var(--sub)">后台列表可查看并复制完整 API Key</span></h3>
+          <div class="api-create">
+            <div class="f-row inp"><label>名称</label><input id="apiKeyName" placeholder="如：合作方 A" maxlength="64" autocomplete="off"></div>
+            <div class="f-row inp"><label>备注</label><input id="apiKeyNote" placeholder="可选" maxlength="255" autocomplete="off"></div>
+            <div class="f-row inp"><label>绑定用户（任务归属）</label><select id="apiKeyOwner"><option value="">自动（api:名称）</option></select></div>
+            <div class="f-row inp"><label>过期日期</label><input id="apiKeyExpire" type="date"></div>
+            <button type="button" class="btn-save" id="apiKeyCreate" style="letter-spacing:1px;padding:10px 16px">生成密钥</button>
+          </div>
+          <div class="msg" id="apiKeyMsg"></div>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th>名称</th><th>密钥</th><th>归属</th><th>状态</th><th>调用</th><th>最近使用</th><th>过期</th><th>操作</th></tr>
+              </thead>
+              <tbody id="apiKeyBody"><tr><td colspan="8">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="acard">
+          <h3>调用历史 <span style="font-size:12px;font-weight:500;color:var(--sub)">含鉴权失败；90 天后自动清理</span></h3>
+          <div class="api-filters">
+            <select id="apiLogKey"><option value="">全部密钥</option></select>
+            <select id="apiLogStatus">
+              <option value="">全部状态</option>
+              <option value="2xx">成功 2xx</option>
+              <option value="4xx">客户端 4xx</option>
+              <option value="5xx">服务端 5xx</option>
+            </select>
+            <input type="search" id="apiLogQ" placeholder="路径 / 任务 / IP" autocomplete="off">
+            <input type="date" id="apiLogSince" title="开始日期">
+            <input type="date" id="apiLogUntil" title="结束日期">
+            <button type="button" class="mini" id="apiLogReload">查询</button>
+            <span style="flex:1"></span>
+            <button type="button" class="mini" id="apiLogPurge">清除 30 天前</button>
+          </div>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th>时间</th><th>密钥</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th>IP</th><th>任务</th><th>错误</th></tr>
+              </thead>
+              <tbody id="apiLogBody"><tr><td colspan="9">加载中…</td></tr></tbody>
+            </table>
+          </div>
+          <div id="apiLogPager" class="book-pager" hidden style="margin-top:12px">
+            <button type="button" class="ghost mini" id="apiLogPrev">上一页</button>
+            <div class="page-mid"><div class="page-sub" id="apiLogInfo">第 1 / 1 页 · 共 0 条</div></div>
+            <button type="button" class="ghost mini" id="apiLogNext">下一页</button>
+          </div>
+        </div>
+        <div class="acard">
+          <h3>API 文档全文
+            <span style="flex:1"></span>
+            <a class="mini" id="apiDocDownload" href="/api/openapi/guide" style="text-decoration:none;font-weight:600">下载 .md</a>
+          </h3>
+          <div class="api-docs" id="apiDocs">加载中…</div>
+        </div>
+      </section>
+
       <!-- 模型配置 -->
       <section class="content-sec" id="sec-config">
         <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>模型配置</h2>
@@ -367,6 +599,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
         <div id="cfgCards"></div>
         <div id="poolCfgCard"></div>
         <div id="papersCfgCard"></div>
+        <div id="wecomCfgCard"></div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <button type="button" class="btn-save" id="cfgSave">保存全部配置</button>
           <button type="button" class="mini" id="cfgRestore">恢复默认配置</button>
@@ -405,6 +638,8 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       <button type="button" class="nav-item" data-sec="newtask"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>新建任务</button>
       <button type="button" class="nav-item" data-sec="users"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>人员信息</button>
       <button type="button" class="nav-item" data-sec="feedback"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>用户反馈<span class="nav-count" id="fbBadge" hidden></span></button>
+      <button type="button" class="nav-item" data-sec="wecom"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>各群记录</button>
+      <button type="button" class="nav-item" data-sec="openapi"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>开放 API<span class="nav-count" id="apiReqBadge" hidden></span></button>
       <button type="button" class="nav-item" data-sec="config"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型配置</button>
       <button type="button" class="nav-item" data-sec="system"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>系统信息</button>
       <div class="nav-foot">本地单机服务<br>原件只读 · 严禁编造数据</div>
@@ -427,6 +662,18 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     </div>
     <button type="button" class="fb-preview-nav next" id="fbPreviewNext" hidden aria-label="下一张">›</button>
     <div class="fb-preview-cap" id="fbPreviewCap"></div>
+  </div>
+
+  <div class="api-modal" id="apiKeyModal" hidden>
+    <div class="api-modal-card">
+      <h3>请立即复制 API Key</h3>
+      <p>请复制保存并交给对接方。完整 Key 之后仍可在密钥列表中查看。</p>
+      <div class="api-secret-box" style="margin-bottom:16px">
+        <code class="api-secret" id="apiKeySecretText"></code>
+        <button type="button" class="mini" id="apiKeyCopy">复制</button>
+      </div>
+      <button type="button" class="btn-save" id="apiKeyModalClose" style="letter-spacing:1px">我已保存</button>
+    </div>
   </div>
 
   <!-- 自动刷新控件：按当前查看区块定时局部刷新，模型配置页不会自动刷新 -->
@@ -472,6 +719,8 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     { key: 'overview', sec: document.getElementById('sec-overview'), load: function () { loadOverview(); } },
     { key: 'users', sec: document.getElementById('sec-users'), load: function () { loadUsers(); } },
     { key: 'feedback', sec: document.getElementById('sec-feedback'), load: function () { loadFeedback(); } },
+    { key: 'wecom', sec: document.getElementById('sec-wecom'), load: function () { loadWecomBoard(true); } },
+    { key: 'openapi', sec: document.getElementById('sec-openapi'), load: function () { loadOpenApi(true); } },
     { key: 'system', sec: document.getElementById('sec-system'), load: function () { loadSystem(); } }
   ];
   function arInView(el) {
@@ -500,10 +749,31 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     }
     return false;
   }
+  function arHasOpenApiDraft() {
+    var name = document.getElementById('apiKeyName');
+    var note = document.getElementById('apiKeyNote');
+    var q = document.getElementById('apiLogQ');
+    if (name && (name.value || '').trim()) return true;
+    if (note && (note.value || '').trim()) return true;
+    if (q && document.activeElement === q) return true;
+    var modal = document.getElementById('apiKeyModal');
+    return !!(modal && !modal.hidden);
+  }
   function refreshFbBadge() {
     fetch('/api/feedback/unread').then(function (r) { return r.json(); }).then(function (res) {
       setFbBadge(res && res.ok ? (res.unread || 0) : 0);
     }).catch(function () {});
+    refreshApiReqBadge();
+  }
+  function arWecomBusy() {
+    var box = document.getElementById('wecomPreview');
+    if (box && !box.hidden) return true;
+    var loc = document.getElementById('wecomLocate');
+    if (loc && !loc.hidden) return true;
+    var spl = document.getElementById('wecomSplit');
+    if (spl && !spl.hidden) return true;
+    var stream = document.getElementById('wecomStream');
+    return !!(stream && stream.querySelector('[data-wecom-dl][disabled]'));
   }
   function arTick() {
     if (!arEnabled || arBusyTyping()) return;
@@ -511,6 +781,8 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       if (!arInView(it.sec)) return;
       if (it.key === 'feedback' && arHasDraft()) return;
       if (it.key === 'users' && arHasUsersDraft()) return;
+      if (it.key === 'openapi' && arHasOpenApiDraft()) return;
+      if (it.key === 'wecom' && arWecomBusy()) return;
       it.load();
     });
     refreshFbBadge();
@@ -599,6 +871,8 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     loadOverview();
     loadUsers();
     loadFeedback();
+    loadWecomBoard();
+    loadOpenApi();
     loadSystem();
     loadConfig();
     initAutoRefresh();
@@ -789,6 +1063,1345 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       });
     }
   });
+
+  /* ===== 开放 API ===== */
+  var apiKeysCache = [];
+  var apiLogPage = 1;
+  var API_LOG_PAGE = 50;
+  var apiKeyMsg = document.getElementById('apiKeyMsg');
+  function sayApi(ok, t) {
+    if (!apiKeyMsg) return;
+    apiKeyMsg.className = 'msg ' + (ok ? 'ok' : 'bad');
+    apiKeyMsg.textContent = t;
+    setTimeout(function () { if (apiKeyMsg.textContent === t) apiKeyMsg.textContent = ''; }, 5000);
+  }
+  function apiHttp(path, opt) {
+    return fetch(path, opt || {}).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, status: r.status, data: j }; });
+    });
+  }
+  function fillApiOwnerSelect(users) {
+    var sel = document.getElementById('apiKeyOwner');
+    if (!sel) return;
+    var cur = sel.value;
+    var html = '<option value="">自动（api:名称）</option>';
+    (users || []).forEach(function (u) {
+      html += '<option value="' + esc(u.username) + '">' + esc(u.realName || u.username) + '（' + esc(u.username) + '）</option>';
+    });
+    sel.innerHTML = html;
+    if (cur) sel.value = cur;
+  }
+  function mdInline(s) {
+    s = esc(s);
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    return s;
+  }
+  function splitRow(line) {
+    var t = String(line || '').trim();
+    if (t.charAt(0) === '|') t = t.slice(1);
+    if (t.charAt(t.length - 1) === '|') t = t.slice(0, -1);
+    return t.split('|').map(function (c) { return c.trim(); });
+  }
+  function isSepRow(line) {
+    return /^\s*\|?\s*:?-{3,}/.test(line || '');
+  }
+  function mdToHtml(src) {
+    src = String(src || '').replace(/\r\n/g, '\n');
+    var lines = src.split('\n');
+    var out = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (/^```/.test(line)) {
+        var buf = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+        if (i < lines.length) i++;
+        out.push('<pre><code>' + esc(buf.join('\n')) + '</code></pre>');
+        continue;
+      }
+      if (/^\s*\|/.test(line) && i + 1 < lines.length && isSepRow(lines[i + 1])) {
+        var heads = splitRow(line);
+        i += 2;
+        var rows = [];
+        while (i < lines.length && /^\s*\|/.test(lines[i]) && !isSepRow(lines[i])) {
+          rows.push(splitRow(lines[i]));
+          i++;
+        }
+        var h = '<table><thead><tr>' + heads.map(function (c) { return '<th>' + mdInline(c) + '</th>'; }).join('') + '</tr></thead><tbody>';
+        rows.forEach(function (r) {
+          h += '<tr>' + r.map(function (c) { return '<td>' + mdInline(c) + '</td>'; }).join('') + '</tr>';
+        });
+        out.push(h + '</tbody></table>');
+        continue;
+      }
+      if (/^\s*---+\s*$/.test(line)) { out.push('<hr>'); i++; continue; }
+      var hm = /^(#{1,3})\s+(.+)$/.exec(line);
+      if (hm) {
+        out.push('<h' + hm[1].length + '>' + mdInline(hm[2]) + '</h' + hm[1].length + '>');
+        i++; continue;
+      }
+      if (/^\s*[-*]\s+/.test(line)) {
+        var items = [];
+        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+          items.push('<li>' + mdInline(lines[i].replace(/^\s*[-*]\s+/, '')) + '</li>');
+          i++;
+        }
+        out.push('<ul>' + items.join('') + '</ul>');
+        continue;
+      }
+      if (!String(line).trim()) { i++; continue; }
+      var para = [line];
+      i++;
+      while (i < lines.length && String(lines[i]).trim() && !/^(#{1,3}\s|```|\s*\||\s*---+\s*$|\s*[-*]\s+)/.test(lines[i])) {
+        para.push(lines[i]);
+        i++;
+      }
+      out.push('<p>' + mdInline(para.join(' ')) + '</p>');
+    }
+    return out.join('');
+  }
+  var apiDocMd = '';
+  function paintApiDocs(md) {
+    var el = document.getElementById('apiDocs');
+    if (!el) return;
+    var live = location.origin;
+    var text = String(md || '').replace(/http:\/\/127\.0\.0\.1:3777/g, live);
+    el.innerHTML =
+      '<div class="kv"><span class="k">当前 Base URL</span><span class="v"><code>' + esc(live) + '/api/v1</code></span></div>' +
+      mdToHtml(text);
+  }
+  function renderApiDocs() {
+    var el = document.getElementById('apiDocs');
+    if (!el) return;
+    if (apiDocMd) { paintApiDocs(apiDocMd); return; }
+    fetch('/api/admin/api-docs').then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.data || !res.data.markdown) {
+          el.innerHTML = '<p>' + esc((res.data && res.data.detail) || '文档加载失败') + '</p>';
+          return;
+        }
+        apiDocMd = res.data.markdown;
+        paintApiDocs(apiDocMd);
+      }).catch(function (e) {
+        el.innerHTML = '<p>' + esc(e.message || '文档加载失败') + '</p>';
+      });
+  }
+  function showApiSecret(secret) {
+    var modal = document.getElementById('apiKeyModal');
+    var text = document.getElementById('apiKeySecretText');
+    if (text) text.textContent = secret || '';
+    if (modal) modal.hidden = false;
+  }
+  function hideApiSecret() {
+    var modal = document.getElementById('apiKeyModal');
+    if (modal) modal.hidden = true;
+  }
+  function renderApiKeys(keys) {
+    apiKeysCache = keys || [];
+    var tbody = document.getElementById('apiKeyBody');
+    var logSel = document.getElementById('apiLogKey');
+    var logCur = logSel ? logSel.value : '';
+    if (logSel) {
+      var oh = '<option value="">全部密钥</option>';
+      apiKeysCache.forEach(function (k) {
+        oh += '<option value="' + k.id + '">' + esc(k.name) + '（' + esc(k.display) + '）</option>';
+      });
+      logSel.innerHTML = oh;
+      logSel.value = logCur;
+    }
+    if (!tbody) return;
+    if (!apiKeysCache.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="files-muted">还没有密钥。填写名称后点「生成密钥」。</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '';
+    apiKeysCache.forEach(function (k) {
+      var tr = document.createElement('tr');
+      var st = k.status === 'active' ? '<span class="badge st-done">启用</span>' : '<span class="badge st-failed">停用</span>';
+      var toggle = k.status === 'active' ? '停用' : '启用';
+      var toggleTo = k.status === 'active' ? 'disabled' : 'active';
+      var keyCell = k.secret
+        ? '<code class="api-secret" title="' + esc(k.secret) + '">' + esc(k.secret) + '</code>' +
+          '<button type="button" class="mini" data-api-act="copy" data-id="' + k.id + '" style="margin-left:6px">复制</button>'
+        : '<span class="mono">' + esc(k.display) + '</span><div style="font-size:11.5px;color:#98a2b6;margin-top:2px">旧密钥未保存明文，请删除后重新生成</div>';
+      tr.innerHTML =
+        '<td class="td-name" title="' + esc(k.note || k.name) + '">' + esc(k.name) +
+          (k.note ? '<div style="font-size:11.5px;color:#98a2b6;margin-top:2px">' + esc(k.note) + '</div>' : '') + '</td>' +
+        '<td class="td-name">' + keyCell + '</td>' +
+        '<td>' + esc(k.ownerUsername || 'api:' + k.name) + '</td>' +
+        '<td>' + st + '</td>' +
+        '<td>' + (k.callCount || 0) + '</td>' +
+        '<td>' + esc(k.lastUsedAt || '—') + '</td>' +
+        '<td>' + esc((k.expireAt || '').slice(0, 10) || '永久') + '</td>' +
+        '<td class="ops">' +
+          '<button type="button" class="mini" data-api-act="toggle" data-id="' + k.id + '" data-to="' + toggleTo + '">' + toggle + '</button>' +
+          '<button type="button" class="mini" data-api-act="del" data-id="' + k.id + '">删除</button>' +
+        '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+  function httpBadge(code) {
+    var n = parseInt(code, 10) || 0;
+    var cls = n >= 500 ? 'st-5xx' : (n >= 400 ? 'st-4xx' : 'st-2xx');
+    return '<span class="badge ' + cls + '">' + n + '</span>';
+  }
+  function renderApiLogs(j) {
+    var tbody = document.getElementById('apiLogBody');
+    var items = (j && j.items) || [];
+    var st = (j && j.stats) || {};
+    var keysEl = document.getElementById('apiStKeys');
+    var todayEl = document.getElementById('apiStToday');
+    var errEl = document.getElementById('apiStErr');
+    if (keysEl) keysEl.textContent = st.keysActive != null ? st.keysActive : '—';
+    if (todayEl) todayEl.textContent = st.today != null ? st.today : '—';
+    if (errEl) errEl.textContent = st.errorsToday != null ? st.errorsToday : '—';
+    setApiReqBadge(st.pendingRequests);
+    if (!tbody) return;
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="files-muted">暂无调用记录</td></tr>';
+    } else {
+      tbody.innerHTML = items.map(function (it) {
+        var tid = it.taskId
+          ? '<a href="/t/' + encodeURIComponent(it.taskId) + '" target="_blank" rel="noopener">' + esc(it.taskId) + '</a>'
+          : '—';
+        return '<tr>' +
+          '<td>' + esc(it.createdAt) + '</td>' +
+          '<td title="' + esc(it.keyPrefix) + '">' + esc(it.keyName || it.keyPrefix || '—') + '</td>' +
+          '<td class="mono">' + esc(it.method) + '</td>' +
+          '<td class="td-clip" title="' + esc(it.path) + '">' + esc(it.path) + '</td>' +
+          '<td>' + httpBadge(it.statusCode) + '</td>' +
+          '<td>' + (it.durationMs || 0) + 'ms</td>' +
+          '<td class="mono">' + esc(it.ip || '—') + '</td>' +
+          '<td class="td-clip">' + tid + '</td>' +
+          '<td class="td-clip" title="' + esc(it.error) + '">' + esc(it.error || '') + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+    var total = (j && j.total) || 0;
+    var pages = Math.max(1, Math.ceil(total / API_LOG_PAGE));
+    if (apiLogPage > pages) apiLogPage = pages;
+    var pager = document.getElementById('apiLogPager');
+    var info = document.getElementById('apiLogInfo');
+    var prev = document.getElementById('apiLogPrev');
+    var next = document.getElementById('apiLogNext');
+    if (pager) pager.hidden = pages <= 1 && total <= API_LOG_PAGE;
+    if (info) info.textContent = '第 ' + apiLogPage + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
+    if (prev) prev.disabled = apiLogPage <= 1;
+    if (next) next.disabled = apiLogPage >= pages;
+  }
+  function loadApiRequests() {
+    return apiHttp('/api/admin/api-requests').then(function (res) {
+      var box = document.getElementById('apiReqList');
+      if (!res.ok) {
+        if (box) box.innerHTML = '<div class="files-muted">' + esc((res.data && res.data.detail) || '加载失败') + '</div>';
+        return;
+      }
+      setApiReqBadge(res.data.pending);
+      var items = res.data.requests || [];
+      if (!box) return;
+      if (!items.length) {
+        box.innerHTML = '<div class="files-muted">暂无用户申请。用户可在主界面用户名下拉菜单中提交。</div>';
+        return;
+      }
+      box.innerHTML = items.map(function (it) {
+        var st = it.status === 'approved' ? '<span class="badge st-done">已通过</span>'
+          : (it.status === 'rejected' ? '<span class="badge st-failed">已拒绝</span>'
+            : (it.status === 'revoked' ? '<span class="badge st-failed">密钥已停用</span>' : '<span class="badge st-planned">待审核</span>'));
+        var ops = it.status === 'pending'
+          ? '<button type="button" class="mini" data-req-act="approve" data-id="' + it.id + '">通过</button>' +
+            '<button type="button" class="mini" data-req-act="reject" data-id="' + it.id + '">拒绝</button>'
+          : '';
+        var extra = it.rejectReason ? '<div style="font-size:12px;color:#c5221f;margin-top:4px">拒绝：' + esc(it.rejectReason) + '</div>' : '';
+        return '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px dashed #eef1f6">' +
+          '<div style="flex:1;min-width:0"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">' +
+          st + '<b>' + esc(it.realName || it.username) + '</b><span style="font-size:12px;color:#8a93a6">' +
+          esc(it.department || '') + (it.username ? ' · ' + esc(it.username) : '') + ' · ' + esc(it.createdAt) + '</span></div>' +
+          '<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">' + esc(it.purpose) + '</div>' + extra + '</div>' +
+          '<div class="ops">' + ops + '</div></div>';
+      }).join('');
+    }).catch(function (e) {
+      var box = document.getElementById('apiReqList');
+      if (box) box.innerHTML = '<div class="files-muted">' + esc(e.message || '加载失败') + '</div>';
+    });
+  }
+  function setApiReqBadge(n) {
+    var b = document.getElementById('apiReqBadge');
+    if (!b) return;
+    n = parseInt(n, 10) || 0;
+    if (n > 0) { b.hidden = false; b.textContent = n > 99 ? '99+' : String(n); }
+    else { b.hidden = true; b.textContent = ''; }
+  }
+  function refreshApiReqBadge() {
+    fetch('/api/admin/api-requests').then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) setApiReqBadge(j.pending);
+    }).catch(function () {});
+  }
+  function loadApiKeys() {
+    return apiHttp('/api/admin/apikeys').then(function (res) {
+      if (!res.ok) { sayApi(false, (res.data && res.data.detail) || '密钥列表加载失败'); return; }
+      renderApiKeys(res.data.keys || []);
+    }).catch(function (e) { sayApi(false, '密钥列表加载失败：' + e.message); });
+  }
+  function loadApiLogs() {
+    var keyId = (document.getElementById('apiLogKey') || {}).value || '';
+    var status = (document.getElementById('apiLogStatus') || {}).value || '';
+    var q = (document.getElementById('apiLogQ') || {}).value || '';
+    var since = (document.getElementById('apiLogSince') || {}).value || '';
+    var until = (document.getElementById('apiLogUntil') || {}).value || '';
+    var qs = 'limit=' + API_LOG_PAGE + '&offset=' + ((apiLogPage - 1) * API_LOG_PAGE);
+    if (keyId) qs += '&keyId=' + encodeURIComponent(keyId);
+    if (status) qs += '&status=' + encodeURIComponent(status);
+    if (q) qs += '&q=' + encodeURIComponent(q);
+    if (since) qs += '&since=' + encodeURIComponent(since);
+    if (until) qs += '&until=' + encodeURIComponent(until);
+    return apiHttp('/api/admin/api-logs?' + qs).then(function (res) {
+      if (!res.ok) {
+        document.getElementById('apiLogBody').innerHTML = '<tr><td colspan="9">' + esc((res.data && res.data.detail) || '加载失败') + '</td></tr>';
+        return;
+      }
+      renderApiLogs(res.data);
+    }).catch(function (e) {
+      var tbody = document.getElementById('apiLogBody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9">' + esc(e.message || '加载失败') + '</td></tr>';
+    });
+  }
+  function loadOpenApi(quiet) {
+    renderApiDocs();
+    fetch('/api/admin/users').then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) fillApiOwnerSelect(j.users || []);
+    }).catch(function () {});
+    loadApiKeys();
+    loadApiRequests();
+    if (!quiet) apiLogPage = apiLogPage || 1;
+    loadApiLogs();
+  }
+  document.getElementById('apiKeyCreate').addEventListener('click', function () {
+    var name = (document.getElementById('apiKeyName').value || '').trim();
+    if (!name) { sayApi(false, '请填写密钥名称'); return; }
+    var btn = document.getElementById('apiKeyCreate');
+    btn.disabled = true;
+    apiHttp('/api/admin/apikeys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        note: (document.getElementById('apiKeyNote').value || '').trim(),
+        ownerUsername: document.getElementById('apiKeyOwner').value || '',
+        expireAt: document.getElementById('apiKeyExpire').value || ''
+      })
+    }).then(function (res) {
+      if (res.ok && res.data.ok) {
+        sayApi(true, '已生成密钥');
+        document.getElementById('apiKeyName').value = '';
+        document.getElementById('apiKeyNote').value = '';
+        document.getElementById('apiKeyExpire').value = '';
+        showApiSecret((res.data.key || {}).secret || '');
+        loadApiKeys();
+      } else sayApi(false, (res.data && res.data.detail) || '创建失败');
+    }).catch(function (e) { sayApi(false, e.message); })
+    .finally(function () { btn.disabled = false; });
+  });
+  document.getElementById('apiKeyBody').addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('button[data-api-act]') : null;
+    if (!btn) return;
+    var id = btn.getAttribute('data-id');
+    var act = btn.getAttribute('data-api-act');
+    if (act === 'toggle') {
+      var to = btn.getAttribute('data-to');
+      apiHttp('/api/admin/apikeys/' + id, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: to })
+      }).then(function (res) {
+        if (res.ok && res.data.ok) { sayApi(true, to === 'active' ? '已启用' : '已停用'); loadApiKeys(); loadApiLogs(); }
+        else sayApi(false, (res.data && res.data.detail) || '更新失败');
+      });
+    } else if (act === 'copy') {
+      var secret = '';
+      (apiKeysCache || []).forEach(function (k) {
+        if (String(k.id) === String(id)) secret = k.secret || '';
+      });
+      if (!secret) { sayApi(false, '没有可复制的明文'); return; }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(secret).then(function () { sayApi(true, '已复制 API Key'); }).catch(function () {});
+      }
+    } else if (act === 'del') {
+      if (!confirm('删除该密钥后，使用它的调用将立即失败。确定删除？')) return;
+      apiHttp('/api/admin/apikeys/' + id, { method: 'DELETE' }).then(function (res) {
+        if (res.ok && res.data.ok) { sayApi(true, '已删除'); loadApiKeys(); }
+        else sayApi(false, (res.data && res.data.detail) || '删除失败');
+      });
+    }
+  });
+  document.getElementById('apiLogReload').addEventListener('click', function () { apiLogPage = 1; loadApiLogs(); });
+  document.getElementById('apiLogKey').addEventListener('change', function () { apiLogPage = 1; loadApiLogs(); });
+  document.getElementById('apiLogStatus').addEventListener('change', function () { apiLogPage = 1; loadApiLogs(); });
+  document.getElementById('apiLogQ').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { apiLogPage = 1; loadApiLogs(); }
+  });
+  document.getElementById('apiLogPrev').addEventListener('click', function () { if (apiLogPage > 1) { apiLogPage--; loadApiLogs(); } });
+  document.getElementById('apiLogNext').addEventListener('click', function () { apiLogPage++; loadApiLogs(); });
+  document.getElementById('apiLogPurge').addEventListener('click', function () {
+    if (!confirm('清除 30 天前的调用历史？此操作不可恢复。')) return;
+    apiHttp('/api/admin/api-logs?days=30', { method: 'DELETE' }).then(function (res) {
+      if (res.ok && res.data.ok) { sayApi(true, '已删除 ' + (res.data.deleted || 0) + ' 条'); apiLogPage = 1; loadApiLogs(); }
+      else sayApi(false, (res.data && res.data.detail) || '清理失败');
+    });
+  });
+  document.getElementById('apiKeyCopy').addEventListener('click', function () {
+    var t = (document.getElementById('apiKeySecretText') || {}).textContent || '';
+    if (!t) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(t).then(function () { sayApi(true, '已复制到剪贴板'); }).catch(function () {});
+    }
+  });
+  var apiDocDl = document.getElementById('apiDocDownload');
+  if (apiDocDl) apiDocDl.addEventListener('click', function (e) {
+    e.preventDefault();
+    fetch('/api/openapi/guide').then(function (r) {
+      if (!r.ok) throw new Error('下载失败');
+      return r.blob();
+    }).then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = '申报书开放API文档.md';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+    }).catch(function (err) { sayApi(false, err.message || '下载失败'); });
+  });
+  document.getElementById('apiKeyModalClose').addEventListener('click', hideApiSecret);
+  document.getElementById('apiKeyModal').addEventListener('click', function (e) {
+    if (e.target === this) hideApiSecret();
+  });
+  document.getElementById('apiReqList').addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('button[data-req-act]') : null;
+    if (!btn) return;
+    var id = btn.getAttribute('data-id');
+    var act = btn.getAttribute('data-req-act');
+    var body = { action: act };
+    if (act === 'reject') {
+      var reason = window.prompt('拒绝原因（可留空）', '') || '';
+      body.reason = reason;
+    } else if (!confirm('通过后将生成 API Key，并在密钥列表中可见。确定通过？')) {
+      return;
+    }
+    apiHttp('/api/admin/api-requests/' + id + '/review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      if (!res.ok) { sayApi(false, (res.data && res.data.detail) || '处理失败'); return; }
+      sayApi(true, act === 'approve' ? '已通过并生成密钥' : '已拒绝');
+      if (act === 'approve' && res.data.key && res.data.key.secret) showApiSecret(res.data.key.secret);
+      loadApiRequests();
+      loadApiKeys();
+    });
+  });
+
+  /* ===== 各群记录看板 ===== */
+  var wecomState = { sources: [], sourceId: '*', sourceKind: '', sessionId: '', sessionName: '', offset: 0, limit: 80, total: 0, searchMode: false, replicas: [], tail: true, sessionKey: '', msgKey: '', sourceKey: '' };
+  var wecomGroupTimer = null;
+  var wecomMsgTimer = null;
+
+  function wecomKind() {
+    var el = document.getElementById('wecomOnlyGroup');
+    return (el && !el.checked) ? 'all' : 'group';
+  }
+  function wecomSourceParam() {
+    var id = wecomState.sourceId || '*';
+    return (id === '*' || id === 'all') ? '' : id;
+  }
+  function wecomCurrentSource() {
+    var list = wecomState.sources || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === wecomState.sourceId) return list[i];
+    }
+    return {};
+  }
+  function wecomRemoteName() {
+    var s = wecomCurrentSource();
+    return s.operator_name || s.computer_name || wecomState.sourceId || '远端电脑';
+  }
+  function wecomReplicaNames(copies) {
+    var names = [];
+    var seen = {};
+    function add(n) {
+      n = String(n || '').trim();
+      if (!n || seen[n]) return;
+      seen[n] = 1;
+      names.push(n);
+    }
+    (copies || []).forEach(function (c) { add(c.source_label || c.label || c.source_id); });
+    (wecomState.replicas || []).forEach(function (r) { add(r.label || r.source_id); });
+    if (!names.length && wecomSourceParam()) add(wecomRemoteName());
+    return names.length ? names.join('、') : '各电脑';
+  }
+  function wecomIdleCacheHint(copies) {
+    var n = (copies || []).length;
+    if (!n) return '点击下载';
+    var names = (copies || []).map(function (c) { return c.source_label || c.source_id; }).filter(Boolean);
+    return '可查 ' + names.join(' · ') + ' · 点击下载';
+  }
+  function wecomParseJsonAttr(el, name) {
+    try {
+      return JSON.parse(decodeURIComponent(el.getAttribute(name) || '%5B%5D'));
+    } catch (e) {
+      return [];
+    }
+  }
+  function wecomSetFileStatus(btn, text, cls) {
+    var st = btn && btn.parentElement && btn.parentElement.querySelector('.st');
+    if (!st) return;
+    st.textContent = text;
+    st.className = 'st' + (cls ? ' ' + cls : '');
+    st.title = text;
+  }
+  function wecomQuery(path) {
+    return fetch(path).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, status: r.status, data: j }; });
+    });
+  }
+  function wecomFail(box, t) {
+    if (!box) return;
+    box.innerHTML = '<div class="wecom-empty">' + esc(t || '加载失败') + '</div>';
+  }
+  function loadWecomBoard(quiet) {
+    var st = document.getElementById('wecomStatus');
+    if (!quiet && st) st.textContent = '检测解析服务…';
+    wecomQuery('/api/wecom/health').then(function (res) {
+      var h = res.data || {};
+      if (st) {
+        var ok = !!h.ok;
+        var svc = !!h.service_ok;
+        st.innerHTML = '<span class="' + (ok ? 'dot-ok' : (svc ? '' : 'dot-bad')) + '">●</span> ' +
+          (ok ? '解析服务已连通 · ' + esc(h.baseUrl || '') + ' · ' + (h.source_count || 0) + ' 台电脑' :
+            (svc ? '服务可达，但 ' + esc(h.error || '未通过鉴权') : ('解析服务未就绪：' + esc(h.error || '无法连接')))) +
+          (h.hint ? '<span style="color:#8a93a6">　' + esc(h.hint) + '</span>' : '');
+      }
+      if (!h.ok) {
+        if (!wecomState.sources.length) {
+          document.getElementById('wecomSources').innerHTML = '';
+          wecomFail(document.getElementById('wecomSessions'), h.hint || h.error || '未连接');
+        }
+        return;
+      }
+      return wecomQuery('/api/wecom/sources').then(function (sr) {
+        if (!sr.ok) {
+          wecomFail(document.getElementById('wecomSessions'), (sr.data && (sr.data.detail || sr.data.error)) || '无法列出电脑');
+          return;
+        }
+        wecomState.sources = sr.data.items || [];
+        if (!wecomState.sourceId) wecomState.sourceId = '*';
+        if (!quiet) renderWecomSources();
+        else renderWecomSourcesIfChanged();
+        loadWecomSessions(quiet);
+        if (wecomState.sessionId) loadWecomMessages(quiet);
+      });
+    }).catch(function (e) {
+      if (st) st.innerHTML = '<span class="dot-bad">●</span> 检测失败：' + esc(e.message || e);
+    });
+  }
+  function renderWecomSourcesIfChanged() {
+    var key = (wecomState.sources || []).map(function (s) {
+      return [s.id || '', s.operator_name || '', s.computer_name || '', s.kind || ''].join('\t');
+    }).join('\n') + '\n' + (wecomState.sourceId || '*');
+    if (wecomState.sourceKey === key && document.getElementById('wecomSources') && document.getElementById('wecomSources').children.length) return;
+    wecomState.sourceKey = key;
+    renderWecomSources();
+  }
+  function renderWecomSources() {
+    var box = document.getElementById('wecomSources');
+    if (!box) return;
+    var allOn = !wecomState.sourceId || wecomState.sourceId === '*';
+    var html = '<button type="button" class="wecom-chip' + (allOn ? ' on' : '') + '" data-id="*" data-kind="">全部电脑<span class="tag">合并</span></button>';
+    html += wecomState.sources.map(function (s) {
+      var id = s.id || '';
+      var label = s.operator_name || s.computer_name || id;
+      var tag = (s.kind === 'local' || id === 'local') ? '本机' : '远端';
+      return '<button type="button" class="wecom-chip' + (id === wecomState.sourceId ? ' on' : '') + '" data-id="' + escAttr(id) + '" data-kind="' + escAttr(s.kind || '') + '">' + esc(label) + '<span class="tag">' + tag + '</span></button>';
+    }).join('');
+    box.innerHTML = html;
+    wecomState.sourceKey = (wecomState.sources || []).map(function (s) {
+      return [s.id || '', s.operator_name || '', s.computer_name || '', s.kind || ''].join('\t');
+    }).join('\n') + '\n' + (wecomState.sourceId || '*');
+    box.querySelectorAll('.wecom-chip').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        wecomState.sourceId = btn.getAttribute('data-id') || '*';
+        wecomState.sourceKind = btn.getAttribute('data-kind') || '';
+        wecomState.sessionId = '';
+        wecomState.replicas = [];
+        wecomState.offset = 0;
+        wecomState.tail = true;
+        wecomState.sessionKey = '';
+        wecomState.msgKey = '';
+        renderWecomSources();
+        loadWecomSessions();
+        document.getElementById('wecomChatTitle').textContent = '未选择会话';
+        document.getElementById('wecomChatSub').textContent = '从左侧点开群；重复群已合并';
+        document.getElementById('wecomStream').innerHTML = '<div class="wecom-empty">选择群后显示消息。</div>';
+        document.getElementById('wecomPager').hidden = true;
+      });
+    });
+  }
+  function wecomSessionKey(items) {
+    return (items || []).map(function (it) {
+      return [it.username || '', it.display_name || '', it.msg_count || '', it.last_time || '', (it.replicas || []).length].join('\t');
+    }).join('\n');
+  }
+  function wecomMsgKey(items) {
+    return (items || []).map(function (m) {
+      return [m.message_id || '', m.time_text || '', m.sender || '', (m.text || '').length, m.attachment_name || '', m.media_url || ''].join('\t');
+    }).join('\n');
+  }
+  function loadWecomSessions(quiet) {
+    var list = document.getElementById('wecomSessions');
+    var q = (document.getElementById('wecomGroupQ') || {}).value || '';
+    var url = '/api/wecom/groups?kind=' + encodeURIComponent(wecomKind()) + '&q=' + encodeURIComponent(q);
+    if (wecomSourceParam()) url += '&source_id=' + encodeURIComponent(wecomSourceParam());
+    var scroll = list ? list.scrollTop : 0;
+    wecomQuery(url).then(function (res) {
+      if (!res.ok) {
+        if (!quiet) wecomFail(list, (res.data && res.data.detail) || '加载会话失败');
+        return;
+      }
+      var items = res.data.items || [];
+      if (!items.length) {
+        if (!quiet) wecomFail(list, q ? '没有匹配的会话' : '没有群会话。可取消「仅群聊」，或先在解析助手里勾选并同步。');
+        return;
+      }
+      var key = wecomSessionKey(items);
+      if (quiet && wecomState.sessionKey === key) return;
+      wecomState.sessionKey = key;
+      list.innerHTML = items.map(function (it) {
+        var sid = it.username || '';
+        var name = it.display_name || sid || '未命名会话';
+        var reps = it.replicas || [];
+        var nrep = reps.length;
+        var labels = reps.map(function (r) { return r.label || r.source_id; }).filter(Boolean).join('、');
+        var meta = (nrep > 1 ? nrep + ' 台电脑' : (labels || '1 台')) +
+          (it.msg_count ? ' · ' + it.msg_count + ' 条' : '') +
+          (it.last_time ? ' · ' + it.last_time : '');
+        if (nrep > 1 && labels) meta += ' · ' + labels;
+        return '<button type="button" class="wecom-item' + (sid === wecomState.sessionId ? ' on' : '') + '" data-id="' + escAttr(sid) + '" data-name="' + escAttr(name) + '" data-replicas="' + encodeURIComponent(JSON.stringify(reps)) + '">' +
+          '<b>' + esc(name) + '</b><span>' + esc(meta || sid) + '</span></button>';
+      }).join('');
+      list.querySelectorAll('.wecom-item').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          wecomState.sessionId = btn.getAttribute('data-id') || '';
+          wecomState.sessionName = btn.getAttribute('data-name') || '';
+          wecomState.replicas = wecomParseJsonAttr(btn, 'data-replicas');
+          wecomState.offset = 0;
+          wecomState.tail = true;
+          wecomState.searchMode = false;
+          wecomState.msgKey = '';
+          list.querySelectorAll('.wecom-item').forEach(function (x) { x.classList.toggle('on', x === btn); });
+          loadWecomMessages();
+        });
+      });
+      if (quiet) list.scrollTop = scroll;
+    }).catch(function (e) { if (!quiet) wecomFail(list, e.message || '加载失败'); });
+  }
+  function loadWecomMessages(quiet) {
+    var stream = document.getElementById('wecomStream');
+    var title = document.getElementById('wecomChatTitle');
+    var sub = document.getElementById('wecomChatSub');
+    var pager = document.getElementById('wecomPager');
+    if (!wecomState.sessionId) {
+      if (!quiet) {
+        wecomFail(stream, '选择群后显示消息。');
+        if (pager) pager.hidden = true;
+      }
+      return;
+    }
+    if (title) title.textContent = wecomState.sessionName || wecomState.sessionId;
+    var q = ((document.getElementById('wecomMsgQ') || {}).value || '').trim();
+    var hasMsgs = !!(stream && stream.querySelector('.wecom-msg'));
+    if (!quiet || !hasMsgs) stream.innerHTML = '<div class="wecom-empty">加载中…</div>';
+    if (q) {
+      wecomState.searchMode = true;
+      var surl = '/api/wecom/search?q=' + encodeURIComponent(q) + '&session_id=' + encodeURIComponent(wecomState.sessionId) + '&limit=80';
+      if (wecomSourceParam()) surl += '&source_id=' + encodeURIComponent(wecomSourceParam());
+      wecomQuery(surl).then(function (res) {
+        if (pager) pager.hidden = true;
+        if (!res.ok) { if (!quiet) wecomFail(stream, (res.data && res.data.detail) || '搜索失败'); return; }
+        var items = res.data.items || [];
+        if (sub) sub.textContent = '关键词「' + q + '」命中 ' + items.length + ' 条 · 来自 ' + wecomReplicaNames();
+        var key = wecomMsgKey(items);
+        if (!(quiet && wecomState.msgKey === key)) {
+          wecomState.msgKey = key;
+          renderWecomMsgs(stream, items, true, quiet);
+        }
+      }).catch(function (e) { if (!quiet) wecomFail(stream, e.message || '搜索失败'); });
+      return;
+    }
+    wecomState.searchMode = false;
+    var start = (document.getElementById('wecomStart') || {}).value || '';
+    var end = (document.getElementById('wecomEnd') || {}).value || '';
+    var url = '/api/wecom/groups/' + encodeURIComponent(wecomState.sessionId) + '/messages?offset=' + wecomState.offset + '&limit=' + wecomState.limit;
+    if (wecomState.tail) url += '&tail=1';
+    if (wecomSourceParam()) url += '&source_id=' + encodeURIComponent(wecomSourceParam());
+    if (start) url += '&start_date=' + encodeURIComponent(start);
+    if (end) url += '&end_date=' + encodeURIComponent(end);
+    wecomQuery(url).then(function (res) {
+      if (!res.ok) {
+        if (!quiet) { wecomFail(stream, (res.data && res.data.detail) || '加载消息失败'); if (pager) pager.hidden = true; }
+        return;
+      }
+      var d = res.data || {};
+      wecomState.total = d.total || 0;
+      wecomState.offset = d.offset || 0;
+      wecomState.tail = false;
+      if (d.replicas && d.replicas.length) wecomState.replicas = d.replicas;
+      if (d.display_name && !wecomState.sessionName) wecomState.sessionName = d.display_name;
+      if (title && wecomState.sessionName) title.textContent = wecomState.sessionName;
+      var names = wecomReplicaNames();
+      if (sub) sub.textContent = (d.total || 0) + ' 条（重复已合并）' + (start || end ? ' · 已按日期筛选' : '') +
+        ' · ' + names + ' · 默认看最新';
+      var items = d.items || [];
+      var key = wecomMsgKey(items);
+      if (!(quiet && wecomState.msgKey === key)) {
+        wecomState.msgKey = key;
+        renderWecomMsgs(stream, items, false, quiet);
+      }
+      if (pager) {
+        pager.hidden = wecomState.total <= wecomState.limit;
+        var from = wecomState.total ? (wecomState.offset + 1) : 0;
+        var to = Math.min(wecomState.offset + wecomState.limit, wecomState.total);
+        document.getElementById('wecomPageInfo').textContent = from + '–' + to + ' / ' + wecomState.total;
+        document.getElementById('wecomPrev').disabled = wecomState.offset <= 0;
+        document.getElementById('wecomNext').disabled = wecomState.offset + wecomState.limit >= wecomState.total;
+      }
+    }).catch(function (e) { if (!quiet) wecomFail(stream, e.message || '加载失败'); });
+  }
+  function wecomFileHref(copy) {
+    if (!copy || !copy.source_id || !copy.message_id) return '';
+    var url = '/api/wecom/sources/' + encodeURIComponent(copy.source_id) + '/files/' + encodeURIComponent(copy.message_id);
+    var cid = copy.session_id || wecomState.sessionId || '';
+    if (cid) url += '?session_id=' + encodeURIComponent(cid);
+    return url;
+  }
+  function wecomIsLocalCopy(c) {
+    return !!(c && (c.source_id === 'local' || c.kind === 'local'));
+  }
+  function wecomSortCopies(copies) {
+    return (copies || []).slice().sort(function (a, b) {
+      return (wecomIsLocalCopy(a) ? 0 : 1) - (wecomIsLocalCopy(b) ? 0 : 1);
+    });
+  }
+  function wecomCopiesOf(m) {
+    var copies = [];
+    if (m && Array.isArray(m.copies) && m.copies.length) {
+      copies = m.copies.map(function (c) {
+        return {
+          source_id: c.source_id,
+          source_label: c.source_label || c.label || '',
+          kind: c.kind || '',
+          message_id: Number(c.message_id || 0),
+          session_id: c.session_id || wecomState.sessionId || ''
+        };
+      }).filter(function (c) { return c.source_id && c.message_id; });
+    } else {
+      var mid = Number((m && m.message_id) || 0);
+      if (mid) {
+        var sid = (m && m.source_id) || wecomSourceParam();
+        if (sid) {
+          copies = [{ source_id: sid, message_id: mid, session_id: wecomState.sessionId, source_label: wecomRemoteName(), kind: wecomState.sourceKind || '' }];
+        } else {
+          copies = (wecomState.replicas || []).map(function (r) {
+            return { source_id: r.source_id, message_id: mid, session_id: wecomState.sessionId, source_label: r.label || '', kind: r.kind || '' };
+          }).filter(function (c) { return c.source_id && c.message_id; });
+        }
+      }
+    }
+    return wecomSortCopies(copies.filter(function (c, i, arr) {
+      return arr.findIndex(function (x) { return x.source_id === c.source_id; }) === i;
+    }));
+  }
+  var WECOM_MEDIA_URL = /https?:\/\/\S*(?:wework\.qpic\.cn|wx\.qlogo\.cn|mmbiz\.qpic\.cn|pic\.weixin\.qq\.com|imunion\.weixin\.qq\.com|weixin\.qq\.com\/cgi-bin\/mmae-bin)\S*/gi;
+  function wecomStripMediaUrls(s) {
+    return String(s || '').replace(WECOM_MEDIA_URL, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  function wecomExtractFileName(text) {
+    var s = wecomStripMediaUrls(text);
+    var hit = s.match(/\[?(?:文件|file)?\]?\s*([^\n[\]/\\]+?\.(?:zip|rar|7z|pdf|xlsx?|docx?|pptx?|png|jpe?g|gif|webp|bmp|mp4|txt|md))/i);
+    return hit ? String(hit[1] || '').trim() : '';
+  }
+  function wecomHasFileUrl(text) {
+    return /imunion\.weixin\.qq\.com|tpdownloadmedia/i.test(String(text || ''));
+  }
+  function wecomCaption(m, fname, hasMedia) {
+    var text = wecomStripMediaUrls(m.text || m.snippet || '');
+    if (hasMedia) {
+      text = text.replace(/^\[.*?\]\s*/, '');
+      if (fname) text = text.split(fname).join('').trim();
+      if (!text || text === fname) return '';
+    }
+    return text;
+  }
+  function wecomIsImage(m) {
+    var t = Number(m.msg_type || 0);
+    var name = String(m.attachment_name || m.text || '');
+    if (t === 4 || t === 15) return true;
+    if (m.media_url) return true;
+    return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+  }
+  function wecomFileName(m) {
+    if (m.attachment_name) return String(m.attachment_name);
+    var fromText = wecomExtractFileName(m.text || m.snippet || '');
+    if (fromText) return fromText;
+    var label = String(m.msg_type_label || '').trim();
+    if (label && label !== '文本' && label !== '系统消息' && !/^text$/i.test(label)) return label;
+    return '聊天文件';
+  }
+  function wecomFileExt(name) {
+    var s = String(name || '');
+    var i = s.lastIndexOf('.');
+    if (i < 0 || i === s.length - 1) return 'FILE';
+    return s.slice(i + 1).toUpperCase().slice(0, 4);
+  }
+  function wecomHasFile(m) {
+    var t = Number(m.msg_type || 0);
+    if (m.attachment_name) return true;
+    if (t === 14 || t === 16 || t === 20) return true;
+    if (t === 4 || t === 15) return !m.media_url;
+    if (wecomHasFileUrl(m.text || m.snippet || '') && wecomExtractFileName(m.text || m.snippet || '')) return true;
+    return !!(m.has_attachment && m.message_id && !wecomIsImage(m));
+  }
+  function wecomPreview(src) {
+    var box = document.getElementById('wecomPreview');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'wecomPreview';
+      box.className = 'wecom-preview';
+      box.hidden = true;
+      box.innerHTML = '<img alt="预览">';
+      box.addEventListener('click', function () {
+        box.hidden = true;
+        box.querySelector('img').removeAttribute('src');
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !box.hidden) box.click();
+      });
+      document.body.appendChild(box);
+    }
+    box.querySelector('img').src = src;
+    box.hidden = false;
+  }
+  function wecomPcsHtml(copies) {
+    return '<div class="wecom-pcs">' + copies.map(function (c, i) {
+      return '<span class="wecom-pc" data-pc="' + i + '">' + esc(c.source_label || c.source_id || '') + '</span>';
+    }).join('') + '</div>';
+  }
+  function wecomSetPcState(wrap, idx, cls) {
+    if (!wrap) return;
+    var chips = wrap.querySelectorAll('.wecom-pc');
+    if (chips[idx]) chips[idx].className = 'wecom-pc' + (cls ? ' ' + cls : '');
+  }
+  function renderWecomMsgs(stream, items, fromSearch, quiet) {
+    if (!items.length) {
+      if (!quiet || !stream.querySelector('.wecom-msg')) {
+        wecomFail(stream, fromSearch ? '没有命中的消息' : '该时间范围内没有消息');
+      }
+      return;
+    }
+    var keepScroll = stream.scrollTop;
+    var nearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80;
+    stream.innerHTML = items.map(function (m) {
+      var fname = wecomFileName(m);
+      var copies = wecomCopiesOf(m);
+      var mid = m.message_id || (copies[0] && copies[0].message_id) || '';
+      var hasThumb = !!(wecomIsImage(m) && m.media_url);
+      var showCard = wecomHasFile(m);
+      var text = wecomCaption(m, fname, hasThumb || showCard);
+      var who = m.sender || '未知';
+      var when = m.time_text || '';
+      var typ = m.msg_type_label || '';
+      if (showCard && /系统消息/.test(typ)) typ = '文件';
+      var extra = '';
+      if (hasThumb) {
+        var src = '/api/wecom/media?url=' + encodeURIComponent(m.media_url);
+        extra += '<img class="wecom-thumb" data-preview="' + escAttr(src) + '" src="' + escAttr(src) + '" alt="' + escAttr(fname) + '" loading="lazy" referrerpolicy="no-referrer">';
+        if (copies.length) {
+          extra += '<div><button type="button" class="wecom-orig" data-wecom-dl="' + escAttr(mid) + '" data-name="' + escAttr(fname) + '" data-copies="' + encodeURIComponent(JSON.stringify(copies)) + '">下载原文件</button></div>';
+        }
+      }
+      if (showCard) {
+        extra += '<div class="wecom-file">' +
+          '<span class="ext">' + esc(wecomFileExt(fname)) + '</span>' +
+          '<span class="nm" title="' + escAttr(fname) + '">' + esc(fname) + '</span>' +
+          '<button type="button" class="mini" data-wecom-dl="' + escAttr(mid) + '" data-name="' + escAttr(fname) + '" data-copies="' + encodeURIComponent(JSON.stringify(copies)) + '">下载</button>' +
+          '<button type="button" class="mini" data-wecom-locate="' + encodeURIComponent(JSON.stringify({
+            time_text: when, sender: who, text: String(m.text || m.snippet || ''), filename: fname,
+            session_name: wecomState.sessionName || '', copies: copies
+          })) + '">定位申报书</button>' +
+          wecomPcsHtml(copies) +
+          '<span class="st">' + esc(wecomIdleCacheHint(copies)) + '</span></div>';
+      }
+      return '<div class="wecom-msg"><div class="meta"><span class="who">' + esc(who) + '</span><span>' + esc(when) + (typ ? ' · ' + esc(typ) : '') + '</span></div>' +
+        (text ? '<div class="body">' + esc(text) + '</div>' : '') + extra + '</div>';
+    }).join('');
+    stream.querySelectorAll('[data-wecom-dl]').forEach(function (btn) {
+      btn.addEventListener('click', function () { wecomDownload(btn); });
+    });
+    stream.querySelectorAll('[data-wecom-locate]').forEach(function (btn) {
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        wecomLocate(btn);
+      });
+    });
+    stream.querySelectorAll('img.wecom-thumb').forEach(function (img) {
+      img.addEventListener('click', function () { wecomPreview(img.getAttribute('data-preview') || img.src); });
+    });
+    if (quiet && !nearBottom) stream.scrollTop = keepScroll;
+    else stream.scrollTop = stream.scrollHeight;
+  }
+  function wecomLocateBox() {
+    var box = document.getElementById('wecomLocate');
+    if (box) return box;
+    box = document.createElement('div');
+    box.id = 'wecomLocate';
+    box.className = 'wecom-locate';
+    box.hidden = true;
+    box.innerHTML = '<div class="wecom-locate-card" role="dialog">' +
+      '<div class="wecom-locate-hd"><h3>定位申报书修改版本</h3><div class="grow"></div>' +
+      '<div class="wecom-locate-win">时间窗 ' +
+      '<button type="button" class="mini" data-win="1">当天</button>' +
+      '<button type="button" class="mini active" data-win="7">7 天</button>' +
+      '<button type="button" class="mini" data-win="30">30 天</button></div>' +
+      '<button type="button" class="ghost mini" data-close="1">关闭</button></div>' +
+      '<div class="wecom-locate-keys" id="wecomLocateKeys"></div>' +
+      '<div id="wecomLocateBody"><div class="wecom-empty">正在对照任务…</div></div></div>';
+    box.addEventListener('click', function (e) {
+      if (e.target === box || (e.target && e.target.getAttribute && e.target.getAttribute('data-close'))) box.hidden = true;
+    });
+    box.querySelectorAll('[data-win]').forEach(function (btn) {
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var days = Number(btn.getAttribute('data-win') || 7) || 7;
+        box.querySelectorAll('[data-win]').forEach(function (b) { b.classList.toggle('active', b === btn); });
+        wecomLocateRun(box._payload || {}, days);
+      });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !box.hidden) box.hidden = true;
+    });
+    document.body.appendChild(box);
+    return box;
+  }
+  function wecomFileHrefTask(tid, name, stamp) {
+    var url = '/api/tasks/' + encodeURIComponent(tid) + '/files?dir=' + (stamp ? 'versions' : 'output') +
+      '&name=' + encodeURIComponent(name);
+    if (stamp) url += '&stamp=' + encodeURIComponent(stamp);
+    return url;
+  }
+  function wecomLocate(btn) {
+    var payload = wecomParseJsonAttr(btn, 'data-wecom-locate');
+    if (!payload || Array.isArray(payload)) payload = {};
+    var box = wecomLocateBox();
+    box._payload = payload;
+    box.querySelectorAll('[data-win]').forEach(function (b) {
+      b.classList.toggle('active', String(b.getAttribute('data-win')) === '7');
+    });
+    wecomLocateRun(payload, 7);
+  }
+  function wecomLocateRun(payload, windowDays) {
+    var box = wecomLocateBox();
+    var keysEl = document.getElementById('wecomLocateKeys');
+    var bodyEl = document.getElementById('wecomLocateBody');
+    box.hidden = false;
+    keysEl.textContent = '正在抽取姓名 / 文件名 / 时间…';
+    bodyEl.innerHTML = '<div class="wecom-empty">正在对照任务…</div>';
+    fetch('/api/wecom/locate-task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        time_text: payload.time_text || '',
+        sender: payload.sender || '',
+        text: payload.text || '',
+        filename: payload.filename || '',
+        session_name: payload.session_name || '',
+        windowDays: windowDays || 7
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        var d = x.j || {};
+        var k = d.keys || {};
+        keysEl.innerHTML = '文件：<b>' + esc(k.filename || '（无）') + '</b>　·　姓名：' + esc((k.names || []).join(' / ') || '（未识别）') +
+          '　·　编号：' + esc((k.nums || []).join('、') || '（无）') +
+          '<br>消息时间：' + esc(k.time || '（无）') + (k.sender ? '　·　发送人：' + esc(k.sender) : '') +
+          (k.group ? '　·　群：' + esc(k.group) : '') +
+          '　·　时间窗 ±' + esc(d.windowDays || 7) + ' 天';
+        var copies = payload.copies || [];
+        var chatBtns = copies.length
+          ? '<div class="wecom-locate-item"><div class="ttl">群里当时发的文件</div>' +
+            '<div class="meta">' + esc(k.filename || payload.filename || '聊天文件') + ' · 走企业微信缓存，未打开过则下不了</div>' +
+            '<div class="acts"><button type="button" class="mini" data-wecom-dl="' + escAttr((copies[0] && copies[0].message_id) || '') +
+            '" data-name="' + escAttr(k.filename || payload.filename || 'chat-file') +
+            '" data-copies="' + encodeURIComponent(JSON.stringify(copies)) + '">下载群文件</button></div></div>'
+          : '';
+        if (!x.ok) {
+          bodyEl.innerHTML = chatBtns + '<div class="wecom-empty">' + esc(d.detail || '定位失败') + '</div>';
+        } else if (!(d.items || []).length) {
+          bodyEl.innerHTML = chatBtns + '<div class="wecom-empty">' + esc(d.hint || '没有匹配的修改任务') + '</div>';
+        } else {
+          var html = chatBtns + (d.items || []).map(function (it) {
+            var conf = it.confidence || 'low';
+            var confLab = { high: '较有把握', medium: '需核对', low: '弱匹配' }[conf] || conf;
+            var dls = (it.deliverables || []).map(function (f) {
+              return '<a class="mini" href="' + wecomFileHrefTask(it.id, f.name) + '" download>' + esc(f.kind === 'edited' ? '修改后' : (f.kind === 'backup' ? '备份' : f.name)) + '</a>';
+            }).join('');
+            var vers = (it.versions || []).slice().reverse().map(function (v) {
+              var links = (v.files || []).filter(function (n) { return /修改后|备份/.test(n); }).map(function (n) {
+                return '<a class="mini" href="' + wecomFileHrefTask(it.id, n, v.stamp) + '" download>' + esc(n) + '</a>';
+              }).join('');
+              return '<div class="meta">快照 ' + esc(v.at || v.stamp) + ' ' + links + '</div>';
+            }).join('');
+            return '<div class="wecom-locate-item"><div class="ttl">' + esc(it.appName || it.id) +
+              '<span class="wecom-conf ' + escAttr(conf) + '">' + esc(confLab) + ' · ' + esc(it.score) + '</span></div>' +
+              '<div class="meta">' + badge(it.status) + '　' + esc(it.personName || '') +
+              (it.attachId ? ' · ' + esc(it.attachId) : '') +
+              '<br>创建 ' + esc(it.createdAt || '—') + (it.appliedAt ? '　写入 ' + esc(it.appliedAt) : '') +
+              (it.owner ? '　提交人 ' + esc(it.owner) : '') + '</div>' +
+              '<div class="why">' + esc((it.reasons || []).join('；')) + '</div>' +
+              '<div class="acts"><a class="mini primary" href="' + escAttr(it.url || ('/t/' + it.id)) + '" target="_blank" rel="noopener">打开任务</a>' + dls + '</div>' +
+              vers + '</div>';
+          }).join('');
+          bodyEl.innerHTML = html;
+        }
+        bodyEl.querySelectorAll('[data-wecom-dl]').forEach(function (b) {
+          b.addEventListener('click', function () { wecomDownload(b); });
+        });
+      }).catch(function (e) {
+        bodyEl.innerHTML = '<div class="wecom-empty">' + esc(e.message || '定位失败') + '</div>';
+      });
+  }
+  function wecomSplitBox() {
+    var box = document.getElementById('wecomSplit');
+    if (box) return box;
+    box = document.createElement('div');
+    box.id = 'wecomSplit';
+    box.className = 'wecom-locate';
+    box.hidden = true;
+    box.innerHTML = '<div class="wecom-locate-card" role="dialog">' +
+      '<div class="wecom-locate-hd"><h3>拆解群聊为申报任务</h3><div class="grow"></div>' +
+      '<button type="button" class="ghost mini" data-close="1">关闭</button></div>' +
+      '<div class="wecom-locate-keys" id="wecomSplitKeys"></div>' +
+      '<div id="wecomSplitBody"><div class="wecom-empty">正在拆解…</div></div></div>';
+    box.addEventListener('click', function (e) {
+      var t = e.target;
+      if (t && t.getAttribute && t.getAttribute('data-close')) box.hidden = true;
+    });
+    document.body.appendChild(box);
+    return box;
+  }
+  function wecomSplitDates() {
+    return {
+      start_date: (document.getElementById('wecomStart') || {}).value || '',
+      end_date: (document.getElementById('wecomEnd') || {}).value || ''
+    };
+  }
+  function wecomSplitOpen() {
+    if (!wecomState.sessionId) {
+      say(false, '请先选择一个群');
+      return;
+    }
+    var box = wecomSplitBox();
+    var keysEl = document.getElementById('wecomSplitKeys');
+    var bodyEl = document.getElementById('wecomSplitBody');
+    box.hidden = false;
+    keysEl.textContent = '正在按申报书文件拆解，并用 Gemini 协助定位修改意见…';
+    bodyEl.innerHTML = '<div class="wecom-empty">规则拆解后将调用 Gemini，请稍候…</div>';
+    var dates = wecomSplitDates();
+    fetch('/api/wecom/split-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: wecomState.sessionId,
+        session_name: wecomState.sessionName || '',
+        source_id: wecomSourceParam() || '',
+        start_date: dates.start_date,
+        end_date: dates.end_date,
+        windowHours: 48
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        var d = x.j || {};
+        box._preview = d;
+        keysEl.innerHTML = '群：<b>' + esc(d.session_name || wecomState.sessionName || '') + '</b>　·　日期 ' +
+          esc(d.start_date || '—') + ' ~ ' + esc(d.end_date || '—') +
+          '　·　消息 ' + esc(d.messageCount || 0) +
+          (d.fileCount != null ? '　·　文件 ' + esc(d.fileCount) : '') +
+          '　·　申报书 ' + esc(d.count || 0) +
+          (d.opinionFileCount ? '　·　意见文档 ' + esc(d.opinionFileCount) : '') +
+          (d.ignoredFileCount ? '　·　未当作申报书 ' + esc(d.ignoredFileCount) : '') +
+          '（可上传 ' + esc(d.ready || 0) + '）' +
+          (d.gemini ? '　·　' + esc(d.gemini) : '') +
+          (d.hint ? '<div class="why" style="margin-top:8px">' + esc(d.hint) +
+            (d.ignoredSample && d.ignoredSample.length
+              ? '　例如：' + esc(d.ignoredSample.join('、'))
+              : '') + '</div>' : '');
+        if (!x.ok) {
+          bodyEl.innerHTML = '<div class="wecom-empty">' + esc(d.detail || '拆解失败') + '</div>';
+          return;
+        }
+        var cases = d.cases || [];
+        if (!cases.length) {
+          bodyEl.innerHTML = '<div class="wecom-empty">' + esc(d.hint || '没有识别到申报书') + '</div>';
+          return;
+        }
+        bodyEl.innerHTML = cases.map(function (c) {
+          var app = c.app || {};
+          var ops = (c.opinions || []).map(function (o) {
+            if (o.kind === 'text') return '群文本「' + (o.filename || '群聊修改意见.txt') + '」';
+            return '文档 ' + (o.filename || '');
+          }).join('；');
+          var exist = c.existing
+            ? ('<a class="mini" href="' + escAttr(c.existing.url || ('/t/' + c.existing.id)) + '" target="_blank" rel="noopener">已有任务</a> ' + badge(c.existing.status))
+            : (c.similar ? ('<a class="mini" href="' + escAttr(c.similar.url || ('/t/' + c.similar.id)) + '" target="_blank" rel="noopener">相近任务</a>') : '');
+          var can = !!(c.ready && !c.existing);
+          return '<div class="wecom-locate-item" data-case-row="' + escAttr(c.id) + '"><div class="ttl">' +
+            esc(app.filename || c.id) + '</div>' +
+            '<div class="meta">' + esc(app.time || '') + (app.sender ? '　' + esc(app.sender) : '') +
+            (c.names && c.names.length ? '　姓名 ' + esc(c.names.join(' / ')) : '') +
+            '<br>修改意见：' + esc(ops || '（无，将尝试申报书标注栏）') +
+            (app.cached ? '' : '　未缓存') + '</div>' +
+            (c.warnings && c.warnings.length ? '<div class="why">' + esc(c.warnings.join('；')) + '</div>' : '') +
+            '<div class="acts">' +
+            (can ? '<button type="button" class="mini primary" data-split-up="' + escAttr(c.id) + '">上传</button>' : '') +
+            exist + '</div></div>';
+        }).join('');
+        bodyEl.querySelectorAll('[data-split-up]').forEach(function (btn) {
+          btn.addEventListener('click', function () { wecomSplitCreate(btn); });
+        });
+      }).catch(function (e) {
+        bodyEl.innerHTML = '<div class="wecom-empty">' + esc(e.message || '拆解失败') + '</div>';
+      });
+  }
+  function wecomSplitCreate(btn) {
+    var cid = (btn && btn.getAttribute && btn.getAttribute('data-split-up')) || '';
+    if (!cid) {
+      say(false, '没有可上传的申报书');
+      return;
+    }
+    var row = btn.closest('[data-case-row]') || btn.parentElement;
+    var acts = row && row.querySelector('.acts');
+    function showFail(text) {
+      btn.disabled = false;
+      btn.textContent = '上传';
+      if (row) {
+        var why = row.querySelector('[data-up-err]');
+        if (!why) {
+          why = document.createElement('div');
+          why.className = 'why';
+          why.setAttribute('data-up-err', '1');
+          row.appendChild(why);
+        }
+        why.textContent = text;
+      }
+      say(false, text);
+    }
+    btn.disabled = true;
+    btn.textContent = '正在取文件…';
+    var previewCases = ((wecomSplitBox()._preview || {}).cases) || [];
+    var one = null;
+    for (var i = 0; i < previewCases.length; i++) {
+      if (String(previewCases[i].id) === String(cid)) { one = previewCases[i]; break; }
+    }
+    var dates = wecomSplitDates();
+    fetch('/api/wecom/split-create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        session_id: wecomState.sessionId,
+        session_name: wecomState.sessionName || '',
+        source_id: wecomSourceParam() || '',
+        start_date: dates.start_date,
+        end_date: dates.end_date,
+        windowHours: 48,
+        caseIds: [cid],
+        case: one,
+        force: true
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        var d = x.j || {};
+        var created = (d.created || [])[0];
+        var err = (d.errors || [])[0];
+        var skipped = d.skipped || [];
+        if (!x.ok || d.ok === false || !created) {
+          showFail((err && err.detail) || d.detail || '没有成功创建任务');
+          return;
+        }
+        var extra = skipped.length ? '<div class="meta">部分意见未缓存：' + esc(skipped.map(function (s) { return s.filename; }).join('、')) + '</div>' : '';
+        if (acts) {
+          acts.innerHTML = '<a class="mini primary" href="' + escAttr(created.url) + '" target="_blank" rel="noopener">打开任务</a>' +
+            '<span class="wecom-conf high">已上传</span>';
+        }
+        if (extra && row) row.insertAdjacentHTML('beforeend', extra);
+        say(true, '已上传到任务列表，请到首页查看（生成计划后需确认）');
+        if (typeof loadOverview === 'function') loadOverview();
+      }).catch(function (e) {
+        showFail(e.message || '上传失败');
+      });
+  }
+  function wecomDownload(btn) {
+    var name = btn.getAttribute('data-name') || 'chat-file';
+    var copies = wecomSortCopies(wecomParseJsonAttr(btn, 'data-copies'));
+    var mid = Number(btn.getAttribute('data-wecom-dl') || 0);
+    if (!copies.length) copies = wecomCopiesOf({ message_id: mid });
+    var wrap = btn.closest('.wecom-file') || btn.parentElement;
+    if (!copies.length) {
+      wecomSetFileStatus(btn, '没有可查询的电脑副本', 'bad');
+      return;
+    }
+    btn.disabled = true;
+    var idx = 0;
+    var lastDetail = '';
+    function failAll() {
+      btn.textContent = btn.classList.contains('wecom-orig') ? '原文件未缓存' : '未缓存';
+      btn.disabled = false;
+      wecomSetFileStatus(btn, lastDetail || (wecomReplicaNames(copies) + ' 均未缓存。需在对应电脑企业微信里打开过。'), 'bad');
+    }
+    function saveBlob(blob, label, copyIdx) {
+      var href = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = href;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+      btn.textContent = '已下载';
+      btn.disabled = false;
+      wecomSetPcState(wrap, copyIdx, 'hit');
+      wecomSetFileStatus(btn, '已从「' + label + '」下载。', 'ok');
+    }
+    function tryNext() {
+      if (idx >= copies.length) {
+        failAll();
+        return;
+      }
+      var copyIdx = idx;
+      var c = copies[idx++];
+      var label = c.source_label || c.source_id || '';
+      var url = wecomFileHref(c);
+      if (!url) {
+        wecomSetPcState(wrap, copyIdx, 'miss');
+        tryNext();
+        return;
+      }
+      wecomSetPcState(wrap, copyIdx, 'wait');
+      btn.textContent = (copyIdx + 1) + '/' + copies.length;
+      wecomSetFileStatus(btn, '正在查「' + label + '」缓存（' + (copyIdx + 1) + '/' + copies.length + '）…', 'wait');
+      var deadline = Date.now() + 90000;
+      var hung = setTimeout(function () {
+        wecomSetFileStatus(btn, '「' + label + '」还在等助手回传，未卡住…', 'wait');
+      }, 8000);
+      function tick() {
+        var ac = window.AbortController ? new AbortController() : null;
+        var kill = setTimeout(function () { if (ac) ac.abort(); }, 25000);
+        fetch(url, ac ? { signal: ac.signal } : {}).then(function (r) {
+          clearTimeout(kill);
+          var ct = (r.headers.get('content-type') || '').toLowerCase();
+          if (r.status === 202) {
+            clearTimeout(hung);
+            wecomSetFileStatus(btn, '已通知「' + label + '」助手回传，正在等文件…', 'wait');
+            if (Date.now() > deadline) {
+              lastDetail = '「' + label + '」等待超时。请确认该电脑企业微信助手在线，并打开过此文件。';
+              wecomSetPcState(wrap, copyIdx, 'miss');
+              tryNext();
+              return;
+            }
+            setTimeout(tick, 2000);
+            return;
+          }
+          clearTimeout(hung);
+          if (r.status === 404 || (r.ok && ct.indexOf('json') >= 0)) {
+            return r.json().then(function (j) {
+              lastDetail = (j && j.detail) || ('「' + label + '」未缓存');
+              wecomSetPcState(wrap, copyIdx, 'miss');
+              tryNext();
+            }).catch(function () {
+              lastDetail = '「' + label + '」未缓存';
+              wecomSetPcState(wrap, copyIdx, 'miss');
+              tryNext();
+            });
+          }
+          if (!r.ok) {
+            return r.json().then(function (j) {
+              lastDetail = (j && j.detail) || ('「' + label + '」HTTP ' + r.status);
+              wecomSetPcState(wrap, copyIdx, 'miss');
+              tryNext();
+            }).catch(function () {
+              lastDetail = '「' + label + '」失败';
+              wecomSetPcState(wrap, copyIdx, 'miss');
+              tryNext();
+            });
+          }
+          return r.blob().then(function (blob) {
+            if (!blob || blob.size < 4) {
+              lastDetail = '「' + label + '」空文件';
+              wecomSetPcState(wrap, copyIdx, 'miss');
+              tryNext();
+              return;
+            }
+            saveBlob(blob, label, copyIdx);
+          });
+        }).catch(function (e) {
+          clearTimeout(kill);
+          clearTimeout(hung);
+          var aborted = e && (e.name === 'AbortError' || /abort/i.test(String(e.message || '')));
+          lastDetail = aborted
+            ? ('「' + label + '」查询超时')
+            : (e.message || ('「' + label + '」请求失败'));
+          wecomSetPcState(wrap, copyIdx, 'miss');
+          tryNext();
+        });
+      }
+      tick();
+    }
+    tryNext();
+  }
+  (function bindWecomUi() {
+    var gq = document.getElementById('wecomGroupQ');
+    if (gq) gq.addEventListener('input', function () {
+      clearTimeout(wecomGroupTimer);
+      wecomGroupTimer = setTimeout(loadWecomSessions, 280);
+    });
+    var only = document.getElementById('wecomOnlyGroup');
+    if (only) only.addEventListener('change', loadWecomSessions);
+    var mq = document.getElementById('wecomMsgQ');
+    if (mq) mq.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { wecomState.offset = 0; wecomState.tail = true; loadWecomMessages(); }
+    });
+    ['wecomStart', 'wecomEnd'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', function () { wecomState.offset = 0; wecomState.tail = true; loadWecomMessages(); });
+    });
+    var reload = document.getElementById('wecomReload');
+    if (reload) reload.addEventListener('click', function () { wecomState.offset = 0; wecomState.tail = true; loadWecomBoard(); });
+    var splitBtn = document.getElementById('wecomSplitBtn');
+    if (splitBtn) splitBtn.addEventListener('click', wecomSplitOpen);
+    var prev = document.getElementById('wecomPrev');
+    if (prev) prev.addEventListener('click', function () {
+      wecomState.tail = false;
+      wecomState.offset = Math.max(0, wecomState.offset - wecomState.limit);
+      loadWecomMessages();
+    });
+    var next = document.getElementById('wecomNext');
+    if (next) next.addEventListener('click', function () {
+      wecomState.tail = false;
+      wecomState.offset += wecomState.limit;
+      loadWecomMessages();
+    });
+  })();
 
   /* ===== 系统信息 ===== */
   function kv(k, v) { return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>'; }
@@ -1234,6 +2847,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     renderClassifySelect(fams, ed);
     renderPoolCard(ed);
     renderPapersCard(ed);
+    renderWecomCard(ed);
   }
 
   function collectFields(key, root) {
@@ -1247,6 +2861,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       else if (k === 'temperature') { var t = parseFloat(el.value); if (!isNaN(t)) p.temperature = t; }
       else if (k === 'id') { if (el.value.trim()) p.id = el.value.trim(); }
       else if (k === 'baseUrl') p.baseUrl = el.value.trim();
+      else if (k === 'groups') p.groups = el.value;
       else p[k] = el.value;
     });
     return p;
@@ -1455,6 +3070,65 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
     }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
   }
 
+  function renderWecomCard(ed) {
+    var box = document.getElementById('wecomCfgCard');
+    if (!box) return;
+    var p = ed.wecomChat || {};
+    var ready = !!p.configured;
+    var groups = (p.groups || []).join('\n');
+    box.innerHTML =
+      '<div class="acard">' +
+        '<h3>企业微信聊天记录 ' +
+          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (p.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
+        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">管理后台「各群记录」只读调用聊天记录解析服务（默认 <code>http://127.0.0.1:8767</code>）。请先在该项目启动 <code>start.ps1</code> 并复制开放读取 API Key。群白名单一行一个，留空表示列出全部已同步群。</p>' +
+        '<div class="cfg-grid">' +
+          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="wecomChat" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://127.0.0.1:8767"></div></div>' +
+          '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="wecomChat" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-API-Key') + '"></div></div>' +
+          '<div class="f-row span2"><label>关注群（可选，一行一个）</label><div class="inp"><textarea data-f="wecomChat" data-k="groups" rows="3" placeholder="申报材料群">' + esc(groups) + '</textarea></div></div>' +
+          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已配置密钥 · 可打开各群记录' : '未配置 · 看板无法列出消息') + '</div></div>' +
+          '<div class="f-row"><label>连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomHealthBtn">检测解析服务</button><span id="wecomHealthMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
+        '</div>' +
+        '<div class="cfg-save-row">' +
+          '<button type="button" class="mini cfg-save-one">保存聊天记录配置</button>' +
+          '<span class="cfg-save-msg"></span>' +
+        '</div>' +
+      '</div>';
+    var btn = box.querySelector('.cfg-save-one');
+    if (btn) btn.addEventListener('click', function () { saveWecomConfig(box); });
+    var hb = box.querySelector('#wecomHealthBtn');
+    if (hb) hb.addEventListener('click', function () {
+      var msg = box.querySelector('#wecomHealthMsg');
+      if (msg) msg.textContent = '检测中…';
+      fetch('/api/wecom/health').then(function (r) { return r.json(); }).then(function (j) {
+        if (!msg) return;
+        if (j.ok) msg.textContent = '✓ 服务与鉴权正常（' + (j.source_count || 0) + ' 台电脑）';
+        else if (j.service_ok) msg.textContent = '服务可达；' + (j.error || '鉴权未通过');
+        else msg.textContent = '✗ ' + (j.error || '不可达');
+        msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
+      }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });
+    });
+  }
+
+  function saveWecomConfig(card) {
+    var btn = card.querySelector('.cfg-save-one');
+    var msg = card.querySelector('.cfg-save-msg');
+    var ed = cfgData.edit || {};
+    if (btn) btn.disabled = true;
+    cardMsg(msg, false, '');
+    postConfig({ wecomChat: collectFields('wecomChat', card) }).then(function (res) {
+      if (res.ok && res.data && res.data.version) {
+        cardMsg(msg, true, '✓ 已保存');
+        var got = res.data.edit || {};
+        for (var k in got) ed[k] = got[k];
+        var p = ed.wecomChat || {};
+        var dot = card.querySelector('.keydot');
+        if (dot) { dot.style.color = p.hasKey ? 'var(--ok)' : 'var(--bad)'; dot.textContent = '● ' + (p.hasKey ? '密钥已配置' : '未配置密钥'); }
+        loadWecomBoard();
+      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
+      if (btn) btn.disabled = false;
+    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
+  }
+
   document.getElementById('cfgSave').addEventListener('click', function () {
     var btn = this;
     btn.disabled = true;
@@ -1464,6 +3138,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
       doubao: collectFields('doubao'),
       pool: collectFields('pool', document.getElementById('poolCfgCard')),
       papers: collectFields('papers', document.getElementById('papersCfgCard')),
+      wecomChat: collectFields('wecomChat', document.getElementById('wecomCfgCard')),
       classifyModel: document.getElementById('classifyModel').value
     };
     postConfig(payload).then(function (res) {

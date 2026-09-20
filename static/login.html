@@ -312,7 +312,10 @@
       if (res.ok && res.data && res.data.ok) {
         if (window.sbSaveSession) sbSaveSession(res.data.token);
         btn.textContent = '登录成功，正在进入…';
-        location.href = res.data.redirect || '/';
+        var next = '';
+        try { next = new URLSearchParams(location.search || '').get('next') || ''; } catch (e) { next = ''; }
+        if (!/^\/t\/[A-Za-z0-9._-]+$/.test(next) && next !== '/admin') next = '';
+        location.href = next || res.data.redirect || '/';
         return;
       }
       fail((res.data && res.data.detail) || '登录失败，请重试');

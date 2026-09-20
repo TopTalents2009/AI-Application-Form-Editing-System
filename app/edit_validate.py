@@ -25,9 +25,20 @@ _KEY_PROBLEM_OP = re.compile(
 )
 _FEASIBILITY_OP = re.compile(r"政策|市场|技术发展趋势|可行性论证分析|可行性分析", re.I)
 _SUPPORT_OP = re.compile(
-    r"拟提供申报人支持条件|支持条件|500\s*平米|科研启动经费|空话|贴合实际",
+    r"拟提供申报人支持条件|申报人支持条件|支持条件|500\s*平米|科研启动经费|空话|贴合实际",
     re.I,
 )
+_SALARY_OP = re.compile(r"年薪|薪酬标准")
+_TITLE_OP = re.compile(r"终身副教授|改为.{0,6}副教授")
+_COL_ALL_OP = re.compile(r"这一栏|本栏|该栏|须对该表全部|全部条目|逐项")
+_FAKE_COOP = re.compile(
+    r"双方前期[^。；]{0,24}(?:深入对接|合作基础|合作互信)[^。；]{0,20}[。；]?"
+    r"|具备良好的合作(?:互信)?基础[^。；]{0,10}[。；]?"
+    r"|申报企业与申报人所在[^。；]{0,20}(?:深入对接|合作基础)[^。；]{0,16}[。；]?",
+)
+_PAST_AT_FIRM = re.compile(r"依托申报企业[^。]{0,40}(?:推进转化|转化)")
+_PAST_DONE = re.compile(r"已完成中试|已实现.{0,8}量产|工业级批量|已产业化")
+_COMPANY_FIELD = re.compile(r"企业名称|申报企业\s*[:：]|用人单位名称")
 _QUESTION_ONLY = re.compile(r"是不是|相当于.*[？?]|是否.*[？?]|吗[？?]\s*$", re.I)
 _DIRECTIVE = re.compile(
     r"修改|改为|替换|补充|增加|删除|重写|拆分|统一|规范|细化|贴合|调整|删除|写成",
@@ -318,8 +329,11 @@ def is_question_only_opinion(opinion: str) -> bool:
     op = str(opinion or "").strip()
     if not op or _DIRECTIVE.search(op):
         return False
+    # 「单位是？」是补经费单位（万元），不是核对类疑问
+    if re.search(r"单位是", op) and not re.search(r"是不是|是否等于", op):
+        return False
     if re.search(
-        r"顺序|不一致|语序|错误|翻译|漏|重复|空话|虚高|精简|补充|增加|修改|统一|规范|细化|贴合",
+        r"顺序|不一致|语序|错误|翻译|漏|重复|空话|虚高|精简|补充|增加|修改|统一|规范|细化|贴合|卷期|授权年份",
         op,
     ):
         return False
@@ -385,16 +399,41 @@ def _feasibility_span(app_text: str) -> str:
 
 def _employer_support_span(app_text: str) -> str:
     raw = str(app_text or "")
-    start = raw.find("拟提供申报人支持条件")
+    start = -1
+    for pat in (
+        "拟提供申报人支持条件\n(300字以内)",
+        "拟提供申报人支持条件(300字以内)",
+        "拟提供申报人支持条件（300字以内）",
+        "支持条件（包括工作和生活",
+    ):
+        start = raw.find(pat)
+        if start >= 0:
+            break
+    if start < 0:
+        idx = 0
+        while True:
+            i = raw.find("拟提供申报人支持条件", idx)
+            if i < 0:
+                break
+            prev = raw[i - 1] if i > 0 else ""
+            if prev != "【":
+                start = i
+            idx = i + 1
     if start < 0:
         start = raw.find("七、用人单位情况及承诺")
     if start < 0:
         return ""
-    end = raw.find("(二)企业荣誉", start + 1)
+    end = -1
+    for mark in (
+        "7-2企业荣誉", "7-4申报人推荐理由", "申报人推荐理由",
+        "(二)企业荣誉", "（二）企业荣誉", "企业荣誉和资质",
+    ):
+        j = raw.find(mark, start + 8)
+        if j > start:
+            end = j
+            break
     if end < 0:
-        end = raw.find("（二）企业荣誉", start + 1)
-    if end < 0:
-        end = min(len(raw), start + 2500)
+        end = min(len(raw), start + 1800)
     return raw[start:end]
 
 
@@ -625,6 +664,132 @@ def detect_work_plan_overlimit(edits: list, app_text: str) -> list[str]:
     return issues
 
 
+def detect_column_all_rows_gaps(clauses: list, edits: list, app_text: str) -> list[str]:
+    from .inline_opinions import count_project_rows, is_column_wide_opinion
+
+    n = count_project_rows(app_text)
+    if n < 2:
+        return []
+    gaps = []
+    for c in clauses or []:
+        op = str(c.get("opinion") or "")
+        if not _COL_ALL_OP.search(op) and not is_column_wide_opinion(op):
+            continue
+        cid = str(c.get("cid") or c.get("sourceId") or "")
+        matched = _edits_for_clause(c, edits)
+        if len(matched) < n:
+            gaps.append(
+                "【整列漏改】" + cid + "：意见针对该栏全部 " + str(n)
+                + " 项，当前仅 " + str(len(matched)) + " 条编辑，须为每一项各改一条"
+            )
+    return gaps
+
+
+def detect_salary_gaps(clauses: list, edits: list, app_text: str) -> list[str]:
+    gaps = []
+    blob_app = str(app_text or "")
+    if "薪酬标准" not in blob_app and "年薪" not in blob_app:
+        return []
+    for c in clauses or []:
+        op = str(c.get("opinion") or "") + str(c.get("clause") or "")
+        if not _SALARY_OP.search(op):
+            continue
+        cid = str(c.get("cid") or c.get("sourceId") or "")
+        ok = False
+        for e in _edits_for_clause(c, edits):
+            b = _blob(e)
+            if re.search(r"年薪|薪酬标准", b) or re.search(r"\d{2,3}\s*万", str(e.get("replace") or "")):
+                ok = True
+                break
+        if not ok:
+            gaps.append("【年薪漏改】" + cid + "：须锚定「拟提供申报人薪酬标准」栏按意见调整年薪")
+    return gaps
+
+
+def detect_title_gaps(clauses: list, edits: list) -> list[str]:
+    gaps = []
+    for c in clauses or []:
+        op = str(c.get("opinion") or "") + str(c.get("clause") or "")
+        if not _TITLE_OP.search(op):
+            continue
+        cid = str(c.get("cid") or c.get("sourceId") or "")
+        ok = False
+        for e in _edits_for_clause(c, edits):
+            find = str(e.get("find") or "")
+            rep = str(e.get("replace") or "")
+            if "终身副教授" in find and "终身副教授" not in rep and "副教授" in rep:
+                ok = True
+                break
+            if "终身副教授" in find and "副教授" in rep:
+                ok = True
+                break
+        if not ok:
+            gaps.append("【职务漏改】" + cid + "：须把「终身副教授」改为「副教授」（所有出现处）")
+    return gaps
+
+
+def _is_company_name_field(find: str, app_text: str) -> bool:
+    f = str(find or "")
+    if _COMPANY_FIELD.search(f):
+        return True
+    raw = str(app_text or "")
+    i = raw.find(f[:24]) if f else -1
+    if i < 0:
+        return False
+    window = raw[max(0, i - 40): i + 12]
+    return bool(_COMPANY_FIELD.search(window))
+
+
+def declaring_company_names(app_text: str, extra: list | None = None) -> list[str]:
+    from .matcher import extract_company, String_splitlines
+
+    names = []
+    co = extract_company(String_splitlines(app_text))
+    if co:
+        names.append(co)
+    for x in extra or []:
+        s = str(x or "").strip()
+        if s and s not in names:
+            names.append(s)
+    names = [n for n in names if len(re.sub(r"\s+", "", n)) >= 4]
+    names.sort(key=len, reverse=True)
+    return names
+
+
+def sanitize_declaring_company_edits(edits: list, app_text: str, extra_names: list | None = None) -> tuple[list, list[str]]:
+    """正文里的申报企业全称改为「申报企业」；去掉虚构合作与「过往中试发生在拟入职企业」。"""
+    names = declaring_company_names(app_text, extra_names)
+    issues: list[str] = []
+    out = []
+    for i, e in enumerate(edits or [], 1):
+        if not isinstance(e, dict):
+            continue
+        ne = dict(e)
+        find = str(ne.get("find") or "")
+        rep = str(ne.get("replace") or "")
+        if not _is_company_name_field(find, app_text):
+            new = rep
+            for n in names:
+                if n and n in new:
+                    new = new.replace(n, "申报企业")
+            if new != rep:
+                issues.append("【申报企业脱敏】第 %d 条正文企业全称已替换为「申报企业」" % i)
+                rep = new
+        stripped = _FAKE_COOP.sub("", rep)
+        stripped = re.sub(r"[，,]{2,}", "，", stripped)
+        if stripped != rep:
+            issues.append("【虚构合作已删】第 %d 条删除了申报企业与人才现单位的无依据合作表述" % i)
+            rep = stripped
+        if _PAST_DONE.search(rep) and "申报企业" in rep and (ne.get("section") or ne.get("_sec") or "") in ("项目", "专长成果", "论文"):
+            fixed = _PAST_AT_FIRM.sub("已在合作单位完成转化", rep)
+            if fixed != rep:
+                issues.append("【过往成果归属】第 %d 条已去掉把已完成中试/量产写成在申报企业完成的表述" % i)
+                rep = fixed
+        ne["replace"] = rep
+        out.append(ne)
+    return out, issues
+
+
 def validate_structured_edits(
     edits: list,
     clauses: list,
@@ -654,6 +819,9 @@ def validate_structured_edits(
     issues.extend(detect_key_problem_rewrite_gaps(clauses, edits, app_text, hj=hj))
     issues.extend(detect_feasibility_gaps(clauses, edits, app_text, hj=hj))
     issues.extend(detect_support_conditions_gaps(clauses, edits, app_text, hj=hj))
+    issues.extend(detect_column_all_rows_gaps(clauses, edits, app_text))
+    issues.extend(detect_salary_gaps(clauses, edits, app_text))
+    issues.extend(detect_title_gaps(clauses, edits))
     issues.extend(detect_work_plan_overlimit(edits, app_text))
 
     return edits, issues

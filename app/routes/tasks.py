@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 import os
+import re
 
 
 def _user(request: Request) -> dict:
@@ -135,13 +136,21 @@ def create_router(runner):
         )
 
     @router.get("/api/tasks/{tid}/files")
-    def task_file(tid: str, request: Request, dir: str = "output", name: str = ""):
+    def task_file(tid: str, request: Request, dir: str = "output", name: str = "", stamp: str = ""):
         t = _guard_task(request, runner.get(tid))
-        if dir not in ("input", "output"): raise HTTPException(400, "非法目录")
-        base = (t["dir"] + "/input") if dir == "input" else (t["dir"] + "/work/output")
         name = os.path.basename(name)
+        stamp = str(stamp or "").strip()
+        if dir == "versions":
+            if not re.fullmatch(r"[\d_-]{8,24}", stamp):
+                raise HTTPException(400, "非法版本")
+            base = os.path.join(t["dir"], "versions", stamp)
+        elif dir in ("input", "output"):
+            base = (t["dir"] + "/input") if dir == "input" else (t["dir"] + "/work/output")
+        else:
+            raise HTTPException(400, "非法目录")
         fp = os.path.join(base, name)
-        if not name or not os.path.isfile(fp): raise HTTPException(404, "文件不存在")
+        if not name or not os.path.isfile(fp):
+            raise HTTPException(404, "文件不存在")
         from urllib.parse import quote
         return FileResponse(fp, filename=name, headers={
             "Cache-Control": "no-cache",

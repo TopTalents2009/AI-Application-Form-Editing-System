@@ -18,9 +18,10 @@ from .edu_resume import enrich_education, save_snapshot as save_edu_snapshot
 from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block, public_attach_hit
 from .report_docx import write_compare_docx
 from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits, enforce_edit_limits, limit_hint
-from .edit_validate import validate_structured_edits, clauses_from_edits
-from .manual_fill import promote_unknown_to_manual_edits
+from .edit_validate import validate_structured_edits, clauses_from_edits, sanitize_declaring_company_edits
+from .manual_fill import promote_unknown_to_manual_edits, extract_anchor, locate_anchor, is_rewrite_from_book
 from .form_kind import classify as classify_form
+from .wecom_locate import fill_app_identity, identity_of
 from .hj_form import (
     HJ_LAYOUT_HINTS, HJ_SECTION_ENUM, HJ_SECTION_FILES, HJ_SECTION_ORDER, QM_SECTION_ENUM,
     QM_SECTION_ORDER, remap_qm_section, slice_qm_section, slice_qm_employer,
@@ -28,6 +29,8 @@ from .hj_form import (
 )
 from .inline_opinions import (
     INLINE_OP_NAME, NO_OPINION_MSG, extract_inline_opinion_text, split_inline_units,
+    extract_comment_items, merge_comment_items, format_inline_opinions,
+    is_column_wide_opinion, count_project_rows,
 )
 
 SECTION_FILES = {
@@ -108,10 +111,11 @@ def detect_merge_risk_edits(edits: list) -> list[str]:
 
 
 _QM_SECTION_KEYS = (
-    ("论文", ("论文", "论著", "期刊", "影响因子", "一作", "通讯作者")),
-    ("项目", ("项目成果", "科研项目", "资助金额")),
+    ("论文", ("论文", "论著", "期刊", "影响因子", "一作", "通讯作者", "卷期", "授权年份")),
+    ("项目", ("项目成果", "科研项目", "资助金额", "量化技术指标", "角色和任务", "个人贡献部分")),
     ("教育", ("教育经历", "学历", "学位", "毕业院校")),
-    ("工作", ("工作经历", "任职", "履历", "博士后")),
+    ("工作", ("工作经历", "任职", "履历", "博士后", "终身副教授")),
+    ("其他", ("支持条件", "推荐理由", "年薪", "薪酬标准")),
     ("基本信息", ("研究方向", "助理教授", "副教授", "职务", "申报人主要从事", "基本情况", "回国", "来华")),
 )
 
@@ -211,6 +215,26 @@ def classify_clauses_heuristic(blocks: list, hj: bool, allowed_sec: set) -> list
     return clauses
 
 
+_ANCHOR_LINE = re.compile(r"标注原文[：:]\s*(.+?)(?:\n|$)")
+
+
+def annotate_column_wide_clauses(clauses: list, app_text: str) -> list:
+    """「这一栏」/表头批注：在意见里写明须改全部 N 项，供模型与校验使用。"""
+    n = count_project_rows(app_text)
+    out = []
+    for c in clauses or []:
+        cc = dict(c)
+        op = str(cc.get("opinion") or "")
+        m = _ANCHOR_LINE.search(op)
+        anchor = (m.group(1).strip() if m else "")
+        if is_column_wide_opinion(op, anchor) and n >= 2:
+            cc["_allRows"] = n
+            if "须对该表全部" not in op:
+                cc["opinion"] = op.rstrip() + "\n【须对该表全部 " + str(n) + " 项各改一条，禁止只改第1项】"
+        out.append(cc)
+    return out
+
+
 def clause_covered(clause: dict, edits: list, leftovers: list) -> bool:
     sid = norm_sid(clause.get("sourceId") or clause.get("cid"))
     cid = norm_sid(clause.get("cid"))
@@ -277,6 +301,37 @@ def _chunk_has_item(cur) -> bool:
     return any(ITEM_HEAD.match(x.strip()) for x in cur if str(x).strip())
 
 
+def _split_inline_numbered(text: str) -> list[str]:
+    """把同一段里的「1. …；2. …；3. …」切成多条（截图 OCR 常挤在一行）。"""
+    s = str(text or "").strip()
+    if not s:
+        return []
+    pat = re.compile(
+        r"(?:^|[：:；;。]|[，,]\s*)(\d{1,2})[\.、．](?=\s*[\u4e00-\u9fa5A-Za-z「“\"])"
+    )
+    hits = list(pat.finditer(s))
+    if len(hits) < 2:
+        return [s]
+    nums = [int(h.group(1)) for h in hits]
+    if nums[0] > 20 or nums[0] < 1:
+        return [s]
+    # 编号大体递增才视为条目列表，避免拆开「2010.06」之类
+    step_ok = sum(1 for i in range(1, len(nums)) if 0 < nums[i] - nums[i - 1] <= 3)
+    if step_ok < 1:
+        return [s]
+    out = []
+    prefix = s[:hits[0].start()].strip()
+    for i, h in enumerate(hits):
+        start = h.start(1)
+        end = hits[i + 1].start() if i + 1 < len(hits) else len(s)
+        chunk = s[start:end].strip().strip("；;，,")
+        if i == 0 and prefix and len(prefix) < 80 and "意见" in prefix:
+            chunk = prefix.rstrip("：:") + "\n" + chunk
+        if len(chunk) >= 4:
+            out.append(chunk)
+    return out if len(out) >= 2 else [s]
+
+
 def _split_items(blk: str) -> list:
     lines = str(blk or "").replace("\r\n", "\n").split("\n")
     chunks, cur = [], []
@@ -318,7 +373,10 @@ def _split_items(blk: str) -> list:
             continue
         fixed.append(c)
         i += 1
-    return fixed
+    expanded = []
+    for c in fixed:
+        expanded.extend(_split_inline_numbered(c))
+    return expanded
 
 def unique_cid(base: str, used: set) -> str:
     cid = base or "C"
@@ -329,6 +387,35 @@ def unique_cid(base: str, used: set) -> str:
         n += 1
     used.add(cid)
     return cid
+
+
+def absorb_plan_edits(edits, plan, items, items_by_cid, sec, app_no, fam_field: str = "") -> tuple[list, int]:
+    """把一次专项补扫的 edits 并入总表。"""
+    n = 0
+    for e2 in (plan.get("edits") if isinstance(plan, dict) else None) or []:
+        if not isinstance(e2, dict) or not str(e2.get("find", "")).strip():
+            continue
+        k = norm_find(e2.get("find"))
+        if any(x.get("_k") == k for x in edits):
+            continue
+        src = items_by_cid.get(norm_sid(e2.get("clauseId"))) or next(
+            (c for c in (items or []) if norm_sid(c.get("cid")) == norm_sid(e2.get("clauseId"))),
+            None,
+        )
+        item = dict(e2)
+        item["_k"] = k
+        item["_sec"] = sec
+        item["section"] = sec
+        item["appNo"] = app_no
+        item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+        item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
+        item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
+        item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
+        if fam_field:
+            item[fam_field] = str(item.get("replace") or "")
+        edits.append(item)
+        n += 1
+    return edits, n
 
 class TaskStore:
     def __init__(self, root=None, concurrency: int = PLAN_CONCURRENCY):
@@ -373,8 +460,20 @@ class TaskStore:
         out = []
         for t in arr:
             self._ensure_app_mode(t)
-            out.append({"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": t["app"], "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId"), "owner": t.get("owner") or "",
+            ident = identity_of(t)
+            app = dict(t.get("app") or {})
+            if ident.get("personName") and not app.get("personName"):
+                app["personName"] = ident["personName"]
+            if ident.get("attachId") and not app.get("attachId"):
+                app["attachId"] = ident["attachId"]
+            if ident.get("inputName") and not app.get("inputName"):
+                app["inputName"] = ident["inputName"]
+            out.append({"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": app, "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId"), "owner": t.get("owner") or "",
                  "appliedBy": t.get("appliedBy") or "", "appliedAt": t.get("appliedAt") or "",
+                 "personName": ident.get("personName") or "", "attachId": ident.get("attachId") or "",
+                 "source": t.get("source") or "", "apiKeyId": t.get("apiKeyId") or 0,
+                 "wecomCaseId": ((t.get("wecom") or {}) if isinstance(t.get("wecom"), dict) else {}).get("caseId") or "",
+                 "versions": list(t.get("versions") or [])[-5:],
                  "deliverables": [{"name": o["name"], "size": o.get("size", 0)} for o in (t.get("deliverables") or [])]})
         return out
 
@@ -407,7 +506,7 @@ class TaskStore:
             n = sanitize(o["name"])
             (d / "input" / n).write_bytes(__import__("base64").b64decode(o.get("dataB64") or ""))
             op_names.append(n)
-        app_meta = {"name": aname, "no": app_no_of(aname), "workDocx": work_docx_name(aname)}
+        app_meta = {"name": aname, "no": app_no_of(aname), "workDocx": work_docx_name(aname), "inputName": aname}
         given_mode = str(apps.get("mode") or "").strip().upper()
         if given_mode in ("QM", "HJ"):
             app_meta["mode"] = given_mode
@@ -420,6 +519,20 @@ class TaskStore:
             t["owner"] = str(owner)
         if body.get("batchId"):
             t["batchId"] = str(body.get("batchId"))
+        if body.get("source"):
+            t["source"] = str(body.get("source"))
+        if isinstance(body.get("wecom"), dict):
+            t["wecom"] = body.get("wecom")
+        if body.get("autoApply"):
+            t["autoApply"] = True
+        if body.get("apiKeyId"):
+            try:
+                t["apiKeyId"] = int(body.get("apiKeyId"))
+            except (TypeError, ValueError):
+                pass
+        if body.get("apiActor"):
+            t["apiActor"] = str(body.get("apiActor"))[:80]
+        fill_app_identity(t)
         self.tasks[tid] = t; self.persist(t)
         return t
 
@@ -483,6 +596,10 @@ class TaskStore:
                     kind = pdf_kind(work_input / f)
                     t.setdefault("app", {})["pdfKind"] = kind
                     if kind == "scanned":
+                        if target.is_file() and target.stat().st_size > 200:
+                            t.setdefault("app", {})["scannedTextOnly"] = True
+                            self.log(t, "扫描 PDF 已有 OCR 文本，跳过重复识别")
+                            continue
                         _, _, _, n_pages = _pdf_text_stats(work_input / f)
                         per_page = resolve_ocr_timeout()
                         batches = max(1, (int(n_pages or 1) + SCAN_OCR_PAGE_CONCURRENCY - 1) // SCAN_OCR_PAGE_CONCURRENCY)
@@ -552,11 +669,21 @@ class TaskStore:
                         text = "\n".join(lines).strip()
                         n_cmt = len(units)
             if not text:
+                pdf_items = []
                 if ext_of(app_name) == ".pdf":
+                    pdf_src = work_input / app_name
+                    if pdf_src.exists():
+                        pdf_items = extract_comment_items(pdf_src)
                     cand = work_input / work_docx
                     if cand.exists():
                         src = cand
-                text, n_cmt = extract_inline_opinion_text(src)
+                word_items = extract_comment_items(src) if src.exists() else []
+                merged = merge_comment_items(pdf_items, word_items)
+                if merged:
+                    text = format_inline_opinions(merged)
+                    n_cmt = len(re.findall(r"^<<<标注\s+\d+>>>", text, re.M))
+                else:
+                    text, n_cmt = extract_inline_opinion_text(src)
             if not text:
                 raise ValueError(NO_OPINION_MSG)
             (txt_dir / (stem_of(INLINE_OP_NAME) + ".txt")).write_text(text, encoding="utf-8")
@@ -602,6 +729,7 @@ class TaskStore:
         return mode
 
     def _classify_text(self, t, text: str, persist: bool = False) -> str:
+        from .form_kind import classify as classify_form
         name = str((t.get("app") or {}).get("name") or "")
         return self._set_app_mode(t, classify_form(text, name), persist=persist)
 
@@ -696,11 +824,37 @@ class TaskStore:
             lines.append("[" + cid + "] " + clause)
             if opinion:
                 lines.append("原文：" + opinion)
+            loc, loc_hint = locate_anchor(
+                app_text, extract_anchor(opinion), section=sec, opinion=opinion + " " + clause,
+            )
+            if loc:
+                lines.append("定位锚点（申报书原文，find 必须覆盖此句）：" + re.sub(r"\s+", " ", loc)[:220])
+            if loc_hint:
+                lines.append("所在位置：" + loc_hint)
+            if is_rewrite_from_book(opinion + clause):
+                lines.append(
+                    "【强制改正文】用申报书已有产品称谓、应用场景、合作单位类型改写定位句，"
+                    "禁止因缺商业型号或公司法定名而写入 leftovers。"
+                )
             hint = limit_hint(sec, clause, opinion, app_text)
             if hint:
                 lines.append(hint)
+            if it.get("_allRows"):
+                lines.append(
+                    "【整列修改】须为该表全部 " + str(it["_allRows"])
+                    + " 项各产出一条独立 edit（clauseId 仍用 " + cid + "），禁止只改第 1 项。"
+                )
             lines.append("")
         form_reqs = extract_form_requirements(app_text)
+        extra_guard = (
+            "\n【申报企业与事实边界】除企业名称等规定栏位外，正文一律写「申报企业」，"
+            "禁止写出申报企业法定全称。人才尚未入职时，已完成的中试/量产/产业化不得写成在申报企业完成。"
+            "不得编造申报企业与申报人现单位「已有合作、深入对接、合作基础」。"
+            "「单位是？」出现在经费栏时，按填表须知补「万元」，不要当成无法修改的疑问。"
+            "意见要求补充产品名称、应用推广或成果转化依托单位时，必须改定位句，"
+            "用申报书已有产品/场景/合作单位类型写具体，禁止因缺型号或公司全称而只写 leftovers。"
+        )
+        form_reqs = (form_reqs + extra_guard) if form_reqs else extra_guard.strip()
         if hj:
             extra = hj_form_requirements(app_text)
             form_reqs = extra + (("\n\n" + form_reqs) if form_reqs else "")
@@ -752,6 +906,42 @@ class TaskStore:
         t["outputs"] = outputs
         t["deliverables"] = [o for o in outputs if is_edited_output(o["name"]) or is_backup_output(o["name"]) or "对照表" in o["name"] or "遗留事项" in o["name"]]
         return ok_count > 0
+
+    def snapshot_version(self, t) -> dict | None:
+        """确认写入后把当前 output 拷到 versions/{stamp}，重试不会盖掉这一版。"""
+        out_dir = Path(t["dir"]) / "work" / "output"
+        if not out_dir.is_dir():
+            return None
+        files = [f for f in sorted(os.listdir(out_dir)) if (out_dir / f).is_file() and (out_dir / f).stat().st_size > 0]
+        if not files:
+            return None
+        raw = str(t.get("appliedAt") or now_str())
+        stamp = re.sub(r"[^\d]", "", raw)[:14]
+        if len(stamp) < 8:
+            stamp = re.sub(r"[^\d]", "", now_str())[:14]
+        dest = Path(t["dir"]) / "versions" / stamp
+        n = 2
+        while dest.exists():
+            dest = Path(t["dir"]) / "versions" / (stamp + "-" + str(n))
+            n += 1
+            if n > 20:
+                break
+        dest.mkdir(parents=True, exist_ok=True)
+        copied = []
+        for f in files:
+            try:
+                shutil.copy2(out_dir / f, dest / f)
+                copied.append(f)
+            except Exception:
+                pass
+        if not copied:
+            return None
+        row = {"at": t.get("appliedAt") or now_str(), "stamp": dest.name, "files": copied}
+        vers = list(t.get("versions") or [])
+        vers.append(row)
+        t["versions"] = vers[-20:]
+        self.log(t, "已保存版本快照 versions/" + dest.name + "（" + str(len(copied)) + " 个文件）")
+        return row
 
     # ---------- ① 生成编辑计划（不写文件） ----------
     async def generate_plan(self, t):
@@ -817,6 +1007,7 @@ class TaskStore:
             clauses = classify_clauses_heuristic(blocks, hj, allowed_sec)
         if not hj:
             clauses = expand_qm_work_plan_clauses(clauses)
+        clauses = annotate_column_wide_clauses(clauses, texts["appText"])
         # 2) 兜底覆盖：LLM 漏掉的来源意见补一条，避免「意见未被提取/未修改」
         if clauses:
             _covered = {c.get("sourceId") for c in clauses}
@@ -858,6 +1049,7 @@ class TaskStore:
         except Exception:
             pass
         t["poolHit"] = snap.get("hit") or {}
+        fill_app_identity(t, snap)
         self.persist(t)
         self.log(t, "" + (snap.get("summary") or "无库内匹配") + (("（" + "；".join(snap.get("notes") or []) + "）") if snap.get("notes") else ""))
         pool_text = format_pool_prompt(snap)
@@ -1262,7 +1454,10 @@ class TaskStore:
         if sup_retry and not hj_mode:
             sup_items = [
                 c for c in clauses
-                if re.search(r"拟提供申报人支持条件|支持条件|500\s*平米|科研启动经费|贴合实际", str(c.get("opinion") or ""), re.I)
+                if re.search(
+                    r"拟提供申报人支持条件|支持条件|500\s*平米|科研启动经费|贴合实际|年薪|薪酬标准",
+                    str(c.get("opinion") or ""), re.I,
+                )
             ]
             if sup_items:
                 self.log(t, "检测到支持条件漏改，强制补发【其他·用人单位】专项（" + str(len(sup_items)) + " 条）…")
@@ -1302,6 +1497,60 @@ class TaskStore:
                         struct_issues.extend(extra_issues)
                 except Exception as e:
                     self.log(t, "支持条件专项补扫失败：" + str(e)[:150])
+        col_retry = [m for m in struct_issues if str(m).startswith("【整列漏改】")]
+        if col_retry and not hj_mode:
+            col_items = [
+                c for c in clauses
+                if c.get("_allRows") or re.search(r"这一栏|须对该表全部|本栏（", str(c.get("opinion") or ""))
+            ]
+            if col_items:
+                self.log(t, "检测到整列漏改，强制补发【项目】专项（" + str(len(col_items)) + " 条）…")
+                try:
+                    r = await chat(
+                        self.build_section_plan_messages("项目", col_items, texts["appText"], pool_text, attach_text, hj=False),
+                        json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=primary_id,
+                    )
+                    col_plan = extract_json_lenient(r["content"])
+                    edits, col_n = absorb_plan_edits(
+                        edits, col_plan, col_items, items_by_cid, "项目", app_no, OPINION_FIELDS[primary_fam],
+                    )
+                    self.log(t, "整列专项补回 " + str(col_n) + " 条编辑")
+                    if col_n > 0:
+                        struct_issues = [m for m in struct_issues if not str(m).startswith("【整列漏改】")]
+                        edits, extra_issues = validate_structured_edits(edits, clauses, texts["appText"], hj=hj_mode)
+                        struct_issues.extend(extra_issues)
+                except Exception as e:
+                    self.log(t, "整列专项补扫失败：" + str(e)[:150])
+        title_retry = [m for m in struct_issues if str(m).startswith("【职务漏改】")]
+        if title_retry and not hj_mode:
+            title_items = [
+                c for c in clauses
+                if re.search(r"终身副教授|改为.{0,6}副教授", str(c.get("opinion") or ""))
+            ]
+            if title_items:
+                self.log(t, "检测到职务漏改，强制补发【工作】专项（" + str(len(title_items)) + " 条）…")
+                try:
+                    r = await chat(
+                        self.build_section_plan_messages("工作", title_items, texts["appText"], pool_text, attach_text, hj=False),
+                        json_mode=True, timeout_s=LLM_TIMEOUT_SECTION, model=primary_id,
+                    )
+                    title_plan = extract_json_lenient(r["content"])
+                    edits, title_n = absorb_plan_edits(
+                        edits, title_plan, title_items, items_by_cid, "工作", app_no, OPINION_FIELDS[primary_fam],
+                    )
+                    self.log(t, "职务专项补回 " + str(title_n) + " 条编辑")
+                    if title_n > 0:
+                        struct_issues = [m for m in struct_issues if not str(m).startswith("【职务漏改】")]
+                        edits, extra_issues = validate_structured_edits(edits, clauses, texts["appText"], hj=hj_mode)
+                        struct_issues.extend(extra_issues)
+                except Exception as e:
+                    self.log(t, "职务专项补扫失败：" + str(e)[:150])
+        extra_names = []
+        hit = (snap.get("hit") or {}) if isinstance(snap, dict) else {}
+        if hit.get("enterprise"):
+            extra_names.append(hit.get("enterprise"))
+        edits, co_issues = sanitize_declaring_company_edits(edits, texts["appText"], extra_names)
+        struct_issues.extend(co_issues)
         for msg in struct_issues:
             tag_msg = msg if msg.startswith("【") else "【结构化校验】" + msg
             if tag_msg not in leftovers:
@@ -1379,6 +1628,10 @@ class TaskStore:
             edits, leftovers = await self.generate_plan(t)
             t["status"] = "planned"; self.persist(t)
             self.log(t, "计划就绪：" + str(len(edits)) + " 条编辑 / " + str(len(leftovers)) + " 条遗留 —— 请在前端核对“修改前/修改后”，确认后才会写入文件")
+            if t.get("autoApply") and (edits or leftovers):
+                actor = str(t.get("apiActor") or t.get("owner") or "开放API")
+                self.log(t, "开放 API 已开启自动确认，开始写入文件")
+                await self.apply_confirmed(t, edits, leftovers, actor=actor)
         except ValueError as e:
             t["status"] = "failed"; t["error"] = str(e); t["finishedAt"] = now_str(); self.persist(t)
         except LlmError as e:
@@ -1601,6 +1854,10 @@ class TaskStore:
             if not await self.verify_outputs(t):
                 t["status"] = "failed"; t["error"] = "成品校验未通过（详见产出校验信息）"; return
             t["status"] = "done"
+            try:
+                self.snapshot_version(t)
+            except Exception as e:
+                self.log(t, "版本快照失败：" + str(e)[:120])
             self.log(t, "完成：编辑 " + str(hits) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件" + who)
         except ValueError as e:
             t["status"] = "failed"; t["error"] = str(e)

@@ -144,6 +144,98 @@ def init_db() -> dict:
             except OperationalError as e:
                 if not (e.args and e.args[0] in (1060, 1061)):
                     raise
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_keys (
+                  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  name VARCHAR(64) NOT NULL,
+                  prefix VARCHAR(16) NOT NULL,
+                  key_hash CHAR(64) NOT NULL,
+                  secret_plain VARCHAR(80) NOT NULL DEFAULT '',
+                  owner_username VARCHAR(32) NOT NULL DEFAULT '',
+                  status ENUM('active','disabled') NOT NULL DEFAULT 'active',
+                  note VARCHAR(255) NOT NULL DEFAULT '',
+                  created_by VARCHAR(32) NOT NULL DEFAULT '',
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  last_used_at DATETIME NULL,
+                  expire_at DATETIME NULL,
+                  call_count INT UNSIGNED NOT NULL DEFAULT 0,
+                  PRIMARY KEY (id),
+                  UNIQUE KEY uk_prefix (prefix),
+                  UNIQUE KEY uk_hash (key_hash),
+                  KEY idx_ak_status (status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            try:
+                cur.execute(
+                    "ALTER TABLE api_keys ADD COLUMN secret_plain VARCHAR(80) NOT NULL DEFAULT ''"
+                )
+            except OperationalError as e:
+                if not (e.args and e.args[0] == 1060):
+                    raise
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_call_logs (
+                  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  api_key_id INT UNSIGNED NULL,
+                  key_prefix VARCHAR(16) NOT NULL DEFAULT '',
+                  key_name VARCHAR(64) NOT NULL DEFAULT '',
+                  method VARCHAR(8) NOT NULL,
+                  path VARCHAR(180) NOT NULL,
+                  status_code SMALLINT NOT NULL,
+                  ip VARCHAR(64) NOT NULL DEFAULT '',
+                  user_agent VARCHAR(180) NOT NULL DEFAULT '',
+                  task_id VARCHAR(32) NOT NULL DEFAULT '',
+                  error VARCHAR(255) NOT NULL DEFAULT '',
+                  duration_ms INT UNSIGNED NOT NULL DEFAULT 0,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (id),
+                  KEY idx_log_created (created_at),
+                  KEY idx_log_key (api_key_id),
+                  KEY idx_log_path (path),
+                  CONSTRAINT fk_log_key FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_key_requests (
+                  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  user_id INT UNSIGNED NOT NULL,
+                  username VARCHAR(32) NOT NULL,
+                  real_name VARCHAR(64) NOT NULL DEFAULT '',
+                  department VARCHAR(64) NOT NULL DEFAULT '',
+                  purpose VARCHAR(500) NOT NULL,
+                  status ENUM('pending','approved','rejected','revoked') NOT NULL DEFAULT 'pending',
+                  api_key_id INT UNSIGNED NULL,
+                  reveal_secret VARCHAR(80) NOT NULL DEFAULT '',
+                  reject_reason VARCHAR(255) NOT NULL DEFAULT '',
+                  reviewed_by VARCHAR(32) NOT NULL DEFAULT '',
+                  reviewed_at DATETIME NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (id),
+                  KEY idx_req_user (user_id),
+                  KEY idx_req_status (status),
+                  CONSTRAINT fk_req_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+                  CONSTRAINT fk_req_key FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            try:
+                cur.execute(
+                    "ALTER TABLE api_key_requests MODIFY COLUMN status "
+                    "ENUM('pending','approved','rejected','revoked') NOT NULL DEFAULT 'pending'"
+                )
+            except OperationalError:
+                pass
+            try:
+                cur.execute(
+                    "UPDATE api_key_requests SET status='revoked', reveal_secret='' "
+                    "WHERE status='approved' AND api_key_id IS NULL"
+                )
+            except OperationalError:
+                pass
             cur.execute("SELECT COUNT(*) AS n FROM users")
             n = int((cur.fetchone() or {}).get("n") or 0)
             if n == 0:

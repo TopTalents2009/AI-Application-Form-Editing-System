@@ -121,15 +121,26 @@ def compact(obj, *, budget: int = 80000) -> str:
     return text
 
 
+_NAME_LABELS = {
+    "有效证件姓名", "申报人姓名", "申报人", "中文（音译）名", "中文(音译)名", "中文音译名",
+    "中文", "外籍专家中文姓名", "依托单位", "申报企业", "企业名称", "姓名",
+    "Name of Applicant", "照片", "性别", "出生日期",
+}
+
+
 def extract_pool_keys(fname: str, app_text: str) -> dict:
     prof = M.extract_book_profile(fname, app_text)
     names = []
     lines = M.String_splitlines(app_text)
+    names.extend(_names_from_cert_lines(lines))
     for raw in lines[:20]:
         m = re.search(r"申\s*报\s*人\s+(.+)", str(raw or ""))
         if not m:
             continue
-        names.extend(_split_person_names(m.group(1)))
+        rest = m.group(1).strip()
+        if rest.startswith("有效证件姓名"):
+            continue
+        names.extend(_split_person_names(rest))
         break
     for label in (
         "有效证件姓名", "申报人姓名", "Name of Applicant",
@@ -137,6 +148,7 @@ def extract_pool_keys(fname: str, app_text: str) -> dict:
     ):
         names.extend(_split_person_names(_field_after(lines, (label,))))
     names.extend(_split_person_names(str(prof.get("nameFull") or "")))
+    names.extend(_names_from_filename(fname))
     company = M.pick_company(
         prof.get("ent"),
         _field_after(lines, ("申报企业", "企业名称")),
@@ -148,24 +160,83 @@ def extract_pool_keys(fname: str, app_text: str) -> dict:
         if m.group(0) not in codes:
             codes.append(m.group(0))
     attach = list(prof.get("nums") or [])
+    for m in re.finditer(r"(?:申报书编号|人才编号|attach[_ ]?id)\s*[:：#]?\s*([A-Za-z]{0,4}[-_]?\d{4,6})", str(app_text or ""), re.I):
+        aid = P.norm_attach_id(m.group(1))
+        if aid and aid not in attach:
+            attach.append(aid)
     seen = set()
     uniq = []
     for n in names:
-        k = _norm_name(n)
-        if k and k not in seen and len(n) >= 2:
-            seen.add(k)
-            uniq.append(n)
+        k = re.sub(r"\s+", " ", n).strip().lower()
+        if not k or k in seen or len(n) < 2 or _is_name_label(n):
+            continue
+        seen.add(k)
+        uniq.append(n)
     return {
         "attachIds": attach,
-        "names": uniq[:6],
+        "names": uniq[:8],
         "creditCodes": codes[:3],
         "company": company,
     }
 
 
+def _is_name_label(n: str) -> bool:
+    s = re.sub(r"\s+", "", str(n or ""))
+    if not s:
+        return True
+    compact_labels = {re.sub(r"\s+", "", x) for x in _NAME_LABELS}
+    if s in compact_labels:
+        return True
+    if s in ("冶金园", "修订", "申报书"):
+        return True
+    if s.startswith("-") or s.endswith("-"):
+        return True
+    return False
+
+
+def _names_from_cert_lines(lines) -> list:
+    """封面「申报人有效证件姓名： NAME  依托单位：…」同一行。"""
+    out = []
+    for raw in (lines or [])[:40]:
+        s = str(raw or "")
+        if "有效证件姓名" not in s:
+            continue
+        if re.search(r"必须与|应填写|例如|护照|身份证", s):
+            continue
+        m = re.search(r"有效证件姓名\s*[:：]?\s*(.+)", s)
+        if not m:
+            continue
+        rest = re.split(r"依托单位|申报企业|用人单位|项目类别", m.group(1), 1)[0]
+        rest = re.sub(r"\s+", " ", rest).strip(" ：:|｜,，")
+        if _is_name_label(rest):
+            continue
+        out.extend(_split_person_names(rest))
+        collapsed = re.sub(r"(?<=[A-Za-z]) (?=[A-Za-z]{1,3}(?:\s|$))", "", rest)
+        if collapsed != rest:
+            out.extend(_split_person_names(collapsed))
+    return out
+
+
+def _names_from_filename(fname: str) -> list:
+    stem = str(fname or "").replace("\\", "/").split("/")[-1]
+    i = stem.rfind(".")
+    if i > 0:
+        stem = stem[:i]
+    stem = re.sub(r"(修订|申报书|创新|青年|V\d+)$", "", stem, flags=re.I).strip("-_ ")
+    stem = re.sub(r"^(冶金园|有企业|园区)[-_＋+]*", "", stem, flags=re.I)
+    out = []
+    lat = re.search(r"[A-Za-z][A-Za-z\s.',\-]{3,}", stem)
+    if lat:
+        out.extend(_split_person_names(lat.group(0).strip(" -_")))
+    cn = re.search(r"[\u4e00-\u9fa5·•]{2,8}", stem)
+    if cn and cn.group(0) not in ("冶金园", "申报书", "修订"):
+        out.extend(_split_person_names(cn.group(0)))
+    return out
+
+
 def _field_after(lines, keys) -> str:
     skip_if = re.compile(r"必须与|应填写|应为|例如|不得|须严格|填写内容|中国籍|外籍必须")
-    labels = set(keys) | {"照片", "性别", "出生日期"}
+    labels = set(keys) | {"照片", "性别", "出生日期"} | _NAME_LABELS
     for i, raw in enumerate(lines):
         s = str(raw or "").strip()
         hit = next((k for k in keys if s == k or s.startswith(k)), None)
@@ -296,9 +367,14 @@ async def resolve_attach_ids(snap: dict | None, app_no: str = "") -> tuple[list,
 
 
 def _clean_person_name(n) -> str:
-    n = re.sub(r"[（(]有效证件姓名[）)]", "", str(n or ""))
+    n = str(n or "")
+    n = re.sub(r"依托单位.*$", "", n)
+    n = re.sub(r"(申报人)?(有效证件姓名|申报人姓名)", "", n)
+    n = re.sub(r"[（(]有效证件姓名[）)]", "", n)
     n = re.sub(r"\s+", " ", n).strip(" ：:\t|｜")
-    if not n or any(x in n for x in ("申报企业", "申报省市", "申报日期", "照片")):
+    if not n or _is_name_label(n):
+        return ""
+    if any(x in n for x in ("申报企业", "申报省市", "申报日期", "照片", "依托单位")):
         return ""
     if not re.search(r"[A-Za-z]{2,}|[\u4e00-\u9fa5]{2,}", n):
         return ""

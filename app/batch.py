@@ -11,7 +11,10 @@ from .pdf_app import (
     ALLOWED_APP_EXT, APP_EXT_HINT, ensure_app_docx, ocr_scanned_pdf_to_text,
     pdf_kind, sniff_pdf, work_docx_name,
 )
-from .inline_opinions import NO_OPINION_MSG, extract_inline_opinion_text, split_inline_units
+from .inline_opinions import (
+    NO_OPINION_MSG, extract_inline_opinion_text, split_inline_units,
+    extract_comment_items, merge_comment_items, format_inline_opinions,
+)
 
 def _rid(): return "b" + format(int(time.time() * 1000), "x") + "-" + secrets.token_hex(3)
 def _sanitize(name): 
@@ -160,10 +163,16 @@ class BatchStore:
                                 text = "\n".join(lines).strip()
                                 n_cmt = len(units)
                         if not text:
+                            pdf_items = extract_comment_items(src) if src.exists() else []
                             cand = conv_dir / work_docx_name(n)
-                            if cand.exists():
-                                src = cand
-                            text, n_cmt = extract_inline_opinion_text(src)
+                            word_src = cand if cand.exists() else src
+                            word_items = extract_comment_items(word_src) if word_src.exists() else []
+                            merged = merge_comment_items(pdf_items, word_items)
+                            if merged:
+                                text = format_inline_opinions(merged)
+                                n_cmt = len(re.findall(r"^<<<标注\s+\d+>>>", text, re.M))
+                            else:
+                                text, n_cmt = extract_inline_opinion_text(word_src)
                     else:
                         text, n_cmt = extract_inline_opinion_text(src)
                     if not text:

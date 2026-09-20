@@ -79,10 +79,45 @@ body {
 }
 .topbar a.tbtn:hover,.topbar button.tbtn:hover{background:rgba(255,255,255,.24)}
 #userBox{display:flex;align-items:center;gap:10px}
+.user-menu{position:relative}
+.tuser-btn{
+  display:inline-flex;align-items:center;gap:6px;max-width:min(280px,42vw);
+  font-family:inherit;color:#fff;cursor:pointer;border:none;
+  font-size:13px;background:rgba(255,255,255,.12);padding:7px 12px 7px 14px;border-radius:999px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22);white-space:nowrap;
+}
+.tuser-btn:hover,.user-menu.open .tuser-btn{background:rgba(255,255,255,.22)}
+.tuser-btn #userName{overflow:hidden;text-overflow:ellipsis}
+.tuser-btn .chev{width:12px;height:12px;flex-shrink:0;opacity:.85;transition:transform .15s}
+.user-menu.open .tuser-btn .chev{transform:rotate(180deg)}
+.user-dd{
+  position:absolute;right:0;top:calc(100% + 8px);z-index:50;min-width:196px;
+  background:#fff;border:1px solid #e6ebf4;border-radius:12px;padding:6px;
+  box-shadow:0 14px 36px -14px rgba(16,32,64,.45);
+}
+.user-dd[hidden]{display:none!important}
+.user-dd a,.user-dd button{
+  display:flex;align-items:center;width:100%;text-align:left;padding:9px 12px;
+  border:none;background:none;border-radius:8px;cursor:pointer;
+  font-family:inherit;font-size:13.5px;color:#1c2333;text-decoration:none;box-sizing:border-box;
+}
+.user-dd a:hover,.user-dd button:hover{background:#f0f5fd;color:var(--brand)}
+.user-dd .sep{height:1px;background:#eef1f6;margin:4px 6px}
+.user-dd .danger{color:#c5221f}
+.user-dd .danger:hover{background:#fdecea;color:#c5221f}
+.api-secret-row{
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;
+  padding:10px 12px;border-radius:10px;background:#eef7f1;border:1px solid #cce7d4;
+}
+.api-secret-row code{
+  flex:1;min-width:140px;font-family:Consolas,ui-monospace,monospace;font-size:12.5px;
+  word-break:break-all;background:#fff;border:1px solid #e6ebf4;border-radius:6px;padding:4px 8px;
+}
 @media (max-width:860px){
   .topbar{flex-wrap:wrap;padding:12px 16px;gap:10px}
   .topbar .ttitles p{display:none}
   .topbar .grow{display:none}
+  .tuser-btn{max-width:64vw}
 }
 
 /* ---------- layout ---------- */
@@ -404,6 +439,7 @@ button.mini {
   transition: all .12s;
 }
 button.mini:hover { border-color: var(--brand2); background: #f0f6ff; }
+button.primary.mini { padding: 4px 12px; letter-spacing: 0; box-shadow: none; font-size: 12px; }
 
 /* ---------- detail ---------- */
 .dhead { display: flex; align-items: center; justify-content: space-between; }

@@ -9,6 +9,16 @@ from . import papers as P
 
 NAME_KEYS = ("项目名称", "课题名称", "grant_title", "project_name", "title")
 EXTRA_KEYS = ("项目来源", "项目性质", "起止时间", "开始时间", "结束时间", "完成人排序", "立项时间", "经费总额", "担任角色", "项目编号")
+_JUNK_PROJECT_NAME = re.compile(
+    r"^(项目来源|项目性质|项目名称|课题名称|起止时间|开始时间|结束时间|完成人排序|"
+    r"立项时间|经费总额|担任角色|项目编号|项目证明|项目材料|填表须知)$"
+)
+_AUTREF_KIND_PREF = (
+    "project.certificate",
+    "project.assignment",
+    "project.acceptance",
+    "project.closure",
+)
 URL_RE = re.compile(r"https?://[^\s\"'<>\\]+", re.I)
 FILE_EXT = {".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".zip"}
 SKIP_HOST = (
@@ -61,6 +71,8 @@ def extract_projects(snap: dict, app_text: str = "") -> list:
         name = re.sub(r"\s+", " ", str(name or "")).strip(" ：:|｜")
         if len(name) < 4 or len(name) > 240:
             return
+        if _JUNK_PROJECT_NAME.match(name) or name in EXTRA_KEYS or name in NAME_KEYS:
+            return
         if re.search(r"填表须知|不得超过|限\s*\d+\s*字", name):
             return
         k = name.lower()
@@ -103,7 +115,16 @@ def _walk_projects(obj, add, depth=0):
             v = obj.get(k)
             if isinstance(v, (str, int, float)) and str(v).strip() not in ("", "***"):
                 extra[k] = v
-        add(name, extra)
+        used_title = False
+        for k in NAME_KEYS:
+            v = obj.get(k)
+            if isinstance(v, str) and v.strip() == name:
+                used_title = k == "title"
+                break
+        if used_title and not extra:
+            name = ""
+        if name:
+            add(name, extra)
     for v in obj.values():
         if isinstance(v, (dict, list)):
             _walk_projects(v, add, depth + 1)
@@ -578,13 +599,40 @@ def _save_autoref_documents(data: dict, cwd: Path) -> tuple[list, str]:
         return [], "AutoRef 响应不是 JSON 对象"
     if not data.get("ok"):
         return [], str(data.get("error") or "AutoRef 返回失败")
-    saved, used = [], set()
+    by_project: dict[str, list] = {}
+    summary = None
     for doc in data.get("documents") or []:
         if not isinstance(doc, dict):
             continue
         kind = str(doc.get("kind") or "")
         if not kind.startswith("project."):
             continue
+        html = _doc_html(doc)
+        if not html:
+            continue
+        fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else {}
+        title = str(doc.get("titleZh") or doc.get("titleEn") or kind)
+        pname = str(fields.get("projectName") or doc.get("projectName") or title or "").strip()
+        if kind == "project.all":
+            summary = doc
+            continue
+        if _JUNK_PROJECT_NAME.match(pname) or pname in EXTRA_KEYS:
+            continue
+        key = pname.lower() or kind
+        by_project.setdefault(key, []).append(doc)
+    picked = []
+    if summary:
+        picked.append(summary)
+    for rows in by_project.values():
+        chosen = None
+        for want in _AUTREF_KIND_PREF:
+            chosen = next((d for d in rows if str(d.get("kind") or "") == want), None)
+            if chosen:
+                break
+        picked.append(chosen or rows[0])
+    saved, used = [], set()
+    for doc in picked:
+        kind = str(doc.get("kind") or "")
         html = _doc_html(doc)
         if not html:
             continue

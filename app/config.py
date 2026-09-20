@@ -6,7 +6,7 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.default.json"
 FILL_MARK = "填入"
-APP_VERSION = "2.4"
+APP_VERSION = "2.7"
 
 LLM_TEMPERATURE = 0.1
 LLM_RETRIES = 4
@@ -185,6 +185,7 @@ def load_config() -> dict:
     client_inbox = str(c.get("clientInbox") or "").strip()
     project_proof = _project_proof_block(c)
     portal = _portal_block(c)
+    wecom = _wecom_chat_block(c)
     return {
         "baseUrl": base.rstrip("/"),
         "apiKey": key,
@@ -214,7 +215,42 @@ def load_config() -> dict:
         "clientInbox": client_inbox,
         "projectProof": project_proof,
         "portal": portal,
+        "wecomChat": wecom,
+        "wecomChatBaseUrl": wecom.get("baseUrl") or "",
+        "wecomChatApiKey": wecom.get("apiKey") or "",
+        "wecomChatGroups": wecom.get("groups") or [],
+        "wecomChatConfigured": bool(wecom.get("configured")),
         "scanPdf": scan_pdf_settings(),
+    }
+
+
+def _wecom_chat_block(c: dict) -> dict:
+    """企业微信聊天记录解析服务（开放读取 API，默认 :8767/v1）。"""
+    raw = c.get("wecomChat") if isinstance(c.get("wecomChat"), dict) else {}
+    if not raw and isinstance(c.get("wecom"), dict):
+        raw = c.get("wecom") or {}
+    base = str(raw.get("baseUrl") or raw.get("url") or "").strip().rstrip("/")
+    if base.lower().endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    if FILL_MARK in base:
+        base = ""
+    if not base:
+        base = "http://127.0.0.1:8767"
+    key = _usable_secret(raw.get("apiKey") or raw.get("readKey") or raw.get("key"))
+    groups = []
+    graw = raw.get("groups")
+    if isinstance(graw, str):
+        graw = [x.strip() for x in re.split(r"[\n,;]+", graw) if x.strip()]
+    if isinstance(graw, list):
+        for x in graw:
+            s = str(x or "").strip()
+            if s and FILL_MARK not in s and s not in groups:
+                groups.append(s)
+    return {
+        "baseUrl": base,
+        "apiKey": key,
+        "groups": groups,
+        "configured": bool(key),
     }
 
 
@@ -723,6 +759,32 @@ def _merge_papers(raw: dict, papers: dict):
         raw["papers"] = blob
 
 
+def _merge_wecom_chat(raw: dict, wecom: dict):
+    """企业微信聊天记录解析服务。密钥留空不改。"""
+    blob = raw.get("wecomChat") if isinstance(raw.get("wecomChat"), dict) else {}
+    base = str(wecom.get("baseUrl") or "").strip().rstrip("/")
+    if base.lower().endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    if base:
+        blob["baseUrl"] = base
+    key = _usable_secret(wecom.get("apiKey")) if "apiKey" in wecom else ""
+    if key:
+        blob["apiKey"] = key
+    if "groups" in wecom:
+        graw = wecom.get("groups")
+        groups = []
+        if isinstance(graw, str):
+            graw = [x.strip() for x in re.split(r"[\n,;]+", graw) if x.strip()]
+        if isinstance(graw, list):
+            for x in graw:
+                s = str(x or "").strip()
+                if s and s not in groups:
+                    groups.append(s)
+        blob["groups"] = groups
+    if blob:
+        raw["wecomChat"] = blob
+
+
 def _merge_pool(raw: dict, pool: dict):
     """人才库 / 企业库只读接口（pool 块）。留空字段保持当前值。"""
     blob = raw.get("pool") if isinstance(raw.get("pool"), dict) else {}
@@ -763,6 +825,9 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
     papers = payload.get("papers") if isinstance(payload.get("papers"), dict) else None
     if papers:
         _merge_papers(raw, papers)
+    wecom = payload.get("wecomChat") if isinstance(payload.get("wecomChat"), dict) else None
+    if wecom:
+        _merge_wecom_chat(raw, wecom)
     classify = str(payload.get("classifyModel") or payload.get("model") or "").strip()
     if classify:
         raw["model"] = classify
@@ -774,7 +839,7 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
 
 
 # 恢复默认只回滚 LLM 接入参数；数据库 / 人才库 / 论文 / 收件箱等运行时配置保留当前值
-_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox", "projectProof", "portal")
+_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox", "projectProof", "portal", "wecomChat")
 
 
 def restore_default_config() -> dict:
@@ -866,6 +931,12 @@ def editor_config() -> dict:
             "username": cfg.get("papersUsername") or "",
             "authMode": cfg.get("papersAuthMode") or "",
             "configured": bool(cfg.get("papersConfigured")),
+        },
+        "wecomChat": {
+            "baseUrl": cfg.get("wecomChatBaseUrl") or "",
+            "hasKey": bool(cfg.get("wecomChatApiKey")),
+            "groups": list(cfg.get("wecomChatGroups") or []),
+            "configured": bool(cfg.get("wecomChatConfigured")),
         },
         "classifyModel": (cfg.get("model") if model_family(cfg.get("model") or "") == "gemini" else "") or gemini["id"],
         "hasDefault": DEFAULT_CONFIG_PATH.exists(),
