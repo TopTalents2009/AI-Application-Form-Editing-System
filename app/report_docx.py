@@ -1,5 +1,7 @@
 """把修改对照表写成 Word（.docx），与 Markdown 对照表字段对齐。"""
 from __future__ import annotations
+import os
+import re
 from pathlib import Path
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -7,6 +9,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.shared import Cm, Pt, RGBColor
 
 HEADERS = ["#", "章节", "意见条款", "改前摘录", "Gemini修改意见", "改后摘录", "结果"]
@@ -140,6 +143,142 @@ def write_compare_docx(path, *, app_name: str, app_no: str, created: str, rows: 
         p = doc.add_paragraph()
         rr = p.add_run("（无）")
         _east_asia(rr, size=10, color=(152, 161, 179))
+
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    doc.save(str(path))
+    return Path(path)
+
+
+def _word_href(url: str) -> str:
+    s = str(url or "").strip()
+    if not s:
+        return ""
+    if re.match(r"(?i)^(https?://|file:)", s):
+        return s
+    if s.startswith("/"):
+        port = str(os.environ.get("SHENBAOSHU_PORT") or "3777")
+        return "http://127.0.0.1:" + port + s
+    return s
+
+
+def _add_hyperlink(paragraph, url, text, size=10):
+    part = paragraph.part
+    r_id = part.relate_to(str(url or ""), RT.HYPERLINK, is_external=True)
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+    new_run = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+    rFonts = OxmlElement("w:rFonts")
+    rFonts.set(qn("w:ascii"), "微软雅黑")
+    rFonts.set(qn("w:hAnsi"), "微软雅黑")
+    rFonts.set(qn("w:eastAsia"), "微软雅黑")
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), "2450A4")
+    u = OxmlElement("w:u")
+    u.set(qn("w:val"), "single")
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), str(int(size * 2)))
+    rPr.append(rFonts)
+    rPr.append(color)
+    rPr.append(u)
+    rPr.append(sz)
+    new_run.append(rPr)
+    t = OxmlElement("w:t")
+    t.set(qn("xml:space"), "preserve")
+    t.text = str(text or url or "")
+    new_run.append(t)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
+
+
+def write_task_list_docx(path, *, items: list, app_name: str = "", app_no: str = "", created: str = ""):
+    """任务清单 Word：系统改不了的附件，带本地/人才库下载链接。"""
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width, sec.page_height = Cm(21.0), Cm(29.7)
+    sec.left_margin = Cm(2.0)
+    sec.right_margin = Cm(2.0)
+    sec.top_margin = Cm(1.8)
+    sec.bottom_margin = Cm(1.8)
+
+    title = doc.add_paragraph()
+    r = title.add_run("任务清单（系统无法修改的附件）")
+    _east_asia(r, size=16, bold=True)
+
+    sub = doc.add_paragraph()
+    meta = "申报书编号 " + (app_no or "未识别") + "　" + (app_name or "") + (("　" + created) if created else "")
+    r2 = sub.add_run(meta)
+    _east_asia(r2, size=10, color=(91, 101, 119))
+
+    note = doc.add_paragraph()
+    r3 = note.add_run(
+        "护照、学历证明、工作经历证明等扫描件不能写入申报书正文（含证明上的时间、日期）。"
+        "检索顺序：本机「附件」目录 → 人才库 → 聊天记录。蓝色链接可下载。"
+    )
+    _east_asia(r3, size=10, color=(91, 101, 119))
+
+    rows = list(items or [])
+    if not rows:
+        p = doc.add_paragraph()
+        rr = p.add_run("（本任务修改意见未点名需另行办理的附件）")
+        _east_asia(rr, size=10, color=(152, 161, 179))
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+        return Path(path)
+
+    src_lab = {"local": "本地附件", "pool": "人才库", "papers": "论文系统", "codebuddy": "联网检索", "generate": "生成接口", "wecom": "聊天记录"}
+    for i, it in enumerate(rows, 1):
+        h = doc.add_paragraph()
+        h.paragraph_format.space_before = Pt(12)
+        rh = h.add_run(str(i) + ". " + str(it.get("title") or "附件"))
+        _east_asia(rh, size=13, bold=True)
+        st = doc.add_paragraph()
+        rs = st.add_run("状态：" + str(it.get("statusLabel") or it.get("status") or ""))
+        _east_asia(rs, size=10, bold=True, color=(178, 106, 0))
+        if it.get("snippet"):
+            p = doc.add_paragraph()
+            rr = p.add_run("意见摘录：" + str(it.get("snippet")))
+            _east_asia(rr, size=10, color=(91, 101, 119))
+        p = doc.add_paragraph()
+        rr = p.add_run("办理说明：" + str(it.get("action") or ""))
+        _east_asia(rr, size=10)
+        dls = it.get("downloads") or []
+        if dls:
+            p = doc.add_paragraph()
+            rr = p.add_run("下载：")
+            _east_asia(rr, size=10, bold=True)
+            for d in dls:
+                name = str(d.get("filename") or d.get("title") or "文件")
+                src = src_lab.get(d.get("source"), str(d.get("source") or ""))
+                line = doc.add_paragraph()
+                prefix = "· " + (("[" + src + "] ") if src else "")
+                rr = line.add_run(prefix)
+                _east_asia(rr, size=10)
+                href = _word_href(str(d.get("download") or "").strip())
+                loc = str(d.get("localPath") or "").strip()
+                if loc:
+                    try:
+                        uri = Path(loc).resolve().as_uri()
+                    except Exception:
+                        uri = ""
+                    if uri:
+                        _add_hyperlink(line, uri, name, size=10)
+                    else:
+                        rr = line.add_run(name)
+                        _east_asia(rr, size=10)
+                    if href:
+                        rr = line.add_run("　")
+                        _east_asia(rr, size=10)
+                        _add_hyperlink(line, href, "系统下载", size=10)
+                elif href:
+                    _add_hyperlink(line, href, name, size=10)
+                else:
+                    rr = line.add_run(name)
+                    _east_asia(rr, size=10)
+        else:
+            p = doc.add_paragraph()
+            rr = p.add_run("下载：无（请申报人另行准备）")
+            _east_asia(rr, size=10, color=(197, 34, 31))
 
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(path))

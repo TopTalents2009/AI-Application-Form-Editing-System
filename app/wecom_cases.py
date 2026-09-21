@@ -16,7 +16,8 @@ _NOT_FORM = re.compile(
     r"申报须知|通知|指南|模板|模版|企业需要|应提供|需提供|"
     r"意向书|意向协议|意向合同|聘用|劳动合同|合同范本|协议书|协议|合同|"
     r"承诺书|承诺函|承诺|唯一申报|"
-    r"推荐信|简历|护照|学历|身份证|户口|证件照|营业执照",
+    r"推荐信|简历|护照|学历|身份证|户口|证件照|营业执照|"
+    r"供应统计|引进名单|汇总表|摸排表|走访表|人才统计",
 )
 _OPINION_DOC = {".docx", ".docm", ".wps", ".xlsx", ".xlsm", ".xls", ".csv", ".txt", ".md"}
 _OPINION_TEXT = re.compile(
@@ -26,8 +27,40 @@ _OPINION_TEXT = re.compile(
 _CHATTER = re.compile(r"^(收到|好的|谢谢|嗯|ok|OK|对|是|好)$")
 
 
+def strip_cache_prefix(name: str, message_id=None) -> str:
+    """企业微信缓存常把 message_id 接到原名前：69230_人才引进意向协议书-杜垚.pdf。"""
+    n = str(name or "").replace("\\", "/").split("/")[-1].strip()
+    mid = str(message_id or "").strip()
+    if mid.isdigit() and n.startswith(mid + "_"):
+        rest = n[len(mid) + 1 :]
+        if rest:
+            return rest
+    return n
+
+
 def _fname(m: dict) -> str:
     return str((m or {}).get("attachment_name") or (m or {}).get("filename") or "").strip()
+
+
+def _names_of(m: dict) -> list:
+    out, seen = [], set()
+    for raw in (
+        (m or {}).get("attachment_name"),
+        (m or {}).get("filename"),
+        (m or {}).get("cache_name"),
+    ):
+        n = str(raw or "").strip()
+        if n and n.lower() not in seen:
+            seen.add(n.lower())
+            out.append(n)
+    return out
+
+
+def _is_not_form(name: str) -> bool:
+    n = str(name or "").strip()
+    if not n or _DONE_NAME.search(n):
+        return False
+    return bool(_NOT_FORM.search(n) and not _APP_NAME.search(n) and not _OPINION_NAME.search(n))
 
 
 def _has_file(m: dict) -> bool:
@@ -57,7 +90,7 @@ def _person_app_stem(name: str) -> bool:
     stem = n[: -len(ext)] if ext and n.lower().endswith(ext) else n
     stem = re.sub(r"[_（）()\[\]【】]+", " ", stem)
     stem = re.sub(r"\s+", " ", stem).strip()
-    if not stem or _DONE_NAME.search(stem) or _OPINION_NAME.search(stem):
+    if not stem or _DONE_NAME.search(stem) or _OPINION_NAME.search(stem) or _PERSON_SKIP.search(stem):
         return False
     if _NOT_FORM.search(stem) and not _APP_NAME.search(stem):
         return False
@@ -75,15 +108,51 @@ def _person_app_stem(name: str) -> bool:
     return not rest.strip()
 
 
-def classify_file(name: str) -> str:
+_PERSON_SKIP = re.compile(r"签章|盖章|单位|扫描|截图|附件|材料|清单|通知|说明|推荐|承诺|破格|协议|合同")
+_TAIL_SKIP = re.compile(r"签章|盖章|单位|扫描|截图|附件|材料|清单|通知|说明|推荐|承诺|破格|协议|合同|青年|人才|创新|项目|公司")
+_FORM_PDF_HINT = re.compile(r"有限公司|股份有限|实验室|青年人才|申报书|申请表")
+
+
+def _tail_person(name: str) -> str:
+    """从「宁波+公司+杜垚」这类文件名里取出末尾人名。"""
+    stem = str(name or "")
+    ext = ext_of(stem)
+    if ext and stem.lower().endswith(ext):
+        stem = stem[: -len(ext)]
+    parts = re.split(r"[\s_\-–—+＋]+", stem)
+    for p in reversed(parts):
+        p = re.sub(r"[()（）\[\]【】]", "", str(p or "")).strip()
+        if not p or _TAIL_SKIP.search(p):
+            continue
+        full, toks = M.accept_person_name(p)
+        if (full or toks) and 2 <= len(p) <= 6:
+            return p
+    return ""
+
+
+def _company_person_form(name: str) -> bool:
+    """地区+企业+人名 的申报书导出 PDF，如 宁波+某某有限公司+杜垚.pdf。"""
+    n = str(name or "").strip()
+    if ext_of(n) not in ALLOWED_APP_EXT:
+        return False
+    if _DONE_NAME.search(n) or _is_not_form(n):
+        return False
+    if not _FORM_PDF_HINT.search(n):
+        return False
+    return bool(_tail_person(n))
+
+
+def _classify_one(name: str) -> str:
     """申报书 → app；意见文档 → opinion；资料清单、意向书模板等既不当申报书也不当意见。"""
     n = str(name or "").strip()
     ext = ext_of(n)
     if not n or _DONE_NAME.search(n):
         return "ignore"
-    if _NOT_FORM.search(n) and not _APP_NAME.search(n) and not _OPINION_NAME.search(n):
+    if _is_not_form(n):
         return "ignore"
     if _APP_NAME.search(n) and ext in ALLOWED_APP_EXT:
+        return "app"
+    if _company_person_form(n):
         return "app"
     if _person_app_stem(n):
         return "app"
@@ -98,13 +167,76 @@ def classify_file(name: str) -> str:
     return "ignore"
 
 
+def classify_file(*names, message_id=None) -> str:
+    """多个文件名（聊天显示名 + 缓存原名）一起判。意向协议等否定名压过「杜垚.pdf」这种人名短名。"""
+    bag, seen = [], set()
+    for raw in names:
+        n = str(raw or "").strip()
+        if not n:
+            continue
+        for cand in (n, strip_cache_prefix(n, message_id)):
+            key = cand.lower()
+            if cand and key not in seen:
+                seen.add(key)
+                bag.append(cand)
+    if not bag:
+        return "ignore"
+    explicit_app = False
+    person = False
+    not_form = False
+    opinion = False
+    for n in bag:
+        k = _classify_one(n)
+        if _is_not_form(n):
+            not_form = True
+        if k == "app" and _APP_NAME.search(n):
+            explicit_app = True
+        elif k == "app":
+            person = True
+        if k == "opinion":
+            opinion = True
+    if explicit_app:
+        return "app"
+    if not_form:
+        return "ignore"
+    if person:
+        return "app"
+    if opinion:
+        return "opinion"
+    return "ignore"
+
+
+def resolve_app_upload(chat_name: str, cache_name: str, message_id=None) -> dict:
+    """下载到缓存文件后复核：聊天短名像申报书、原名却是意向协议时拒绝建任务。"""
+    chat = str(chat_name or "").strip()
+    cache = str(cache_name or "").strip()
+    stripped = strip_cache_prefix(cache, message_id) if cache else ""
+    kind = classify_file(chat, cache, stripped, message_id=message_id)
+    shown = stripped or cache or chat or "文件"
+    if kind != "app":
+        return {
+            "ok": False,
+            "kind": kind,
+            "filename": shown,
+            "detail": "缓存文件实际是「" + shown + "」，不是申报书（意向协议、护照、简历等），未创建任务",
+        }
+    store = chat or stripped or cache
+    if stripped and _classify_one(stripped) == "app":
+        store = stripped
+    elif chat and _classify_one(chat) == "app":
+        store = chat
+    else:
+        store = stripped or cache or chat
+    return {"ok": True, "kind": "app", "filename": store}
+
+
 def split_scan_stats(messages: list) -> dict:
     """预览用：两千条消息里实际扫到多少文件、几份申报书。"""
     files = [m for m in (messages or []) if isinstance(m, dict) and _has_file(m)]
     apps, opinions, ignored = [], [], []
     for m in files:
         fn = _fname(m)
-        kind = classify_file(fn)
+        kind = classify_file(*_names_of(m), message_id=m.get("message_id"))
         if kind == "app":
             apps.append(fn)
         elif kind == "opinion":
@@ -140,7 +272,7 @@ def is_opinion_text(text: str) -> bool:
 
 def _msg_kind(m: dict) -> str:
     if _has_file(m):
-        return classify_file(_fname(m))
+        return classify_file(*_names_of(m), message_id=m.get("message_id"))
     if is_opinion_text(m.get("text") or m.get("snippet") or ""):
         return "text"
     return "other"
@@ -340,6 +472,11 @@ def _refresh_case(c: dict) -> dict:
         c["warnings"].append("意见文档未缓存：" + "、".join(missing[:4]))
     if not files and not texts:
         c["warnings"].append("附近没有识别到修改意见（群文本或意见文档），将尝试从申报书标注栏提取")
+    app_fn = str((c.get("app") or {}).get("filename") or "")
+    if app_fn and _person_app_stem(app_fn) and not _APP_NAME.search(app_fn):
+        short = "文件名几乎只有人名，上传时会按企业微信缓存原名复核；若实际是意向协议、护照等则不会建任务"
+        if short not in c["warnings"]:
+            c["warnings"].append(short)
     c["opinionCount"] = len(ops)
     c["opinionFiles"] = [o["filename"] for o in files]
     c["opinionTexts"] = len(texts)
@@ -363,8 +500,7 @@ def annotate_existing(cases: list, runner) -> list:
                 "status": hit.get("status"),
                 "url": "/t/" + str(hit.get("id") or ""),
             }
-            c["warnings"] = list(c.get("warnings") or []) + ["已从该群文件建过任务"]
-            c["ready"] = False
+            c["warnings"] = list(c.get("warnings") or []) + ["已从该群文件建过任务，仍可重新上传"]
             continue
         if not runner:
             continue

@@ -15,8 +15,8 @@ from .pdf_app import (
 from .opinion_extract import resolve_ocr_timeout
 from .pool import lookup_for_app, format_pool_prompt, save_snapshot
 from .edu_resume import enrich_education, save_snapshot as save_edu_snapshot
-from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block, public_attach_hit
-from .report_docx import write_compare_docx
+from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block, public_attach_hit, build_task_list, public_task_list, format_task_list_md
+from .report_docx import write_compare_docx, write_task_list_docx
 from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits, enforce_edit_limits, limit_hint
 from .edit_validate import validate_structured_edits, clauses_from_edits, sanitize_declaring_company_edits
 from .manual_fill import promote_unknown_to_manual_edits, extract_anchor, locate_anchor, is_rewrite_from_book
@@ -266,6 +266,22 @@ def stem_of(name: str) -> str:
 def app_no_of(name: str) -> str:
     nums = M.extract_book_nums(str(name or ""))
     return str(nums[0]) if nums else ""
+
+def write_task_list_outputs(out_dir, task_list, *, app_name: str = "", app_no: str = "", created: str = ""):
+    """写出任务清单.md + 任务清单.docx（含本地/人才库下载链接）。"""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "任务清单.md").write_text(
+        format_task_list_md(task_list, app_name=app_name, app_no=app_no),
+        encoding="utf-8",
+    )
+    write_task_list_docx(
+        out_dir / "任务清单.docx",
+        items=task_list,
+        app_name=app_name,
+        app_no=app_no,
+        created=created or now_str(),
+    )
 
 def compare_docx_stem(t) -> str:
     no = str((t.get("app") or {}).get("no") or "").strip()
@@ -647,7 +663,8 @@ class TaskStore:
                 msg = str(e)[:240]
                 self.log(t, "提取失败 " + f + ": " + msg)
                 if f != app_name:
-                    raise ValueError("意见「" + f + "」提取失败：" + msg)
+                    self.log(t, "已跳过无法提取的意见文件「" + f + "」，继续处理其余文件")
+                    continue
                 raise ValueError("申报书「" + f + "」提取失败：" + msg)
         if not t.get("opinions"):
             src = work_input / app_name
@@ -904,7 +921,7 @@ class TaskStore:
                 outputs.append({"name": f, "size": fp.stat().st_size, "dir": "output", "docxIntact": intact, "verify": detail})
                 if "对照表" in f: t["hasReport"] = True
         t["outputs"] = outputs
-        t["deliverables"] = [o for o in outputs if is_edited_output(o["name"]) or is_backup_output(o["name"]) or "对照表" in o["name"] or "遗留事项" in o["name"]]
+        t["deliverables"] = [o for o in outputs if is_edited_output(o["name"]) or is_backup_output(o["name"]) or "对照表" in o["name"] or "遗留事项" in o["name"] or "任务清单" in o["name"]]
         return ok_count > 0
 
     def snapshot_version(self, t) -> dict | None:
@@ -1584,6 +1601,41 @@ class TaskStore:
         if edu_lo and edu_lo not in leftovers:
             leftovers.append(edu_lo)
 
+        task_list = public_task_list(build_task_list(
+            opinion_blob, attach=attach, leftovers=leftovers, clauses=clauses,
+        ))
+        t["taskList"] = task_list
+        if task_list:
+            self.log(
+                t,
+                "任务清单：" + str(len(task_list)) + " 项（"
+                + "、".join(str(x.get("title") or "") for x in task_list)
+                + "）—— 护照/学历证明等无法改正文，需人工补传",
+            )
+            try:
+                out_dir = Path(t["dir"]) / "work" / "output"
+                write_task_list_outputs(
+                    out_dir, task_list,
+                    app_name=str((t.get("app") or {}).get("name") or ""),
+                    app_no=app_no or app_no_of(str((t.get("app") or {}).get("name") or "")),
+                    created=now_str(),
+                )
+                names = ("任务清单.md", "任务清单.docx")
+                by = {o.get("name"): o for o in (t.get("outputs") or [])}
+                for name in names:
+                    fp = out_dir / name
+                    if fp.is_file() and fp.stat().st_size > 0:
+                        by[name] = {"name": name, "size": fp.stat().st_size, "dir": "output"}
+                t["outputs"] = list(by.values())
+                t["deliverables"] = [
+                    o for o in t["outputs"]
+                    if is_edited_output(o["name"]) or is_backup_output(o["name"])
+                    or "对照表" in o["name"] or "遗留事项" in o["name"] or "任务清单" in o["name"]
+                ]
+                self.log(t, "已生成任务清单.docx（" + str(len(task_list)) + " 项，先查本地附件再查人才库）")
+            except Exception as e:
+                self.log(t, "任务清单 Word 生成失败：" + str(e)[:120])
+
         edits, leftovers, manual_n = promote_unknown_to_manual_edits(
             clauses, edits, leftovers, texts["appText"], app_no=app_no, hj=hj_mode,
         )
@@ -1614,6 +1666,7 @@ class TaskStore:
             },
             "pool": {"summary": snap.get("summary") or "", "hit": snap.get("hit") or {}, "notes": snap.get("notes") or []},
             "attachments": public_plan_block(attach),
+            "taskList": task_list,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         counts = " / ".join(fam_tag(f) + " " + str(len(edits_map[f])) for f in COMPARE_FAMS)
         self.log(t, "合并对照计划：" + str(len(edits)) + " 条编辑 / " + str(len(leftovers)) + " 条遗留（" + counts + "）")
@@ -1654,15 +1707,20 @@ class TaskStore:
             self.log(t, "人工确认完成（" + str(len(edits)) + " 条编辑），开始写入文件" + who)
             tmp_dir = Path(t["dir"]) / "work" / "tmp"; tmp_dir.mkdir(parents=True, exist_ok=True)
             plan_path = tmp_dir / "plan.json"
-            plan_clauses = []
+            prev_plan = {}
             if plan_path.exists():
                 try:
-                    plan_clauses = json.loads(plan_path.read_text(encoding="utf-8")).get("clauses") or []
+                    prev_plan = json.loads(plan_path.read_text(encoding="utf-8")) or {}
                 except Exception:
-                    plan_clauses = []
+                    prev_plan = {}
+            plan_clauses = prev_plan.get("clauses") or []
             plan_path.write_text(json.dumps({
                 "appNo": app_no_of(t["app"]["name"]), "appName": t["app"]["name"],
                 "clauses": plan_clauses, "edits": edits, "leftovers": leftovers,
+                "attachments": prev_plan.get("attachments") or t.get("attachHit") or {},
+                "taskList": prev_plan.get("taskList") or t.get("taskList") or [],
+                "pool": prev_plan.get("pool") or {},
+                "compareModels": prev_plan.get("compareModels") or {},
             }, ensure_ascii=False, indent=2), encoding="utf-8")
 
             out_dir = Path(t["dir"]) / "work" / "output"; out_dir.mkdir(parents=True, exist_ok=True)
@@ -1842,6 +1900,32 @@ class TaskStore:
                 self.log(t, "对照表 Word 生成失败，已保留 Markdown：" + str(e)[:120])
             lo_txt = "\n".join(str(i2 + 1) + ". " + s for i2, s in enumerate(leftovers)) if leftovers else "（无）"
             (out_dir / "遗留事项.md").write_text("# 遗留事项（需人工补充真实数据）\n\n" + lo_txt, encoding="utf-8")
+            task_list = public_task_list(build_task_list(
+                leftovers,
+                attach=t.get("attachHit") or prev_plan.get("attachments") or {},
+                leftovers=leftovers,
+                clauses=plan_clauses,
+            ))
+            if task_list:
+                t["taskList"] = task_list
+                try:
+                    write_task_list_outputs(
+                        out_dir, task_list,
+                        app_name=str(t.get("app", {}).get("name") or ""),
+                        app_no=app_no_of(t["app"]["name"]),
+                        created=now_str(),
+                    )
+                    self.log(t, "已生成任务清单.docx（" + str(len(task_list)) + " 项）")
+                except Exception as e:
+                    (out_dir / "任务清单.md").write_text(
+                        format_task_list_md(
+                            task_list,
+                            app_name=str(t.get("app", {}).get("name") or ""),
+                            app_no=app_no_of(t["app"]["name"]),
+                        ),
+                        encoding="utf-8",
+                    )
+                    self.log(t, "任务清单 Word 生成失败，已保留 Markdown：" + str(e)[:120])
 
             if tried > 0 and hits == 0:
                 await self.verify_outputs(t)

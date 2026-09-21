@@ -1,4 +1,4 @@
-"""各群记录看板：只读企业微信解析服务。仅管理员。"""
+"""各群记录看板：只读企业微信解析服务。登录用户可用（主界面下滑可见）。"""
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from urllib.parse import quote
@@ -7,12 +7,10 @@ from .. import wecom_client as W
 router = APIRouter()
 
 
-def _admin(request: Request) -> dict:
+def _user(request: Request) -> dict:
     u = getattr(request.state, "user", None)
     if not u:
         raise HTTPException(401, "未登录")
-    if u.get("role") != "admin":
-        raise HTTPException(403, "需要管理员权限")
     return u
 
 
@@ -27,13 +25,13 @@ def _http(e: W.WecomError) -> HTTPException:
 
 @router.get("/api/wecom/health")
 async def api_health(request: Request):
-    _admin(request)
+    _user(request)
     return await W.health()
 
 
 @router.get("/api/wecom/sources")
 async def api_sources(request: Request):
-    _admin(request)
+    _user(request)
     try:
         return await W.list_sources()
     except W.WecomError as e:
@@ -48,7 +46,7 @@ async def api_groups(
     source_id: str = Query(""),
     limit: int = Query(400),
 ):
-    _admin(request)
+    _user(request)
     k = str(kind or "group").strip().lower()
     if k not in ("group", "all"):
         k = "group"
@@ -69,7 +67,7 @@ async def api_group_messages(
     limit: int = Query(80),
     tail: bool = Query(False),
 ):
-    _admin(request)
+    _user(request)
     try:
         return await W.list_merged_messages(
             session_id, source_id=source_id,
@@ -82,7 +80,7 @@ async def api_group_messages(
 
 @router.post("/api/wecom/files")
 async def api_file_any(body: dict, request: Request):
-    _admin(request)
+    _user(request)
     copies = body.get("copies") if isinstance(body, dict) else None
     if not isinstance(copies, list):
         copies = []
@@ -126,7 +124,7 @@ async def api_sessions(
     q: str = Query(""),
     limit: int = Query(200),
 ):
-    _admin(request)
+    _user(request)
     k = str(kind or "group").strip().lower()
     if k not in ("group", "all"):
         k = "group"
@@ -146,7 +144,7 @@ async def api_messages(
     offset: int = Query(0),
     limit: int = Query(80),
 ):
-    _admin(request)
+    _user(request)
     try:
         return await W.list_messages(
             source_id, session_id,
@@ -165,7 +163,7 @@ async def api_search(
     session_id: str = Query(""),
     limit: int = Query(50),
 ):
-    _admin(request)
+    _user(request)
     try:
         return await W.search(q, source_id=source_id, session_id=session_id, limit=limit)
     except W.WecomError as e:
@@ -174,7 +172,7 @@ async def api_search(
 
 @router.get("/api/wecom/sources/{source_id}/files/{message_id}")
 async def api_file(source_id: str, message_id: int, request: Request, session_id: str = Query("")):
-    _admin(request)
+    _user(request)
     try:
         got = await W.stream_attachment(source_id, message_id, session_id)
     except W.WecomError as e:
@@ -206,7 +204,7 @@ async def api_file(source_id: str, message_id: int, request: Request, session_id
 
 @router.post("/api/wecom/locate-task")
 async def api_locate_task(body: dict, request: Request):
-    _admin(request)
+    _user(request)
     from ..main import runner
     from ..wecom_locate import locate_tasks
     return locate_tasks(runner, body if isinstance(body, dict) else {})
@@ -214,7 +212,7 @@ async def api_locate_task(body: dict, request: Request):
 
 @router.post("/api/wecom/split-preview")
 async def api_split_preview(body: dict, request: Request):
-    _admin(request)
+    _user(request)
     from datetime import datetime, timedelta
     from ..main import runner
     from ..wecom_cases import cluster_messages, annotate_existing, split_scan_stats
@@ -281,13 +279,13 @@ async def api_split_preview(body: dict, request: Request):
 
 @router.post("/api/wecom/split-create")
 async def api_split_create(body: dict, request: Request):
-    _admin(request)
+    _user(request)
     import asyncio, base64
     from datetime import datetime, timedelta
     from ..main import runner
-    from ..wecom_cases import cluster_messages, annotate_existing, opinion_txt_bytes
+    from ..wecom_cases import cluster_messages, annotate_existing, opinion_txt_bytes, resolve_app_upload, strip_cache_prefix
     from ..runner import sanitize
-    u = _admin(request)
+    u = _user(request)
     body = body if isinstance(body, dict) else {}
     sid = str(body.get("session_id") or "").strip()
     if not sid:
@@ -381,11 +379,23 @@ async def api_split_create(body: dict, request: Request):
         if got.get("kind") != "file":
             errors.append({"id": c.get("id"), "filename": app.get("filename"), "detail": got.get("detail") or "申报书未缓存"})
             continue
-        aname = sanitize(str(got.get("filename") or app.get("filename") or "申报书.pdf"))
         raw = got.get("content") or b""
         if len(raw) < 64:
-            errors.append({"id": c.get("id"), "filename": aname, "detail": "申报书文件过小"})
+            errors.append({"id": c.get("id"), "filename": app.get("filename"), "detail": "申报书文件过小"})
             continue
+        decided = resolve_app_upload(
+            str(app.get("filename") or ""),
+            str(got.get("filename") or ""),
+            app.get("message_id"),
+        )
+        if not decided.get("ok"):
+            errors.append({
+                "id": c.get("id"),
+                "filename": decided.get("filename") or app.get("filename"),
+                "detail": decided.get("detail") or "不是申报书",
+            })
+            continue
+        aname = sanitize(str(decided.get("filename") or app.get("filename") or "申报书.pdf"))
         opinions = []
         used = {aname}
         for op in c.get("opinions") or []:
@@ -404,7 +414,7 @@ async def api_split_create(body: dict, request: Request):
                 skipped.append({"id": c.get("id"), "filename": oname, "detail": og.get("detail") or "意见文档未缓存"})
                 continue
             opinions.append({
-                "name": sanitize(str(og.get("filename") or oname)),
+                "name": sanitize(strip_cache_prefix(str(og.get("filename") or oname), op.get("message_id")) or oname),
                 "dataB64": base64.b64encode(og.get("content") or b"").decode(),
             })
         try:
@@ -435,9 +445,193 @@ async def api_split_create(body: dict, request: Request):
     }
 
 
+def _norm_copies(raw) -> list:
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for c in raw:
+        if not isinstance(c, dict):
+            continue
+        sid = str(c.get("source_id") or "").strip()
+        try:
+            mid = int(c.get("message_id") or 0)
+        except (TypeError, ValueError):
+            mid = 0
+        if sid and mid:
+            out.append({
+                "source_id": sid,
+                "message_id": mid,
+                "session_id": str(c.get("session_id") or ""),
+                "source_label": str(c.get("source_label") or c.get("label") or ""),
+            })
+    return out
+
+
+@router.post("/api/wecom/manual-create")
+async def api_manual_create(body: dict, request: Request):
+    """浏览记录时人手勾选申报书 + 修改意见（聊天文本或文件）后上传。"""
+    import base64
+    from ..main import runner
+    from ..wecom_cases import _case_id, annotate_existing, opinion_txt_bytes, strip_cache_prefix
+    from ..pdf_app import ALLOWED_APP_EXT, APP_EXT_HINT, ext_of
+    from ..opinion_extract import ALLOWED_OPINION_EXT
+    from ..runner import sanitize
+    u = _user(request)
+    body = body if isinstance(body, dict) else {}
+    sid = str(body.get("session_id") or "").strip()
+    if not sid:
+        raise HTTPException(400, "缺少 session_id")
+    session_name = str(body.get("session_name") or "").strip()
+    app_in = body.get("app") if isinstance(body.get("app"), dict) else {}
+    copies = _norm_copies(app_in.get("copies"))
+    if not copies:
+        raise HTTPException(400, "请选择一份申报书文件")
+    fake = {
+        "message_id": app_in.get("message_id") or (copies[0].get("message_id") if copies else 0),
+        "attachment_name": app_in.get("filename") or "",
+        "time_text": app_in.get("time") or "",
+    }
+    case = {
+        "id": _case_id(sid, fake),
+        "sessionId": sid,
+        "sessionName": session_name,
+        "app": {
+            "filename": str(app_in.get("filename") or "申报书.pdf"),
+            "message_id": fake["message_id"],
+            "copies": copies,
+            "time": str(app_in.get("time") or ""),
+            "sender": str(app_in.get("sender") or ""),
+        },
+        "opinions": [],
+        "ready": True,
+    }
+    annotate_existing([case], runner)
+    force = bool(body.get("force"))
+    if case.get("existing") and not force:
+        ex = case["existing"]
+        return {
+            "ok": False,
+            "created": [],
+            "skipped": [],
+            "errors": [{
+                "id": case.get("id"),
+                "filename": case["app"]["filename"],
+                "detail": "该群文件已经上传过",
+                "existing": ex,
+            }],
+            "needForce": True,
+        }
+
+    async def grab(cps: list) -> dict:
+        try:
+            got = await W.fetch_attachment_any(cps, wait_s=50)
+        except W.WecomError as e:
+            return {"kind": "error", "detail": e.message}
+        if got.get("kind") == "file" and got.get("content"):
+            return got
+        if got.get("kind") == "pending":
+            return {"kind": "pending", "detail": got.get("detail") or "远端助手还没回传文件"}
+        return {"kind": got.get("kind") or "missing", "detail": got.get("detail") or "未缓存"}
+
+    got = await grab(copies)
+    if got.get("kind") != "file":
+        raise HTTPException(404, got.get("detail") or "申报书未在各电脑缓存")
+    raw = got.get("content") or b""
+    if len(raw) < 64:
+        raise HTTPException(400, "申报书文件过小")
+    chat_name = str(app_in.get("filename") or "")
+    cache_name = strip_cache_prefix(str(got.get("filename") or ""), app_in.get("message_id"))
+    aname = sanitize(chat_name or cache_name or "申报书.pdf")
+    if ext_of(aname) not in ALLOWED_APP_EXT:
+        if ext_of(cache_name) in ALLOWED_APP_EXT:
+            aname = sanitize(cache_name)
+        else:
+            raise HTTPException(400, "申报书必须为 " + APP_EXT_HINT)
+
+    opinions = []
+    used = {aname}
+    skipped = []
+    raw_ops = body.get("opinions") if isinstance(body.get("opinions"), list) else []
+    for i, op in enumerate(raw_ops[:20]):
+        if not isinstance(op, dict):
+            continue
+        kind = str(op.get("kind") or "file").strip().lower()
+        if kind == "text":
+            text = str(op.get("text") or "").strip()
+            if len(text) < 2:
+                continue
+            oname = sanitize(str(op.get("filename") or "群聊修改意见.txt"))
+            if ext_of(oname) not in ALLOWED_OPINION_EXT:
+                oname = "群聊修改意见.txt"
+            base, n = oname, 2
+            while oname in used:
+                stem, ext = (base.rsplit(".", 1) + [""])[:2] if "." in base else (base, "")
+                oname = stem + "-" + str(n) + (("." + ext) if ext else "")
+                n += 1
+            used.add(oname)
+            opinions.append({"name": oname, "dataB64": base64.b64encode(opinion_txt_bytes({
+                "text": text,
+                "sender": op.get("sender") or "",
+                "time": op.get("time") or "",
+            })).decode()})
+            continue
+        ocps = _norm_copies(op.get("copies"))
+        oname = sanitize(str(op.get("filename") or ("意见-" + str(i + 1))))
+        if not ocps:
+            skipped.append({"filename": oname, "detail": "没有可查询的电脑副本"})
+            continue
+        og = await grab(ocps)
+        if og.get("kind") != "file":
+            skipped.append({"filename": oname, "detail": og.get("detail") or "意见文档未缓存"})
+            continue
+        stored = sanitize(strip_cache_prefix(str(og.get("filename") or oname), op.get("message_id")) or oname)
+        if ext_of(stored) not in ALLOWED_OPINION_EXT:
+            if ext_of(oname) in ALLOWED_OPINION_EXT:
+                stored = oname
+            else:
+                skipped.append({"filename": stored or oname, "detail": "意见类型不支持（Word / Excel / 图片 / 录音 / txt / md）"})
+                continue
+        base, n = stored, 2
+        while stored in used:
+            stem, ext = (base.rsplit(".", 1) + [""])[:2] if "." in base else (base, "")
+            stored = stem + "-" + str(n) + (("." + ext) if ext else "")
+            n += 1
+        used.add(stored)
+        opinions.append({
+            "name": stored,
+            "dataB64": base64.b64encode(og.get("content") or b"").decode(),
+        })
+
+    try:
+        t = runner.create({
+            "engine": "api",
+            "app": {"name": aname, "dataB64": base64.b64encode(raw).decode()},
+            "opinions": opinions,
+            "source": "wecom",
+            "wecom": {
+                "caseId": case.get("id"),
+                "sessionId": sid,
+                "sessionName": session_name,
+                "appFile": aname,
+                "messageId": fake["message_id"],
+                "manual": True,
+            },
+        }, owner=str(u.get("username") or ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    runner.enqueue(t["id"])
+    return {
+        "ok": True,
+        "created": [{"id": t["id"], "url": "/t/" + t["id"], "filename": aname, "caseId": case.get("id")}],
+        "skipped": skipped,
+        "errors": [],
+        "hint": "已上传的任务会生成修改计划，确认后才会写入文件。",
+    }
+
+
 @router.get("/api/wecom/media")
 async def api_media(request: Request, url: str = Query("")):
-    _admin(request)
+    _user(request)
     try:
         got = await W.proxy_media(url)
     except W.WecomError as e:

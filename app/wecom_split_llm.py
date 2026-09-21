@@ -17,6 +17,7 @@ from .wecom_cases import (
     _fname,
     _has_file,
     _msg_kind,
+    _names_of,
     _refresh_case,
     _text_ref,
     classify_file,
@@ -71,7 +72,7 @@ def _catalog(messages: list) -> list:
 
 
 def _allow_app(m: dict) -> bool:
-    return classify_file(_fname(m)) == "app"
+    return classify_file(*_names_of(m), message_id=(m or {}).get("message_id")) == "app"
 
 
 def _allow_opinion(m: dict) -> bool:

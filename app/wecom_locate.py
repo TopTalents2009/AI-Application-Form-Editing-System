@@ -140,11 +140,21 @@ def identity_of(t: dict) -> dict:
         if len(parts) > 1 and not person:
             person = parts[1].strip()
     if not person:
-        full, toks = M.accept_person_name(_stem(app.get("name") or ""))
+        stem = _stem(app.get("name") or "")
+        full, toks = M.accept_person_name(stem)
         if toks:
             person = " ".join(toks) if all(re.fullmatch(r"[a-z]+", x) for x in toks) else (toks[0])
         elif full:
             person = full
+        else:
+            for p in reversed(re.split(r"[\s_\-–—+＋]+", stem)):
+                p = re.sub(r"[()（）\[\]【】]", "", str(p or "")).strip()
+                if not p or re.search(r"签章|协议|合同|说明|承诺|人才|青年|公司", p):
+                    continue
+                f, tk = M.accept_person_name(p)
+                if (f or tk) and 2 <= len(p) <= 6:
+                    person = p
+                    break
     return {
         "personName": person,
         "attachId": aid,
@@ -163,7 +173,8 @@ def _name_hit(keys_names: list, task_person: str, app_name: str) -> tuple[bool, 
         for b in tn:
             if not a or not b:
                 continue
-            if a == b or (len(a) >= 4 and a in b) or (len(b) >= 4 and b in a):
+            need = 2 if re.fullmatch(r"[\u4e00-\u9fa5]{2,4}", a or b or "") else 4
+            if a == b or (len(a) >= need and a in b) or (len(b) >= need and b in a):
                 return True, keys_names[kn.index(a)] if a in kn else task_person
     kt = set()
     for n in keys_names:
@@ -182,8 +193,15 @@ def _name_hit(keys_names: list, task_person: str, app_name: str) -> tuple[bool, 
 
 
 def _file_overlap(fname: str, app_name: str) -> tuple[int, str]:
-    a = {_norm_name(x) for x in _tokens(fname) if len(_norm_name(x)) >= 3}
-    b = {_norm_name(x) for x in _tokens(app_name) if len(_norm_name(x)) >= 3}
+    def keep(tok: str) -> bool:
+        n = _norm_name(tok)
+        if not n:
+            return False
+        if re.fullmatch(r"[\u4e00-\u9fa5]{2,}", n):
+            return True
+        return len(n) >= 3
+    a = {_norm_name(x) for x in _tokens(fname) if keep(x)}
+    b = {_norm_name(x) for x in _tokens(app_name) if keep(x)}
     if not a or not b:
         return 0, ""
     hit = a & b

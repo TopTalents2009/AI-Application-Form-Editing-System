@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py57">
+<link rel="stylesheet" href="/public/style.css?v=py65">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -171,6 +171,46 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
   <div id="reportBox" class="report-md hidden"></div>
 </section>
 
+<section class="card wecom-home" id="wecomHome">
+  <h2>各群记录</h2>
+  <p class="wecom-lead">同一群在多台电脑上只显示一条。浏览消息时可勾选「申报书」和修改意见（聊天文本或文件）后点底部「上传任务」；也可按日期窗自动「拆解任务」。生成计划后仍需人工确认才会写入。</p>
+  <div class="msg" id="wecomMsg"></div>
+  <div class="wecom-status" id="wecomStatus">检测解析服务…</div>
+  <div class="wecom-board">
+    <aside class="wecom-side">
+      <div class="wecom-side-hd">
+        <div class="wecom-src" id="wecomSources"></div>
+        <input type="search" id="wecomGroupQ" placeholder="筛选群名" autocomplete="off">
+        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;color:#5b6577">
+          <input type="checkbox" id="wecomOnlyGroup" checked> 仅群聊
+        </label>
+      </div>
+      <div class="wecom-list" id="wecomSessions"><div class="wecom-empty">正在按群合并各电脑会话…</div></div>
+    </aside>
+    <div class="wecom-chat">
+      <div class="wecom-chat-hd">
+        <div class="grow">
+          <div id="wecomChatTitle" style="font-weight:700;font-size:14px">未选择会话</div>
+          <div id="wecomChatSub" style="font-size:12px;color:#8a93a6;margin-top:2px">从左侧点开群；重复群已合并</div>
+        </div>
+        <div class="wecom-filters">
+          <input type="date" id="wecomStart" title="开始日期">
+          <input type="date" id="wecomEnd" title="结束日期">
+          <input type="text" id="wecomMsgQ" placeholder="关键词搜索" style="width:160px" autocomplete="off">
+          <button type="button" class="mini" id="wecomSplitBtn">拆解任务</button>
+          <button type="button" class="mini" id="wecomReload">刷新</button>
+        </div>
+      </div>
+      <div class="wecom-stream" id="wecomStream"><div class="wecom-empty">选择群后显示消息。解析服务未启动时无法读取本地企业微信库。</div></div>
+      <div class="wecom-pager" id="wecomPager" hidden>
+        <button type="button" class="ghost mini" id="wecomPrev">更早</button>
+        <span id="wecomPageInfo">—</span>
+        <button type="button" class="ghost mini" id="wecomNext">更晚</button>
+      </div>
+    </div>
+  </div>
+</section>
+
 </main>
 
 <footer class="foot">本地单机服务 · 仅监听 127.0.0.1 · 原件只读 · 严禁编造数据 · v2.3</footer>
@@ -249,6 +289,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </div>
 
 <script src="/public/session.js?v=py55"></script>
-<script src="/public/app.js?v=py59"></script>
+<script src="/public/wecom-board.js?v=py2"></script>
+<script src="/public/app.js?v=py65"></script>
 </body>
 </html>

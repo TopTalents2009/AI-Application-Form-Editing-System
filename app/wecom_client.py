@@ -695,6 +695,13 @@ async def search(q: str, *, source_id: str = "", session_id: str = "", limit: in
         params["source_id"] = str(source_id)
     if session_id:
         params["session_id"] = str(session_id)
+    try:
+        rows = await _api_get("/api/search", params)
+        if isinstance(rows, list):
+            items = [_normalize_msg(dict(x)) for x in rows if isinstance(x, dict)]
+            return {"items": items, "count": len(items), "q": qn}
+    except WecomError:
+        pass
     data = await _get(PREFIX + "/search", params)
     items = data.get("data") if isinstance(data.get("data"), list) else []
     items = [_normalize_msg(dict(x)) for x in items if isinstance(x, dict)]

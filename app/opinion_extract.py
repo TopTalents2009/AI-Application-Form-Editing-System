@@ -156,15 +156,28 @@ def _rows_to_text(title: str, rows) -> str:
     return "\n".join(lines)
 
 
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
 def excel_to_text(path: Path) -> str:
     p = Path(path)
     ext = p.suffix.lower()
     if ext == ".csv":
         return _csv_to_text(p)
-    if ext in (".xlsx", ".xlsm"):
-        return _xlsx_to_text(p)
-    if ext == ".xls":
+    head = p.read_bytes()[:8] if p.exists() else b""
+    raw_head = p.read_bytes()[:4096] if p.exists() else b""
+    encrypted = b"E\x00n\x00c\x00r\x00y\x00p\x00t\x00e\x00d\x00P\x00a\x00c\x00k\x00a\x00g\x00e\x00" in raw_head or b"EncryptedPackage" in raw_head
+    if encrypted:
+        raise ValueError("该 Excel 已加密（EncryptedPackage），无法提取文字，请另存为未加密的 .xlsx / .xls")
+    if head.startswith(_OLE_MAGIC) or ext == ".xls":
         return _xls_to_text(p)
+    if ext in (".xlsx", ".xlsm") or head.startswith(b"PK"):
+        try:
+            return _xlsx_to_text(p)
+        except ValueError as e:
+            if "zip" in str(e).lower():
+                return _xls_to_text(p)
+            raise
     raise ValueError("不是 Excel 文件：" + p.name)
 
 

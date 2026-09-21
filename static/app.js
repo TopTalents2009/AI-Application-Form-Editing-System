@@ -1166,7 +1166,7 @@ function renderMatch(b) {
       var badge = '<span class="badge st-' + ts.status + '">' + statusText(ts.status) + '</span>';
       h += '<div class="mrow" style="border-top:none"><span class="mtxt"><b>' + esc(ts.app) + '</b>　' + badge;
       (ts.deliverables || []).forEach(function (o) {
-        if (isEditedOut(o.name) || o.name.indexOf('对照表') >= 0 || o.name.indexOf('遗留') >= 0) {
+        if (isEditedOut(o.name) || o.name.indexOf('对照表') >= 0 || o.name.indexOf('遗留') >= 0 || o.name.indexOf('任务清单') >= 0) {
           h += ' <a href="/api/tasks/' + ts.id + '/files?dir=output&name=' + encodeURIComponent(o.name) + '" style="color:#1462ae">' + esc(o.name) + '</a>';
         }
       });
@@ -1382,6 +1382,7 @@ function initUserBox() {
       });
     };
     if (u.mustSetCredentials) openCredModal(u);
+    if (window.initWecomBoard) window.initWecomBoard();
   });
 }
 
@@ -1827,6 +1828,33 @@ function appNoOf(name) {
   return nums.join('/');
 }
 
+function taskListHtml(list, tid) {
+  list = list || [];
+  if (!list.length) return '';
+    var srcMap = {local:'本地附件', pool:'人才库', papers:'论文系统', codebuddy:'联网检索', generate:'生成接口', wecom:'聊天记录'};
+  var h = '<div class="task-box"><div class="task-h">任务清单（系统改不了的附件）</div>';
+    h += '<p class="task-lead">护照、学历证明、工作经历证明等扫描件（含证明上的时间、日期）无法写入申报书正文。检索顺序：本机「附件」目录 → 人才库 → 聊天记录。确认后生成 <b>任务清单.docx</b>。</p>';
+  if (tid) {
+    h += '<p class="task-lead"><a class="dl" href="/api/tasks/' + encodeURIComponent(tid) + '/files?dir=output&name=' + encodeURIComponent('任务清单.docx') + '">下载任务清单.docx</a></p>';
+  }
+  h += '<ol class="task-ol">';
+  list.forEach(function (it) {
+    var st = it.statusLabel || (it.status === 'found' ? '已检索到参考文件' : '需另行提供');
+    h += '<li><div class="task-ttl">' + esc(it.title || '附件') + ' <em>' + esc(st) + '</em></div>';
+    if (it.snippet) h += '<div class="task-snip">意见：' + esc(it.snippet) + '</div>';
+    if (it.action) h += '<div class="task-act">' + esc(it.action) + '</div>';
+    (it.downloads || []).forEach(function (d) {
+      if (!d || !d.download) return;
+      var tag = srcMap[d.source] || '';
+      var label = (tag ? '[' + tag + '] ' : '') + (d.filename || d.title || '下载');
+      h += '<div><a class="dl" href="' + escAttr(d.download) + '">' + esc(label) + '</a></div>';
+    });
+    h += '</li>';
+  });
+  h += '</ol></div>';
+  return h;
+}
+
 function missingAttHtml(att) {
   att = att || {};
   var needed = att.needed || [];
@@ -1872,13 +1900,14 @@ function renderDoneAttachments(t) {
     return;
   }
   var att = t.attachHit || {};
+  var list = t.taskList || [];
   box.classList.remove('hidden');
-  box.innerHTML = missingAttHtml(att);
-  if ((att.items && att.items.length) || box.getAttribute('data-tid') === String(t.id)) return;
+  box.innerHTML = taskListHtml(list, t.id) + missingAttHtml(att);
+  if ((att.items && att.items.length) || (list && list.length) || box.getAttribute('data-tid') === String(t.id)) return;
   box.setAttribute('data-tid', String(t.id));
   fetch('/api/tasks/' + t.id + '/plan').then(function (r) { return r.ok ? r.json() : null; }).then(function (plan) {
     if (!plan || !currentDetail || String(currentDetail.id) !== String(t.id)) return;
-    box.innerHTML = missingAttHtml(plan.attachments || att);
+    box.innerHTML = taskListHtml(plan.taskList || list, t.id) + missingAttHtml(plan.attachments || att);
   }).catch(function () {});
 }
 
@@ -1921,6 +1950,7 @@ function buildPlanEditor(el, t, plan) {
   h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:18%">修改前（定位用，勿改）</th><th style="width:22%">Gemini修改意见</th><th style="width:22%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
   h += '<button class="mini addrow" id="addRowBtn">新增一行</button>';
   h += missingAttHtml(att);
+  h += taskListHtml((plan && plan.taskList) || t.taskList || [], t && t.id);
   h += '<h3>遗留事项（每行一条，可编辑）</h3><textarea id="loTa" class="lo-ta"></textarea>';
   h += '<div class="actions"><button id="applyBtn" class="primary">确认无误，写入文件</button><button id="replanBtn" class="ghost">重新生成计划</button><span id="planErr" class="err"></span></div>';
   el.innerHTML = h;
