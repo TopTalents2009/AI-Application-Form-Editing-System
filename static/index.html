@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py65">
+<link rel="stylesheet" href="/public/style.css?v=py72">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -172,43 +172,77 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </section>
 
 <section class="card wecom-home" id="wecomHome">
-  <h2>各群记录</h2>
-  <p class="wecom-lead">同一群在多台电脑上只显示一条。浏览消息时可勾选「申报书」和修改意见（聊天文本或文件）后点底部「上传任务」；也可按日期窗自动「拆解任务」。值班模型认出修改意见后会交给 Gemini 配申报书，任务停在待确认，确认后才会写入。</p>
+  <h2>会话记录</h2>
+  <p class="wecom-lead">同一会话在多台电脑上只显示一条，群聊和单聊都算。可在左侧点 ★ 加入「关注会话」供值班扫描。浏览消息时可勾选申报书与修改意见后上传；也可「AI 解读」或「拆解任务」。任务停在待确认，确认后才会写入。</p>
   <div class="msg" id="wecomMsg"></div>
   <div class="wecom-status" id="wecomStatus">检测解析服务…</div>
   <div class="wecom-status" id="wecomWatchStatus" style="margin-top:6px"></div>
+  <details class="wecom-watch-panel" id="wecomUserReview" open>
+    <summary class="wecom-watch-panel-sum">AI 值班审核</summary>
+    <p class="wecom-watch-panel-desc">自动扫描关注会话后的结果。待人审可以选择上传任务或不上传；扫描日志可点开查看每一轮。</p>
+    <div class="wecom-watch-pending" id="wecomWatchPending" hidden></div>
+    <div class="wecom-watch-logs-hd">
+      <div><b>扫描日志</b><span class="wecom-watch-logs-tip">点击行查看详情，再次点击收起</span></div>
+      <div class="wecom-watch-logs-actions">
+        <button type="button" class="mini primary" id="wwUserRunBtn">立即扫描</button>
+        <button type="button" class="mini" id="wwLogsRefresh">刷新</button>
+      </div>
+    </div>
+    <div class="wecom-watch-logs" id="wecomWatchLogs"><div class="wecom-empty ww-loading"><span class="ww-spin"></span>加载中…</div></div>
+    <div class="wecom-watch-log-detail" id="wecomWatchLogDetail" hidden></div>
+  </details>
   <div class="wecom-board">
     <aside class="wecom-side">
       <div class="wecom-side-hd">
         <div class="wecom-src" id="wecomSources"></div>
-        <input type="search" id="wecomGroupQ" placeholder="筛选群名" autocomplete="off">
-        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;color:#5b6577">
-          <input type="checkbox" id="wecomOnlyGroup" checked> 仅群聊
-        </label>
+        <input type="search" id="wecomGroupQ" placeholder="筛选会话" autocomplete="off">
+        <div class="wecom-side-filters">
+          <label class="wecom-filter-chip"><input type="checkbox" id="wecomOnlyGroup"> 仅群聊</label>
+          <label class="wecom-filter-chip"><input type="checkbox" id="wecomOnlyWatch"> 仅关注</label>
+        </div>
+        <div class="wecom-watch-hint" id="wecomWatchHint">点左侧 ★ 关注，群聊和单聊都会扫描</div>
       </div>
-      <div class="wecom-list" id="wecomSessions"><div class="wecom-empty">正在按群合并各电脑会话…</div></div>
+      <div class="wecom-list" id="wecomSessions"><div class="wecom-empty">正在合并各电脑上的同一会话…</div></div>
     </aside>
     <div class="wecom-chat">
       <div class="wecom-chat-hd">
         <div class="grow">
           <div id="wecomChatTitle" style="font-weight:700;font-size:14px">未选择会话</div>
-          <div id="wecomChatSub" style="font-size:12px;color:#8a93a6;margin-top:2px">从左侧点开群；重复群已合并</div>
+          <div id="wecomChatSub" style="font-size:12px;color:#8a93a6;margin-top:2px">从左侧点开会话；同一会话在多台电脑上已合并</div>
         </div>
         <div class="wecom-filters">
           <input type="date" id="wecomStart" title="开始日期">
           <input type="date" id="wecomEnd" title="结束日期">
           <input type="text" id="wecomMsgQ" placeholder="关键词搜索" style="width:160px" autocomplete="off">
+          <button type="button" class="mini" id="wecomAiBtn">AI 解读</button>
+          <button type="button" class="mini" id="wecomAiLogBtn">解读记录</button>
           <button type="button" class="mini" id="wecomSplitBtn">拆解任务</button>
           <button type="button" class="mini" id="wecomReload">刷新</button>
         </div>
       </div>
-      <div class="wecom-stream" id="wecomStream"><div class="wecom-empty">选择群后显示消息。解析服务未启动时无法读取本地企业微信库。</div></div>
+      <div class="wecom-stream" id="wecomStream"><div class="wecom-empty">选择会话后显示消息。解析服务未启动时无法读取本地企业微信库。</div></div>
       <div class="wecom-pager" id="wecomPager" hidden>
         <button type="button" class="ghost mini" id="wecomPrev">更早</button>
         <span id="wecomPageInfo">—</span>
         <button type="button" class="ghost mini" id="wecomNext">更晚</button>
       </div>
     </div>
+    <aside class="wecom-ai" id="wecomAiPanel" hidden>
+      <div class="wecom-ai-hd">
+        <div class="grow">
+          <div class="wecom-ai-title">AI 解读看板</div>
+          <div class="wecom-ai-sub" id="wecomAiSub">Gemini 读取当前日期窗内的会话</div>
+          <div class="wecom-ai-tabs">
+            <button type="button" class="wecom-ai-tab on" id="wecomAiTabRead" data-tab="read">本次解读</button>
+            <button type="button" class="wecom-ai-tab" id="wecomAiTabLog" data-tab="log">解读记录</button>
+          </div>
+        </div>
+        <button type="button" class="ghost mini" id="wecomAiClose" title="收起">收起</button>
+      </div>
+      <div class="wecom-ai-body" id="wecomAiBody">
+        <div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>
+      </div>
+    </aside>
   </div>
 </section>
 
@@ -290,7 +324,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </div>
 
 <script src="/public/session.js?v=py55"></script>
-<script src="/public/wecom-board.js?v=py2"></script>
+<script src="/public/wecom-board.js?v=py22"></script>
 <script src="/public/app.js?v=py66"></script>
 </body>
 </html>

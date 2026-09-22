@@ -8,6 +8,7 @@ sys.path.insert(0, ROOT)
 
 from app.config import _wecom_chat_block, resolve_watch_llm
 from app.llm import _strip_think
+from app.wecom_jev import judgment_prompt
 from app.wecom_watch_llm import parse_watch_json, rule_opinion_ids
 
 
@@ -52,6 +53,14 @@ def test_rule_skips_chatter():
     assert "护照" in hits[0]["text"]
 
 
+def test_judgment_prompt_keeps_chinese():
+    text = judgment_prompt([{"id": 2, "text": "请把护照号码改成 E123", "rule": "text", "sender": "审核"}])
+    assert "has_opinion" in text
+    assert "请把护照号码改成 E123" in text
+    got = parse_watch_json('{"hasOpinion":true,"opinions":[{"id":2,"confidence":"high"}],"pairReady":true,"reason":"改护照"}')
+    assert got["pairReady"] is True
+
+
 def test_resolve_needs_key():
     # 有本地 config 时只要函数可调用；缺密钥会抛错，有密钥则返回 profile
     try:
@@ -68,5 +77,6 @@ if __name__ == "__main__":
     test_parse_watch_json()
     test_strip_think()
     test_rule_skips_chatter()
+    test_judgment_prompt_keeps_chinese()
     test_resolve_needs_key()
     print("ok")

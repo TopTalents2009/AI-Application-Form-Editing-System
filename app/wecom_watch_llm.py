@@ -1,26 +1,11 @@
-"""值班模型：只从聊天窗口里识别修改意见。配申报书仍交给 Gemini。"""
+"""值班判断：Gemini 按 Jev 式固定题目识别修改意见。配申报书仍走原来的 Gemini 拆解。"""
 from __future__ import annotations
 import json
 from .config import LLM_TIMEOUT_CLASSIFY, resolve_watch_llm
 from .llm import LlmError, chat, extract_json_lenient
 from .wecom_cases import _CHATTER, _msg_kind, is_opinion_text
+from .wecom_jev import judgment_prompt
 from .wecom_split_llm import _allow_opinion, _as_int, _catalog
-
-_PROMPT = """你在阅读企业微信群消息，只判断有没有「修改申报书的意见」。
-
-修改意见：审核/辅导/批注意见文档，或聊天里具体要求改哪些字段、补哪些材料（如改护照、补学历、改工作经历时间、改单位名称）。
-不是修改意见：「收到」「好的」「谢谢」、合同/意向协议/承诺书、护照或学历扫描件本身、资料清单、闲聊。
-
-输入 messages：id 必须原样引用，禁止编造。rule 是规则初判（app=申报书，opinion=意见文档，text=意见文本，ignore=忽略）。
-
-只输出一个 JSON 对象，不要 Markdown：
-{"hasOpinion":true,"opinions":[{"id":3,"confidence":"high"}],"reason":"一句原因"}
-- opinions.id 对应输入 id
-- confidence 只能是 high / medium / low
-找不到则 {"hasOpinion":false,"opinions":[],"reason":""}
-
-消息列表：
-"""
 
 
 def rule_opinion_ids(messages: list) -> list:
@@ -62,6 +47,7 @@ def parse_watch_json(text: str) -> dict:
         "hasOpinion": has,
         "opinions": opinions,
         "reason": str(data.get("reason") or "").strip()[:200],
+        "pairReady": bool(data.get("pairReady") or data.get("pair_ready")),
     }
 
 
@@ -75,6 +61,8 @@ async def detect_opinions(messages: list) -> dict:
         "note": "",
         "error": "",
         "fallback": False,
+        "engine": "",
+        "pairReady": False,
     }
     if not cat:
         return empty
@@ -92,7 +80,7 @@ async def detect_opinions(messages: list) -> dict:
         return {**empty, "error": str(e)}
     try:
         resp = await chat(
-            [{"role": "user", "content": _PROMPT + json.dumps(slim, ensure_ascii=False)}],
+            [{"role": "user", "content": judgment_prompt(slim)}],
             json_mode=True,
             timeout_s=min(float(prof.get("timeoutSec") or 60), LLM_TIMEOUT_CLASSIFY),
             profile=prof,
@@ -110,6 +98,7 @@ async def detect_opinions(messages: list) -> dict:
                 "note": str(e)[:160],
                 "error": "",
                 "fallback": True,
+                "engine": "rules",
             }
         return {**empty, "error": "值班模型失败：" + str(e)[:160]}
 
@@ -128,11 +117,13 @@ async def detect_opinions(messages: list) -> dict:
         "note": "",
         "error": "",
         "fallback": False,
+        "engine": "gemini",
+        "pairReady": bool(parsed.get("pairReady")),
     }
 
 
 async def probe_watch() -> dict:
-    """发一条极短 JSON chat，检测硅基流动值班模型。"""
+    """发一条极短 JSON，检测值班用的 Gemini。"""
     import time
     t0 = time.monotonic()
     try:

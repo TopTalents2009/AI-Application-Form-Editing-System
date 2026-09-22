@@ -6,7 +6,7 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.default.json"
 FILL_MARK = "填入"
-APP_VERSION = "2.7"
+APP_VERSION = "2.7.1"
 
 LLM_TEMPERATURE = 0.1
 LLM_RETRIES = 4
@@ -248,17 +248,25 @@ def _wecom_chat_block(c: dict) -> dict:
             s = str(x or "").strip()
             if s and FILL_MARK not in s and s not in groups:
                 groups.append(s)
+    data_root = str(raw.get("dataRoot") or raw.get("syncedRoot") or "").strip()
+    if FILL_MARK in data_root:
+        data_root = ""
+    read_mode = str(raw.get("readMode") or "auto").strip().lower()
+    if read_mode not in ("auto", "local", "http"):
+        read_mode = "auto"
     return {
         "baseUrl": base,
         "apiKey": key,
         "groups": groups,
+        "dataRoot": data_root,
+        "readMode": read_mode,
         "configured": bool(key),
         "watch": _wecom_watch_block(raw),
     }
 
 
 def _wecom_watch_block(raw: dict) -> dict:
-    """聊天值班：硅基流动小模型认意见，Gemini 再配申报书。"""
+    """聊天值班调度。认意见走现有 Gemini，这里只保留开关和间隔。"""
     w = raw.get("watch") if isinstance(raw.get("watch"), dict) else {}
     mode = str(w.get("mode") or "").strip().lower()
     if mode not in ("auto", "review", "off"):
@@ -287,6 +295,7 @@ def _wecom_watch_block(raw: dict) -> dict:
         "windowHours": window,
         "opinionWaitMin": wait_min,
         "allowNoOpinion": _as_bool(w.get("allowNoOpinion"), False),
+        "skipDismissed": _as_bool(w.get("skipDismissed"), True),
         "owner": owner,
         "baseUrl": llm_api_base(base),
         "apiKey": key,
@@ -297,26 +306,18 @@ def _wecom_watch_block(raw: dict) -> dict:
 
 
 def resolve_watch_llm() -> dict:
-    """值班识别模型（与 Gemini 计划模型分开）。"""
+    """值班判断使用现有 Gemini，题目是固定的是非/选择，不另配模型密钥。"""
+    try:
+        prof = dict(resolve_gemini())
+    except ValueError as e:
+        raise ValueError("未配置值班模型：" + str(e)) from e
     watch = ((load_config().get("wecomChat") or {}).get("watch")) or {}
-    key = _usable_secret(watch.get("apiKey"))
-    model = str(watch.get("model") or WATCH_MODEL_DEFAULT).strip() or WATCH_MODEL_DEFAULT
-    base = llm_api_base(str(watch.get("baseUrl") or SILICONFLOW_BASE))
-    if not key or not model:
-        raise ValueError("未配置值班模型：请在管理后台填写硅基流动 API Key")
-    return {
-        "id": model,
-        "model": model,
-        "label": "值班识别",
-        "baseUrl": base,
-        "apiKey": key,
-        "stream": False,
-        "timeoutSec": max(15, min(_as_int(watch.get("timeoutSec"), 60) or 60, 180)),
-        "temperature": LLM_TEMPERATURE,
-        "apiFormat": "openai",
-        "enableThinking": False,
-        "ready": True,
-    }
+    prof["label"] = "值班判断"
+    prof["stream"] = False
+    prof["enableThinking"] = False
+    prof["temperature"] = LLM_TEMPERATURE
+    prof["timeoutSec"] = max(15, min(_as_int(watch.get("timeoutSec"), 60) or 60, 180))
+    return prof
 
 
 def _portal_block(c: dict) -> dict:
@@ -861,6 +862,12 @@ def _merge_wecom_chat(raw: dict, wecom: dict):
         blob["groups"] = groups
     if isinstance(wecom.get("watch"), dict):
         _merge_wecom_watch(blob, wecom.get("watch") or {})
+    if "dataRoot" in wecom:
+        root = str(wecom.get("dataRoot") or "").strip()
+        if root:
+            blob["dataRoot"] = root
+    if wecom.get("readMode") in ("auto", "local", "http"):
+        blob["readMode"] = wecom.get("readMode")
     if blob:
         raw["wecomChat"] = blob
 
@@ -882,6 +889,8 @@ def _merge_wecom_watch(blob: dict, watch: dict):
         cur["opinionWaitMin"] = max(0, min(_as_int(watch.get("opinionWaitMin"), 60), 24 * 60))
     if "allowNoOpinion" in watch:
         cur["allowNoOpinion"] = _as_bool(watch.get("allowNoOpinion"), False)
+    if "skipDismissed" in watch:
+        cur["skipDismissed"] = _as_bool(watch.get("skipDismissed"), True)
     if "owner" in watch:
         cur["owner"] = str(watch.get("owner") or "").strip()
     if watch.get("baseUrl") is not None:
@@ -1050,7 +1059,7 @@ def editor_config() -> dict:
             "hasKey": bool(cfg.get("wecomChatApiKey")),
             "groups": list(cfg.get("wecomChatGroups") or []),
             "configured": bool(cfg.get("wecomChatConfigured")),
-            "watch": _pack_wecom_watch(((cfg.get("wecomChat") or {}).get("watch")) or {}),
+            "watch": _pack_watch_for_editor(((cfg.get("wecomChat") or {}).get("watch")) or {}, gemini),
         },
         "classifyModel": (cfg.get("model") if model_family(cfg.get("model") or "") == "gemini" else "") or gemini["id"],
         "hasDefault": DEFAULT_CONFIG_PATH.exists(),
@@ -1068,13 +1077,26 @@ def _pack_wecom_watch(w: dict) -> dict:
         "windowHours": int(w.get("windowHours") or 48),
         "opinionWaitMin": int(w.get("opinionWaitMin") or 60),
         "allowNoOpinion": bool(w.get("allowNoOpinion")),
+        "skipDismissed": bool(w.get("skipDismissed", True)),
         "owner": str(w.get("owner") or ""),
         "baseUrl": str(w.get("baseUrl") or SILICONFLOW_BASE),
         "model": str(w.get("model") or WATCH_MODEL_DEFAULT),
         "timeoutSec": int(w.get("timeoutSec") or 60),
         "hasKey": bool(w.get("apiKey")),
         "configured": bool(w.get("configured")),
+        "engine": "gemini",
     }
+
+
+def _pack_watch_for_editor(w: dict, gemini: dict) -> dict:
+    """后台展示：判断模型就是出计划的 Gemini，不要求另一把密钥。"""
+    packed = _pack_wecom_watch(w)
+    ready = bool((gemini or {}).get("ready"))
+    packed["model"] = str((gemini or {}).get("id") or "")
+    packed["hasKey"] = ready
+    packed["configured"] = ready
+    packed["engine"] = "gemini"
+    return packed
 
 
 def frontend_config() -> dict:

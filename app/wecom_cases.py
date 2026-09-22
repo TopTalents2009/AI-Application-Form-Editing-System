@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import datetime, timedelta
-from .pdf_app import ALLOWED_APP_EXT, ext_of
+from .pdf_app import ALLOWED_APP_EXT, WORD_APP_EXT, ext_of
 from .opinion_extract import ALLOWED_OPINION_EXT
 from . import matcher as M
 from .wecom_locate import extract_keys, locate_tasks, parse_time
@@ -19,7 +19,15 @@ _NOT_FORM = re.compile(
     r"推荐信|简历|护照|学历|身份证|户口|证件照|营业执照|"
     r"供应统计|引进名单|汇总表|摸排表|走访表|人才统计",
 )
-_OPINION_DOC = {".docx", ".docm", ".wps", ".xlsx", ".xlsm", ".xls", ".csv", ".txt", ".md"}
+_COMPANY_APP = re.compile(r"有限责任公司|股份有限公司|有限公司|股份公司")
+_ROLE_CUE_APP = re.compile(r"^(新)?申报书$")
+_ROLE_CUE_OPINION = re.compile(r"^修改意见$")
+_FILE_IN_TEXT = re.compile(
+    r"([^\s\\/:*?\"<>|\r\n]{1,160}\.(?:"
+    + "|".join(sorted({e.lstrip(".") for e in (ALLOWED_APP_EXT | ALLOWED_OPINION_EXT)}, key=len, reverse=True))
+    + r"))",
+    re.I,
+)
 _OPINION_TEXT = re.compile(
     r"请改|请把|请补|请核|缺[少了]|补充|修改|护照|学历|论文|工作计划|"
     r"附件|对照|申报书|人才编号|单位名称|英文名|按意见|按审核",
@@ -38,8 +46,25 @@ def strip_cache_prefix(name: str, message_id=None) -> str:
     return n
 
 
+def _text_filename(m: dict) -> str:
+    """附件名字段为空时，从短消息正文里收回文件名（如 某某.wps）。"""
+    text = str((m or {}).get("text") or (m or {}).get("snippet") or "")
+    hits = _FILE_IN_TEXT.findall(text)
+    if not hits:
+        return ""
+    name = str(hits[-1] or "").strip("[]【】\"'“”")
+    if not name:
+        return ""
+    if (m or {}).get("has_attachment") or len(text.strip()) <= 120:
+        return name
+    return ""
+
+
 def _fname(m: dict) -> str:
-    return str((m or {}).get("attachment_name") or (m or {}).get("filename") or "").strip()
+    named = str((m or {}).get("attachment_name") or (m or {}).get("filename") or "").strip()
+    if named:
+        return named
+    return _text_filename(m)
 
 
 def _names_of(m: dict) -> list:
@@ -53,6 +78,9 @@ def _names_of(m: dict) -> list:
         if n and n.lower() not in seen:
             seen.add(n.lower())
             out.append(n)
+    extra = _text_filename(m)
+    if extra and extra.lower() not in seen:
+        out.append(extra)
     return out
 
 
@@ -64,12 +92,11 @@ def _is_not_form(name: str) -> bool:
 
 
 def _has_file(m: dict) -> bool:
-    if not isinstance(m, dict):
+    if not isinstance(m, dict) or not _fname(m):
         return False
-    if m.get("has_attachment") and _fname(m):
+    if m.get("has_attachment") or _text_filename(m):
         return True
-    copies = m.get("copies") if isinstance(m.get("copies"), list) else []
-    return bool(_fname(m) and copies)
+    return bool(_copies(m))
 
 
 def _copies(m: dict) -> list:
@@ -130,6 +157,27 @@ def _tail_person(name: str) -> str:
     return ""
 
 
+def _company_app(name: str) -> bool:
+    """编号或单位名的申报书，文件名不必出现「申报书」。如 2ZG-55016-扬州栩脉智慧科技有限公司.docx。"""
+    n = str(name or "").strip()
+    ext = ext_of(n)
+    if ext not in (WORD_APP_EXT | {".pdf"}):
+        return False
+    if _DONE_NAME.search(n) or _OPINION_NAME.search(n) or _is_not_form(n):
+        return False
+    return bool(_COMPANY_APP.search(n))
+
+
+def _role_cue(text: str) -> str:
+    """紧挨着文件发出的短提示：申报书 / 修改意见。"""
+    s = re.sub(r"\s+", "", str(text or ""))
+    if _ROLE_CUE_APP.match(s):
+        return "app"
+    if _ROLE_CUE_OPINION.match(s):
+        return "opinion"
+    return ""
+
+
 def _company_person_form(name: str) -> bool:
     """地区+企业+人名 的申报书导出 PDF，如 宁波+某某有限公司+杜垚.pdf。"""
     n = str(name or "").strip()
@@ -152,18 +200,10 @@ def _classify_one(name: str) -> str:
         return "ignore"
     if _APP_NAME.search(n) and ext in ALLOWED_APP_EXT:
         return "app"
-    if _company_person_form(n):
-        return "app"
-    if _person_app_stem(n):
-        return "app"
-    if _OPINION_NAME.search(n):
-        if ext in ALLOWED_OPINION_EXT or ext in ALLOWED_APP_EXT:
-            return "opinion"
-        return "ignore"
-    if ext == ".pdf":
-        return "ignore"
-    if ext in _OPINION_DOC:
+    if _OPINION_NAME.search(n) and ext in (ALLOWED_OPINION_EXT | ALLOWED_APP_EXT):
         return "opinion"
+    if _company_app(n) or _company_person_form(n) or _person_app_stem(n):
+        return "app"
     return "ignore"
 
 
@@ -380,6 +420,7 @@ def cluster_messages(messages: list, *, session_id: str = "", session_name: str 
     current = None
     pending: list[tuple[datetime, dict]] = []
     shared: list[tuple[datetime, dict]] = []
+    lead: tuple[datetime, str] | None = None
 
     def in_window(a: datetime, b: datetime) -> bool:
         if a is datetime.min or b is datetime.min:
@@ -426,6 +467,18 @@ def cluster_messages(messages: list, *, session_id: str = "", session_name: str 
         kind = kind_of(m) if callable(kind_of) else _msg_kind(m)
         if kind not in ("app", "opinion", "text", "ignore", "other"):
             kind = _msg_kind(m)
+        cue = _role_cue(m.get("text") or m.get("snippet") or "")
+        if cue and kind in ("other", "ignore", "text") and not _has_file(m):
+            lead = (dt, cue)
+            continue
+        if lead and kind in ("app", "opinion", "ignore", "other") and _has_file(m):
+            ldt, role = lead
+            lead = None
+            if in_window(ldt, dt) and abs((dt - ldt).total_seconds()) <= 20 * 60:
+                if role == "app" and kind != "opinion":
+                    kind = "app"
+                elif role == "opinion" and kind != "app":
+                    kind = "opinion"
         if kind == "app":
             case = new_case(dt, m)
             attach_pending(case, dt)

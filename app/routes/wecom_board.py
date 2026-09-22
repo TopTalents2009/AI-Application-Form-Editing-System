@@ -1,4 +1,5 @@
 """各群记录看板：只读企业微信解析服务。登录用户可用（主界面下滑可见）。"""
+import time
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from urllib.parse import quote
@@ -11,6 +12,13 @@ def _user(request: Request) -> dict:
     u = getattr(request.state, "user", None)
     if not u:
         raise HTTPException(401, "未登录")
+    return u
+
+
+def _admin(request: Request) -> dict:
+    u = _user(request)
+    if u.get("role") != "admin":
+        raise HTTPException(403, "仅管理员可操作")
     return u
 
 
@@ -36,20 +44,94 @@ async def api_watch_status(request: Request):
     return public_status()
 
 
+@router.post("/api/wecom/watch-pending")
+async def api_watch_pending(body: dict, request: Request):
+    u = _user(request)
+    from ..wecom_watch import dismiss_pending, submit_pending
+    body = body if isinstance(body, dict) else {}
+    action = str(body.get("action") or "").strip().lower()
+    case_id = str(body.get("caseId") or "").strip()
+    if action == "skip":
+        got = dismiss_pending(case_id)
+        if not got.get("ok"):
+            raise HTTPException(400, got.get("detail") or "无法移出待审")
+        return got
+    if action == "upload":
+        got = await submit_pending(case_id, owner=str(u.get("username") or ""))
+        if not got.get("ok"):
+            raise HTTPException(400, got.get("detail") or "上传失败")
+        return got
+    raise HTTPException(400, "action 须为 upload 或 skip")
+
+
+_user_scan_until = 0.0
+_USER_SCAN_COOLDOWN = 60.0
+
+
 @router.post("/api/wecom/watch-run")
 async def api_watch_run(request: Request):
-    _user(request)
+    global _user_scan_until
+    u = _user(request)
+    if u.get("role") != "admin":
+        now = time.time()
+        left = _user_scan_until - now
+        if left > 0:
+            sec = max(1, int(left + 0.999))
+            return JSONResponse(
+                {"ok": False, "detail": "请 " + str(sec) + " 秒后再扫描", "retryAfter": sec},
+                status_code=429,
+            )
+        _user_scan_until = now + _USER_SCAN_COOLDOWN
     from ..wecom_watch import scan_once
     return await scan_once(force=True)
 
 
 @router.post("/api/wecom/watch-probe")
 async def api_watch_probe(request: Request):
-    u = _user(request)
-    if u.get("role") != "admin":
-        raise HTTPException(403, "仅管理员可检测值班模型")
+    _admin(request)
     from ..wecom_watch_llm import probe_watch
     return await probe_watch()
+
+
+@router.get("/api/wecom/watch-config")
+async def api_watch_config_get(request: Request):
+    _admin(request)
+    from ..config import editor_config
+    from ..wecom_watch import public_status
+    ed = (editor_config().get("edit") or {}).get("wecomChat") or {}
+    return {"ok": True, "config": ed.get("watch") or {}, "status": public_status()}
+
+
+@router.post("/api/wecom/watch-config")
+async def api_watch_config_save(body: dict, request: Request):
+    _admin(request)
+    from ..config import save_config
+    body = body if isinstance(body, dict) else {}
+    watch = body.get("watch") if isinstance(body.get("watch"), dict) else body
+    try:
+        got = save_config({"wecomChat": {"watch": watch}})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    ed = (got.get("edit") or {}).get("wecomChat") or {}
+    from ..wecom_watch import public_status
+    return {"ok": True, "config": ed.get("watch") or {}, "status": public_status()}
+
+
+@router.get("/api/wecom/watch-logs")
+async def api_watch_logs(request: Request, limit: int = Query(40)):
+    _user(request)
+    from ..wecom_watch_store import list_scan_runs
+    return list_scan_runs(limit=limit)
+
+
+@router.get("/api/wecom/watch-logs/{record_id}")
+async def api_watch_log_one(record_id: str, request: Request):
+    _user(request)
+    from ..wecom_watch_store import get_scan_run
+    row = get_scan_run(record_id)
+    if not row:
+        raise HTTPException(404, "扫描记录不存在")
+    return row
 
 
 @router.get("/api/wecom/sources")
@@ -68,15 +150,57 @@ async def api_groups(
     q: str = Query(""),
     source_id: str = Query(""),
     limit: int = Query(400),
+    watch_only: bool = Query(False),
 ):
     _user(request)
     k = str(kind or "group").strip().lower()
     if k not in ("group", "all"):
         k = "group"
     try:
-        return await W.list_merged_groups(kind=k, q=q, source_id=source_id, limit=limit)
+        data = await W.list_merged_groups(
+            kind=k, q=q, source_id=source_id, limit=limit, watch_only=watch_only,
+        )
+        from ..wecom_groups import list_watch_groups
+        data["watchGroups"] = list_watch_groups()
+        return data
     except W.WecomError as e:
         raise _http(e)
+
+
+@router.get("/api/wecom/watch-groups")
+async def api_watch_groups(request: Request):
+    _user(request)
+    from ..wecom_groups import list_watch_groups
+    groups = list_watch_groups()
+    return {
+        "ok": True,
+        "groups": groups,
+        "count": len(groups),
+        "canEdit": True,
+    }
+
+
+@router.post("/api/wecom/watch-groups/toggle")
+async def api_watch_groups_toggle(body: dict, request: Request):
+    _user(request)
+    from ..wecom_groups import toggle_watch_group
+    body = body if isinstance(body, dict) else {}
+    name = str(body.get("display_name") or body.get("session_name") or "").strip()
+    sid = str(body.get("session_id") or body.get("username") or "").strip()
+    if "watch" not in body:
+        raise HTTPException(400, "缺少 watch 参数")
+    try:
+        got = toggle_watch_group(name, sid, watch=bool(body.get("watch")))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "ok": True,
+        "watch": bool(body.get("watch")),
+        "display_name": name,
+        "session_id": sid,
+        "groups": got.get("groups") or [],
+        "count": got.get("count") or 0,
+    }
 
 
 @router.get("/api/wecom/groups/{session_id:path}/messages")
@@ -89,13 +213,14 @@ async def api_group_messages(
     offset: int = Query(0),
     limit: int = Query(80),
     tail: bool = Query(False),
+    from_end: int = Query(0),
 ):
     _user(request)
     try:
         return await W.list_merged_messages(
             session_id, source_id=source_id,
             start_date=start_date, end_date=end_date,
-            offset=offset, limit=limit, tail=tail,
+            offset=offset, limit=limit, tail=tail, from_end=from_end,
         )
     except W.WecomError as e:
         raise _http(e)
@@ -223,6 +348,61 @@ async def api_file(source_id: str, message_id: int, request: Request, session_id
         media_type=str(got.get("content_type") or "application/octet-stream"),
         headers=headers,
     )
+
+
+@router.post("/api/wecom/ai-read")
+async def api_ai_read(body: dict, request: Request):
+    u = _user(request)
+    from ..main import runner
+    from ..wecom_ai_read import ai_read_chat
+    from ..wecom_ai_store import save_ai_read
+    body = body if isinstance(body, dict) else {}
+    scope = str(body.get("scope") or "").strip().lower()
+    sid = str(body.get("session_id") or "").strip()
+    if not scope:
+        scope = "session" if sid else "watch"
+    if scope != "watch" and not sid:
+        raise HTTPException(400, "缺少 session_id")
+    try:
+        got = await ai_read_chat(
+            session_id=sid,
+            session_name=str(body.get("session_name") or ""),
+            source_id=str(body.get("source_id") or ""),
+            start_date=str(body.get("start_date") or ""),
+            end_date=str(body.get("end_date") or ""),
+            window_hours=int(body.get("windowHours") or 48),
+            runner=runner,
+            scope=scope,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except W.WecomError as e:
+        raise _http(e)
+    meta = save_ai_read(got, user=str(u.get("username") or u.get("realName") or ""))
+    got["recordId"] = meta.get("id") or ""
+    got["recordAt"] = meta.get("at") or ""
+    return got
+
+
+@router.get("/api/wecom/ai-reads")
+async def api_ai_reads(
+    request: Request,
+    session_id: str = Query(""),
+    limit: int = Query(40),
+):
+    _user(request)
+    from ..wecom_ai_store import list_ai_reads
+    return list_ai_reads(session_id=session_id, limit=limit)
+
+
+@router.get("/api/wecom/ai-reads/{record_id}")
+async def api_ai_read_one(record_id: str, request: Request):
+    _user(request)
+    from ..wecom_ai_store import get_ai_read
+    row = get_ai_read(record_id)
+    if not row:
+        raise HTTPException(404, "解读记录不存在")
+    return row
 
 
 @router.post("/api/wecom/locate-task")

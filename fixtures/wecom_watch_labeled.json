@@ -1,0 +1,185 @@
+[
+  {
+    "id": "c01",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 10:01", "sender": "经办", "filename": "", "text": "收到", "rule": "other"},
+      {"id": 2, "time": "2026-09-20 10:02", "sender": "经办", "filename": "", "text": "好的", "rule": "other"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c02",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 11:00", "sender": "审核", "filename": "", "text": "请把护照号码改成 E12345678，工作经历起止时间按证明更正。", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "high"}
+  },
+  {
+    "id": "c03",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 11:05", "sender": "审核", "filename": "张三_申报书.docx", "text": "", "rule": "app"},
+      {"id": 2, "time": "2026-09-20 11:06", "sender": "审核", "filename": "", "text": "单位名称写错，请改成常州启赋安泰复合材料科技有限公司。", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [2], "pairReady": true, "confidence": "high"}
+  },
+  {
+    "id": "c04",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 12:00", "sender": "企业", "filename": "李四护照扫描件.pdf", "text": "", "rule": "ignore"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c05",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 12:10", "sender": "企业", "filename": "王五_人才引进意向协议书.pdf", "text": "", "rule": "ignore"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c06",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 13:00", "sender": "审核", "filename": "审核意见_王五.docx", "text": "", "rule": "opinion"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "high"}
+  },
+  {
+    "id": "c07",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 14:00", "sender": "经办", "filename": "赵六_申报书.xlsx", "text": "", "rule": "app"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c08",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 14:05", "sender": "经办", "filename": "赵六_申报书.xlsx", "text": "", "rule": "app"},
+      {"id": 2, "time": "2026-09-20 14:06", "sender": "审核", "filename": "赵六_修改意见.xlsx", "text": "", "rule": "opinion"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [2], "pairReady": true, "confidence": "high"}
+  },
+  {
+    "id": "c09",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 15:00", "sender": "同事", "filename": "", "text": "今天天气不错", "rule": "other"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c10",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 15:10", "sender": "审核", "filename": "", "text": "缺学历证明，请补学位证扫描件。", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "high"}
+  },
+  {
+    "id": "c11",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 16:00", "sender": "企业", "filename": "资料清单.docx", "text": "", "rule": "ignore"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c12",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 16:05", "sender": "审核", "filename": "", "text": "工作经历请按职务职责改写，时间写到年月。", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "medium"}
+  },
+  {
+    "id": "c13",
+    "messages": [
+      {"id": 1, "time": "2026-09-20 17:00", "sender": "经办", "filename": "", "text": "谢谢", "rule": "other"},
+      {"id": 2, "time": "2026-09-20 17:01", "sender": "经办", "filename": "", "text": "辛苦了", "rule": "other"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c14",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 09:00", "sender": "审核", "filename": "陈七_申报书+附件.pdf", "text": "", "rule": "app"},
+      {"id": 2, "time": "2026-09-21 09:01", "sender": "审核", "filename": "", "text": "封面申报单位与营业执照不一致，请统一。", "rule": "text"},
+      {"id": 3, "time": "2026-09-21 09:02", "sender": "企业", "filename": "", "text": "收到，今天改。", "rule": "other"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [2], "pairReady": true, "confidence": "high"}
+  },
+  {
+    "id": "c15",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 10:00", "sender": "审核", "filename": "", "text": "论文需附全文 PDF。", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "high"}
+  },
+  {
+    "id": "c16",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 10:30", "sender": "企业", "filename": "学历证书.jpg", "text": "", "rule": "ignore"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c17",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 11:00", "sender": "审核", "filename": "", "text": "电子签未上传，请补。", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "high"}
+  },
+  {
+    "id": "c18",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 11:30", "sender": "审核", "filename": "批注意见.txt", "text": "", "rule": "opinion"},
+      {"id": 2, "time": "2026-09-21 11:31", "sender": "审核", "filename": "周八_申请表.docx", "text": "", "rule": "app"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": true, "confidence": "high"}
+  },
+  {
+    "id": "c19",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 12:00", "sender": "经办", "filename": "", "text": "下午开会", "rule": "other"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c20",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 13:00", "sender": "审核", "filename": "", "text": "工作证明上的离职日期与表格不一致，请更正证明扫描件时间。", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "high"}
+  },
+  {
+    "id": "c21",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 14:00", "sender": "审核", "filename": "", "text": "改一下", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "low"}
+  },
+  {
+    "id": "c22",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 14:30", "sender": "企业", "filename": "唯一申报承诺.docx", "text": "", "rule": "ignore"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c23",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 15:00", "sender": "审核", "filename": "对各区审核反馈汇总.xlsx", "text": "", "rule": "opinion"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "high"}
+  },
+  {
+    "id": "c24",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 15:30", "sender": "审核", "filename": "吴九_申报书.docx", "text": "", "rule": "app"},
+      {"id": 2, "time": "2026-09-21 15:31", "sender": "企业", "filename": "", "text": "已发", "rule": "other"}
+    ],
+    "expect": {"hasOpinion": false, "opinionIds": [], "pairReady": false}
+  },
+  {
+    "id": "c25",
+    "messages": [
+      {"id": 1, "time": "2026-09-21 16:00", "sender": "审核", "filename": "", "text": "证件照不清晰，请更换扫描件；护照页也要更新。", "rule": "text"}
+    ],
+    "expect": {"hasOpinion": true, "opinionIds": [1], "pairReady": false, "confidence": "high"}
+  }
+]

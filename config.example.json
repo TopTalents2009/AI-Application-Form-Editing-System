@@ -88,6 +88,8 @@
   "wecomChat": {
     "baseUrl": "http://127.0.0.1:8767",
     "apiKey": "填入",
+    "readMode": "auto",
+    "dataRoot": "",
     "groups": [],
     "watch": {
       "enabled": true,
@@ -96,10 +98,8 @@
       "windowHours": 48,
       "opinionWaitMin": 60,
       "allowNoOpinion": false,
+      "skipDismissed": true,
       "owner": "",
-      "baseUrl": "https://api.siliconflow.cn/v1",
-      "apiKey": "填入",
-      "model": "Qwen/Qwen3.5-4B",
       "timeoutSec": 60
     }
   },

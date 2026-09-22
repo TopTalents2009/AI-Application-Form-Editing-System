@@ -10,7 +10,6 @@ from .wecom_cases import (
     _CHATTER,
     _DONE_NAME,
     _NOT_FORM,
-    _OPINION_DOC,
     _OPINION_NAME,
     _attach,
     _file_ref,
@@ -44,8 +43,11 @@ rule 是规则初判：app=申报书，opinion=意见文档，text=意见文本�
 """
 
 
-def _catalog(messages: list) -> list:
+def _catalog(messages: list, *, max_files: int = 80, max_texts: int = 80) -> list:
     files, texts = [], []
+    cap_f = max(20, int(max_files or 80))
+    cap_t = max(20, int(max_texts or 80))
+    cap_all = cap_f + cap_t
     for i, m in enumerate(messages or []):
         if not isinstance(m, dict):
             continue
@@ -56,9 +58,9 @@ def _catalog(messages: list) -> list:
             continue
         if text and len(text) >= 8 and not _CHATTER.match(text):
             texts.append((i, m, fn, text))
-    picked = files[:80] + texts[:80]
+    picked = files[:cap_f] + texts[:cap_t]
     out = []
-    for n, (_i, m, fn, text) in enumerate(picked[:140], 1):
+    for n, (_i, m, fn, text) in enumerate(picked[:cap_all], 1):
         out.append({
             "id": n,
             "m": m,
@@ -87,7 +89,7 @@ def _allow_opinion(m: dict) -> bool:
     if _APP_NAME.search(n):
         return False
     ext = ext_of(n)
-    return ext in ALLOWED_OPINION_EXT or ext in ALLOWED_APP_EXT or ext in _OPINION_DOC
+    return ext in ALLOWED_OPINION_EXT or ext in ALLOWED_APP_EXT
 
 
 def _allow_ignore_app(m: dict) -> bool:
@@ -108,9 +110,11 @@ async def assist_split_with_gemini(
     session_id: str = "",
     session_name: str = "",
     window_hours: int = 48,
+    max_files: int = 80,
+    max_texts: int = 80,
 ) -> tuple[list, str]:
     """规则拆解之后调用 Gemini 纠偏。失败则原样返回 cases。"""
-    cat = _catalog(messages)
+    cat = _catalog(messages, max_files=max_files, max_texts=max_texts)
     if not cat:
         return cases, ""
     try:

@@ -97,6 +97,40 @@ def test_existing_task_stays_ready_for_reupload():
     assert any("重新上传" in w for w in cases[0]["warnings"])
 
 
+def test_company_docx_without_shenbaoshu_word_is_app():
+    assert classify_file("2ZG-55016-扬州栩脉智慧科技有限公司.docx") == "app"
+    assert classify_file("31009-QM-江门市安诺特炊具制造有限公司.wps") == "app"
+    assert classify_file("仪征枣林湾修改意见总结.wps") == "opinion"
+    assert classify_file("雨花对接-修改意见.docx") == "opinion"
+
+
+def test_cue_pairs_company_app_with_wps_opinion():
+    msgs = [
+        {"message_id": 1, "text": "新申报书", "time_text": "2026-09-22 15:24", "sender": "吴贤腾"},
+        {
+            "message_id": 2,
+            "attachment_name": "2ZG-55016-扬州栩脉智慧科技有限公司.docx",
+            "has_attachment": True,
+            "time_text": "2026-09-22 15:24",
+            "sender": "吴贤腾",
+            "copies": [{"source_id": "pc", "message_id": 2}],
+        },
+        {"message_id": 3, "text": "修改意见", "time_text": "2026-09-22 15:24", "sender": "吴贤腾"},
+        {
+            "message_id": 4,
+            "text": "仪征枣林湾修改意见总结.wps\ndoc",
+            "time_text": "2026-09-22 15:24",
+            "sender": "吴贤腾",
+            "copies": [{"source_id": "pc", "message_id": 4}],
+        },
+    ]
+    cases = cluster_messages(msgs, session_id="S:1", session_name="申报一组唐文秀")
+    assert len(cases) == 1, [c["app"]["filename"] for c in cases]
+    assert cases[0]["app"]["filename"].endswith("有限公司.docx")
+    names = [o.get("filename") for o in cases[0]["opinions"]]
+    assert any(str(n).endswith(".wps") for n in names), names
+
+
 def test_exported_form_pdf_and_not_stamp():
     assert classify_file("宁波+宁波一彬电子科技股份有限公司+杜垚.pdf") == "app"
     assert classify_file("宁波市慈溪市-杜垚-青年人才.pdf") == "app"
@@ -121,6 +155,8 @@ if __name__ == "__main__":
     test_upload_rejects_intent_cached_as_person_pdf()
     test_cluster_person_pdf_warns_and_intent_name_ignored()
     test_existing_task_stays_ready_for_reupload()
+    test_company_docx_without_shenbaoshu_word_is_app()
+    test_cue_pairs_company_app_with_wps_opinion()
     test_exported_form_pdf_and_not_stamp()
     test_two_char_name_locate()
     print("ALL OK")

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py65">
+<link rel="stylesheet" href="/public/style.css?v=py71">
 <style>
 :root{ --nav-w:216px; }
 *{box-sizing:border-box}
@@ -239,27 +239,69 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 
 /* ===== 各群记录看板 ===== */
 .wecom-status{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-bottom:14px;font-size:13px}
-.wecom-board{display:grid;grid-template-columns:280px 1fr;gap:0;min-height:560px;border:1px solid #e6ebf4;border-radius:14px;overflow:hidden;background:#fff}
-.wecom-side{border-right:1px solid #e6ebf4;display:flex;flex-direction:column;min-width:0;background:#f7f9fc}
+.wecom-board{display:grid;grid-template-columns:280px 1fr;gap:0;align-items:start;border:1px solid #e6ebf4;border-radius:14px;overflow:hidden;background:#fff}
+.wecom-board.has-ai{grid-template-columns:280px minmax(0,1fr) minmax(260px,300px)}
+.wecom-ai{border-left:1px solid #e6ebf4;background:#f7f9fc;display:flex;flex-direction:column;min-width:0;max-height:560px}
+.wecom-ai[hidden]{display:none !important}
+.wecom-ai-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid #e6ebf4;background:#fff}
+.wecom-ai-hd .grow{flex:1;min-width:0}
+.wecom-ai-title{font-size:14px;font-weight:700;color:var(--ink)}
+.wecom-ai-sub{font-size:11.5px;color:#8a93a6;margin-top:2px;line-height:1.5}
+.wecom-ai-tabs{display:flex;gap:6px;margin-top:8px}
+.wecom-ai-tab{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:3px 10px;font-size:11.5px;cursor:pointer;color:#5b6577;font-family:inherit}
+.wecom-ai-tab.on{background:#2450a4;border-color:#2450a4;color:#fff}
+.wecom-ai-log-item{width:100%;text-align:left;border:1px solid #e6ebf4;background:#fff;border-radius:10px;padding:8px 10px;margin-bottom:8px;cursor:pointer;font:inherit}
+.wecom-ai-log-item:hover{border-color:#b7c9ea;background:#f7faff}
+.wecom-ai-log-item .ttl{font-size:12.5px;font-weight:700;color:var(--ink)}
+.wecom-ai-log-item .meta{font-size:11px;color:#8a93a6;margin-top:4px;line-height:1.5}
+.wecom-ai-log-item .snip{font-size:12px;color:#46506a;margin-top:6px;line-height:1.55}
+.wecom-ai-body{flex:1;overflow:auto;padding:12px 14px;font-size:13px;line-height:1.65;color:#46506a}
+.wecom-ai-card{background:#fff;border:1px solid #e6ebf4;border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.wecom-ai-card h5{margin:0 0 6px;font-size:12.5px;color:#2450a4}
+.wecom-ai-card p{margin:0}
+.wecom-ai-list{margin:0;padding-left:18px}
+.wecom-ai-list li{margin:4px 0}
+.wecom-ai-stat{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.wecom-ai-tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#eef2f8;color:#5b6577}
+.wecom-ai-tag.ok{background:#e5f7ee;color:var(--ok)}
+.wecom-ai-tag.warn{background:#fff6e5;color:var(--warn)}
+.wecom-ai-tag.bad{background:#fdecee;color:var(--bad)}
+.wecom-ai-case{font-size:12.5px;padding:8px 0;border-bottom:1px dashed #e6ebf4}
+.wecom-ai-case:last-child{border-bottom:none}
+.wecom-side{border-right:1px solid #e6ebf4;display:flex;flex-direction:column;min-width:0;height:640px;max-height:640px;overflow:hidden;background:#f7f9fc}
 .wecom-side-hd,.wecom-chat-hd{padding:12px 14px;border-bottom:1px solid #e6ebf4;background:#fff}
-.wecom-side-hd input,.wecom-chat-hd input[type="text"],.wecom-chat-hd input[type="date"]{
+.wecom-side-hd input[type="search"],.wecom-chat-hd input[type="text"],.wecom-chat-hd input[type="date"]{
   width:100%;border:1px solid #e1e6ef;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;background:#fff
 }
 .wecom-src{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 .wecom-chip{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;color:#46506a}
 .wecom-chip.on{background:#2450a4;border-color:#2450a4;color:#fff}
-.wecom-list{flex:1;overflow:auto;max-height:520px}
-.wecom-item{display:block;width:100%;text-align:left;border:none;background:none;padding:10px 14px;cursor:pointer;font:inherit;border-bottom:1px solid #eef1f6}
-.wecom-item:hover{background:#eef4fd}
-.wecom-item.on{background:#e8f0fb}
+.wecom-list{flex:1 1 0;height:0;min-height:0;overflow:auto}
+.wecom-item-wrap{display:flex;align-items:stretch;border-bottom:1px solid #eef1f6}
+.wecom-item-wrap.on{background:#e8f0fb}
+.wecom-star{
+  flex:0 0 36px;border:none;background:none;cursor:pointer;font-size:16px;color:#c5cad6;
+  padding:0;display:flex;align-items:center;justify-content:center
+}
+.wecom-star.on{color:#e6a700}
+.wecom-star:hover{color:#e6a700}
+.wecom-star[disabled]{cursor:not-allowed;opacity:.45}
+.wecom-item{display:block;flex:1;min-width:0;text-align:left;border:none;background:none;padding:10px 14px 10px 0;cursor:pointer;font:inherit}
+.wecom-item-wrap:hover{background:#eef4fd}
+.wecom-item-wrap.on .wecom-item{background:transparent}
+.wecom-side-filters{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+.wecom-filter-chip{display:flex;align-items:center;justify-content:center;gap:4px;margin:0;min-width:0;padding:6px 4px;border:1px solid #e1e6ef;border-radius:8px;background:#f7f9fc;font-size:12px;line-height:1.2;color:#5b6577;cursor:pointer;white-space:nowrap}
+.wecom-filter-chip input{margin:0;flex:0 0 auto}
+.wecom-filter-chip:has(input:checked){border-color:#2450a4;background:#eef4ff;color:#2450a4}
+.wecom-watch-hint{font-size:11px;color:#8a93a6;margin-top:6px;line-height:1.4}
 .wecom-item b{display:block;font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wecom-item span{display:block;font-size:11.5px;color:#8a93a6;margin-top:3px}
-.wecom-chat{display:flex;flex-direction:column;min-width:0;min-height:560px}
+.wecom-chat{display:flex;flex-direction:column;min-width:0;height:640px;max-height:640px;overflow:hidden;align-self:start}
 .wecom-chat-hd{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .wecom-chat-hd .grow{flex:1;min-width:140px}
 .wecom-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .wecom-filters input[type="date"]{width:138px}
-.wecom-stream{flex:1;overflow:auto;padding:14px 16px;background:#f4f6fa;max-height:520px}
+.wecom-stream{flex:1 1 0;height:0;min-height:0;overflow:auto;padding:14px 16px;background:#f4f6fa}
 .wecom-empty{color:#8a93a6;font-size:13.5px;padding:40px 16px;text-align:center;line-height:1.7}
 .wecom-msg{background:#fff;border:1px solid #e9edf5;border-radius:12px;padding:10px 12px;margin:0 0 10px;box-shadow:0 1px 2px rgba(16,32,64,.04)}
 .wecom-msg .meta{display:flex;gap:10px;align-items:baseline;font-size:12px;color:#8a93a6;margin-bottom:4px}
@@ -284,7 +326,12 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 .wecom-preview[hidden]{display:none !important}
 .wecom-preview img{max-width:92vw;max-height:92vh;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
 .wecom-chip .tag{font-size:10px;opacity:.8;margin-left:3px}
-.wecom-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;border-top:1px solid #e6ebf4;background:#fff;font-size:12.5px;color:#5b6577}
+.wecom-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:0 0 44px;height:44px;max-height:44px;overflow:hidden;padding:0 14px;border-top:1px solid #e6ebf4;background:#fff;font-size:12.5px;color:#5b6577;box-sizing:border-box}
+.wecom-pager[hidden]{display:none !important}
+#taskPager[hidden]{display:none !important}
+#taskPager{align-items:center}
+#taskPager button{height:32px;max-height:32px;line-height:30px;padding:0 14px;flex:0 0 auto}
+.wecom-pager button{align-self:center;height:32px !important;max-height:32px !important;min-height:0 !important;line-height:30px;padding:0 14px;flex:0 0 auto}
 .wecom-locate{position:fixed;inset:0;z-index:85;background:rgba(16,32,64,.38);display:flex;align-items:flex-start;justify-content:center;padding:48px 16px 24px}
 .wecom-locate[hidden]{display:none !important}
 .wecom-locate-card{width:min(720px,100%);max-height:86vh;overflow:auto;background:#fff;border-radius:16px;box-shadow:0 18px 50px -18px rgba(16,32,64,.45);border:1px solid #e6ebf4}
@@ -348,8 +395,9 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
 .st-5xx{color:#c5221f;background:#fdecea}
 @media (max-width:900px){
   .api-create{grid-template-columns:1fr 1fr}
-  .wecom-board{grid-template-columns:1fr}
+  .wecom-board,.wecom-board.has-ai{grid-template-columns:1fr}
   .wecom-side{border-right:none;border-bottom:1px solid #e6ebf4}
+  .wecom-ai{border-left:none;border-top:1px solid #e6ebf4;max-height:360px}
   .wecom-list,.wecom-stream{max-height:320px}
 }
 
@@ -398,7 +446,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
           <div class="stat" style="--sc:#c5221f"><div class="sn" id="stFailed">—</div><div class="sl">失败</div></div>
         </div>
         <div class="acard">
-          <h3>最近任务 <span style="font-size:12px;font-weight:500;color:var(--sub)">点击一行查看并下载产出</span></h3>
+          <h3>最近任务 <span style="font-size:12px;font-weight:500;color:var(--sub)">每页 20 条，点击一行查看并下载产出</span></h3>
           <div class="tbl-wrap">
             <table class="tbl tbl-tasks">
               <colgroup>
@@ -408,6 +456,13 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
               <thead><tr><th>创建时间</th><th>申报书</th><th>编号</th><th>创建人</th><th>状态</th><th>批次</th><th></th></tr></thead>
               <tbody id="taskBody"><tr><td colspan="7">加载中…</td></tr></tbody>
             </table>
+          </div>
+          <div id="taskPager" class="book-pager" hidden style="margin-top:12px">
+            <button type="button" class="ghost mini" id="taskPagePrev">上一页</button>
+            <div class="page-mid">
+              <div class="page-sub" id="taskPageInfo">第 1 / 1 页 · 共 0 条</div>
+            </div>
+            <button type="button" class="ghost mini" id="taskPageNext">下一页</button>
           </div>
         </div>
       </section>
@@ -474,9 +529,43 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
 
       <!-- 各群记录 -->
       <section class="content-sec" id="sec-wecom">
-        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>各群记录</h2>
-        <p class="sec-desc">同一群在多台电脑上只显示一条。浏览消息时可勾选「申报书」和修改意见（聊天文本或文件）后点底部「上传任务」；也可按日期窗「拆解任务」自动识别。生成计划后仍需人工确认才会写入。</p>
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>会话记录</h2>
+        <p class="sec-desc">同一会话在多台电脑上只显示一条，群聊和单聊都算。浏览消息时可勾选「申报书」和修改意见（聊天文本或文件）后点底部「上传任务」；也可按日期窗「拆解任务」自动识别。生成计划后仍需人工确认才会写入。</p>
         <div class="msg" id="wecomMsg"></div>
+        <details class="wecom-watch-panel acard" id="wecomWatchPanel" open>
+          <summary class="wecom-watch-panel-sum">AI 值班扫描配置</summary>
+          <p class="wecom-watch-panel-desc">自动扫描已关注的会话（群聊和单聊）新消息，用 Gemini 识别修改意见并匹配申报书，提交到「待确认」任务（不自动写入正文）。模型与出计划相同。</p>
+          <div class="wecom-watch-panel-status" id="wecomWatchPanelStatus">加载配置…</div>
+          <div class="cfg-grid wecom-watch-grid">
+            <div class="f-row"><label>开启值班</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwEnabled"> 扫描已关注会话的新消息</div></div>
+            <div class="f-row"><label>识别到意见后</label><div class="inp"><select id="wwMode" class="role-sel" style="width:100%;height:46px;padding:0 10px">
+              <option value="auto">自动提交待确认任务</option>
+              <option value="review">只列入待人审</option>
+              <option value="off">关闭</option>
+            </select></div></div>
+            <div class="f-row"><label>扫描间隔（秒）</label><div class="inp"><input type="number" id="wwInterval" min="30" max="3600" placeholder="120"></div></div>
+            <div class="f-row"><label>回看窗口（小时）</label><div class="inp"><input type="number" id="wwWindow" min="6" max="168" placeholder="48"></div></div>
+            <div class="f-row"><label>判断超时（秒）</label><div class="inp"><input type="number" id="wwTimeout" min="15" max="180" placeholder="60"></div></div>
+            <div class="f-row"><label>意见等待（分钟）</label><div class="inp"><input type="number" id="wwOpinionWait" min="0" max="1440" placeholder="60"><div style="font-size:11px;color:#8a93a6;margin-top:4px">预留：申报书发出后等待意见的最长时间</div></div></div>
+            <div class="f-row"><label>任务归属账号</label><div class="inp"><input type="text" id="wwOwner" placeholder="用户名，可空"></div></div>
+            <div class="f-row span2"><label>无独立意见时</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwAllowNoOpinion"> 允许仅凭申报书标注栏提交（无群聊意见文档/文本）</div></div>
+            <div class="f-row span2"><label>不上传之后</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwSkipDismissed" checked> 点过「不上传」的申报书不再进入待审</div></div>
+          </div>
+          <div class="wecom-watch-events" id="wecomWatchPanelEvents" hidden></div>
+          <div class="wecom-watch-pending" id="wecomWatchPending" hidden></div>
+          <div class="wecom-watch-logs-hd">
+            <div><b>扫描日志</b><span class="wecom-watch-logs-tip">点击行查看详情，再次点击收起</span></div>
+            <button type="button" class="mini" id="wwLogsRefresh">刷新</button>
+          </div>
+          <div class="wecom-watch-logs loading" id="wecomWatchLogs"><div class="wecom-empty ww-loading"><span class="ww-spin"></span>加载中…</div></div>
+          <div class="wecom-watch-log-detail" id="wecomWatchLogDetail" hidden></div>
+          <div class="wecom-watch-panel-actions">
+            <button type="button" class="mini primary" id="wwSaveBtn">保存值班配置</button>
+            <button type="button" class="mini" id="wwProbeBtn">检测 Gemini</button>
+            <button type="button" class="mini" id="wwRunBtn">立即扫描</button>
+            <span class="wecom-watch-panel-msg" id="wecomWatchPanelMsg"></span>
+          </div>
+        </details>
         <div class="acard" style="margin-bottom:0">
           <div class="wecom-status" id="wecomStatus">检测解析服务…</div>
           <div class="wecom-status" id="wecomWatchStatus" style="margin-top:6px"></div>
@@ -484,34 +573,54 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
             <aside class="wecom-side">
               <div class="wecom-side-hd">
                 <div class="wecom-src" id="wecomSources"></div>
-                <input type="search" id="wecomGroupQ" placeholder="筛选群名" autocomplete="off">
-                <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px;color:#5b6577">
-                  <input type="checkbox" id="wecomOnlyGroup" checked> 仅群聊
-                </label>
+                <input type="search" id="wecomGroupQ" placeholder="筛选会话" autocomplete="off">
+                <div class="wecom-side-filters">
+                  <label class="wecom-filter-chip"><input type="checkbox" id="wecomOnlyGroup"> 仅群聊</label>
+                  <label class="wecom-filter-chip"><input type="checkbox" id="wecomOnlyWatch"> 仅关注</label>
+                </div>
+                <div class="wecom-watch-hint" id="wecomWatchHint">点左侧 ★ 关注，群聊和单聊都会扫描</div>
               </div>
-              <div class="wecom-list" id="wecomSessions"><div class="wecom-empty">正在按群合并各电脑会话…</div></div>
+              <div class="wecom-list" id="wecomSessions"><div class="wecom-empty">正在合并各电脑上的同一会话…</div></div>
             </aside>
             <div class="wecom-chat">
               <div class="wecom-chat-hd">
                 <div class="grow">
                   <div id="wecomChatTitle" style="font-weight:700;font-size:14px">未选择会话</div>
-                  <div id="wecomChatSub" style="font-size:12px;color:#8a93a6;margin-top:2px">从左侧点开群；重复群已合并</div>
+                  <div id="wecomChatSub" style="font-size:12px;color:#8a93a6;margin-top:2px">从左侧点开会话；同一会话在多台电脑上已合并</div>
                 </div>
                 <div class="wecom-filters">
                   <input type="date" id="wecomStart" title="开始日期">
                   <input type="date" id="wecomEnd" title="结束日期">
                   <input type="text" id="wecomMsgQ" placeholder="关键词搜索" style="width:160px" autocomplete="off">
+                  <button type="button" class="mini" id="wecomAiBtn">AI 解读</button>
+                  <button type="button" class="mini" id="wecomAiLogBtn">解读记录</button>
                   <button type="button" class="mini" id="wecomSplitBtn">拆解任务</button>
                   <button type="button" class="mini" id="wecomReload">刷新</button>
                 </div>
               </div>
-              <div class="wecom-stream" id="wecomStream"><div class="wecom-empty">选择群后显示消息。解析服务未启动时无法读取本地企业微信库。</div></div>
+              <div class="wecom-stream" id="wecomStream"><div class="wecom-empty">选择会话后显示消息。解析服务未启动时无法读取本地企业微信库。</div></div>
               <div class="wecom-pager" id="wecomPager" hidden>
                 <button type="button" class="ghost mini" id="wecomPrev">更早</button>
                 <span id="wecomPageInfo">—</span>
                 <button type="button" class="ghost mini" id="wecomNext">更晚</button>
               </div>
             </div>
+            <aside class="wecom-ai" id="wecomAiPanel" hidden>
+              <div class="wecom-ai-hd">
+                <div class="grow">
+                  <div class="wecom-ai-title">AI 解读看板</div>
+                  <div class="wecom-ai-sub" id="wecomAiSub">Gemini 读取当前日期窗内的会话</div>
+                  <div class="wecom-ai-tabs">
+                    <button type="button" class="wecom-ai-tab on" id="wecomAiTabRead" data-tab="read">本次解读</button>
+                    <button type="button" class="wecom-ai-tab" id="wecomAiTabLog" data-tab="log">解读记录</button>
+                  </div>
+                </div>
+                <button type="button" class="ghost mini" id="wecomAiClose" title="收起">收起</button>
+              </div>
+              <div class="wecom-ai-body" id="wecomAiBody">
+                <div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>
+              </div>
+            </aside>
           </div>
         </div>
       </section>
@@ -640,7 +749,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       <button type="button" class="nav-item" data-sec="newtask"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>新建任务</button>
       <button type="button" class="nav-item" data-sec="users"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>人员信息</button>
       <button type="button" class="nav-item" data-sec="feedback"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>用户反馈<span class="nav-count" id="fbBadge" hidden></span></button>
-      <button type="button" class="nav-item" data-sec="wecom"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>各群记录</button>
+      <button type="button" class="nav-item" data-sec="wecom"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>会话记录</button>
       <button type="button" class="nav-item" data-sec="openapi"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>开放 API<span class="nav-count" id="apiReqBadge" hidden></span></button>
       <button type="button" class="nav-item" data-sec="config"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型配置</button>
       <button type="button" class="nav-item" data-sec="system"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>系统信息</button>
@@ -692,7 +801,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   </div>
 
 <script src="/public/session.js?v=py54"></script>
-<script src="/public/wecom-board.js?v=py2"></script>
+<script src="/public/wecom-board.js?v=py21"></script>
 <script>
 (function () {
   var me = null;
@@ -722,7 +831,10 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     { key: 'overview', sec: document.getElementById('sec-overview'), load: function () { loadOverview(); } },
     { key: 'users', sec: document.getElementById('sec-users'), load: function () { loadUsers(); } },
     { key: 'feedback', sec: document.getElementById('sec-feedback'), load: function () { loadFeedback(); } },
-    { key: 'wecom', sec: document.getElementById('sec-wecom'), load: function () { if (window.loadWecomBoard) window.loadWecomBoard(true); } },
+    { key: 'wecom', sec: document.getElementById('sec-wecom'), load: function () {
+      if (window.loadWecomBoard) window.loadWecomBoard(true);
+      if (window.loadWecomWatchPanel) window.loadWecomWatchPanel();
+    } },
     { key: 'openapi', sec: document.getElementById('sec-openapi'), load: function () { loadOpenApi(true); } },
     { key: 'system', sec: document.getElementById('sec-system'), load: function () { loadSystem(); } }
   ];
@@ -776,6 +888,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     var spl = document.getElementById('wecomSplit');
     if (spl && !spl.hidden) return true;
     var stream = document.getElementById('wecomStream');
+    if (window.wecomAiBusy && window.wecomAiBusy()) return true;
     return !!(stream && stream.querySelector('[data-wecom-dl][disabled]'));
   }
   function arTick() {
@@ -882,6 +995,72 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   }).catch(function () {});
 
   /* ===== 任务总览 ===== */
+  var TASK_PAGE_SIZE = 20;
+  var taskPage = 1;
+  var taskCache = [];
+  function renderTaskTable() {
+    var tb = document.getElementById('taskBody');
+    var pager = document.getElementById('taskPager');
+    var info = document.getElementById('taskPageInfo');
+    var prev = document.getElementById('taskPagePrev');
+    var next = document.getElementById('taskPageNext');
+    var total = taskCache.length;
+    var pages = Math.max(1, Math.ceil(total / TASK_PAGE_SIZE));
+    if (taskPage > pages) taskPage = pages;
+    if (taskPage < 1) taskPage = 1;
+    var start = (taskPage - 1) * TASK_PAGE_SIZE;
+    var slice = taskCache.slice(start, start + TASK_PAGE_SIZE);
+    tb.innerHTML = '';
+    var openId = tb.getAttribute('data-open') || '';
+    if (openId) {
+      var openIdx = -1;
+      for (var i = 0; i < taskCache.length; i++) {
+        if (taskCache[i].id === openId) { openIdx = i; break; }
+      }
+      if (openIdx >= 0) {
+        var openPage = Math.floor(openIdx / TASK_PAGE_SIZE) + 1;
+        if (openPage !== taskPage) {
+          taskPage = openPage;
+          start = (taskPage - 1) * TASK_PAGE_SIZE;
+          slice = taskCache.slice(start, start + TASK_PAGE_SIZE);
+        }
+      }
+    }
+    slice.forEach(function (t) {
+      var tr = document.createElement('tr');
+      tr.className = 'task-row' + (t.id === openId ? ' open' : '');
+      tr.setAttribute('data-id', t.id);
+      var nOut = (t.deliverables || t.outputs || []).length;
+      tr.innerHTML =
+        '<td class="td-clip" title="' + esc(t.createdAt) + '">' + esc(t.createdAt) + '</td>' +
+        '<td class="td-name" title="' + esc(t.app && t.app.name) + '">' + (function () {
+          var m = String(t.app && t.app.mode || '').toUpperCase();
+          var tag = (m === 'QM' || m === 'HJ') ? '<span class="mode-tag mode-' + m + '">' + m + '</span> ' : '';
+          return tag + esc(t.app && t.app.name);
+        })() + '</td>' +
+        '<td class="mono td-clip" title="' + esc(t.app && t.app.no) + '">' + esc(t.app && t.app.no) + '</td>' +
+        '<td class="td-clip" title="' + esc(t.owner || '（历史）') + '">' + esc(t.owner || '（历史）') + '</td>' +
+        '<td>' + badge(t.status) + '</td>' +
+        '<td class="mono">' + (t.batchId ? '√' : '—') + '</td>' +
+        '<td><button type="button" class="mini" data-open="' + esc(t.id) + '">' + (t.id === openId ? '收起' : (nOut ? '查看产出 · ' + nOut : '查看产出')) + '</button></td>';
+      tb.appendChild(tr);
+      if (t.id === openId) {
+        var fr = document.createElement('tr');
+        fr.className = 'task-files';
+        fr.setAttribute('data-for', t.id);
+        fr.innerHTML = '<td colspan="7"><div class="files-box"><div class="files-muted">加载产出…</div></div></td>';
+        tb.appendChild(fr);
+        fillTaskFiles(fr, t.id);
+      }
+    });
+    if (!slice.length) tb.innerHTML = '<tr><td colspan="7" style="color:#98a2b6">暂无任务</td></tr>';
+    if (pager) {
+      pager.hidden = total <= TASK_PAGE_SIZE;
+      if (info) info.textContent = '第 ' + taskPage + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
+      if (prev) prev.disabled = taskPage <= 1;
+      if (next) next.disabled = taskPage >= pages;
+    }
+  }
   function loadOverview() {
     Promise.all([
       fetch('/api/tasks').then(function (r) { return r.json(); }),
@@ -903,37 +1082,8 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       totals.tasks = tasks.length;
       totals.batches = batches.length;
       renderDataCard();
-      var tb = document.getElementById('taskBody');
-      tb.innerHTML = '';
-      var openId = tb.getAttribute('data-open') || '';
-      tasks.forEach(function (t) {
-        var tr = document.createElement('tr');
-        tr.className = 'task-row' + (t.id === openId ? ' open' : '');
-        tr.setAttribute('data-id', t.id);
-        var nOut = (t.deliverables || t.outputs || []).length;
-        tr.innerHTML =
-          '<td class="td-clip" title="' + esc(t.createdAt) + '">' + esc(t.createdAt) + '</td>' +
-          '<td class="td-name" title="' + esc(t.app && t.app.name) + '">' + (function () {
-            var m = String(t.app && t.app.mode || '').toUpperCase();
-            var tag = (m === 'QM' || m === 'HJ') ? '<span class="mode-tag mode-' + m + '">' + m + '</span> ' : '';
-            return tag + esc(t.app && t.app.name);
-          })() + '</td>' +
-          '<td class="mono td-clip" title="' + esc(t.app && t.app.no) + '">' + esc(t.app && t.app.no) + '</td>' +
-          '<td class="td-clip" title="' + esc(t.owner || '（历史）') + '">' + esc(t.owner || '（历史）') + '</td>' +
-          '<td>' + badge(t.status) + '</td>' +
-          '<td class="mono">' + (t.batchId ? '√' : '—') + '</td>' +
-          '<td><button type="button" class="mini" data-open="' + esc(t.id) + '">' + (t.id === openId ? '收起' : (nOut ? '查看产出 · ' + nOut : '查看产出')) + '</button></td>';
-        tb.appendChild(tr);
-        if (t.id === openId) {
-          var fr = document.createElement('tr');
-          fr.className = 'task-files';
-          fr.setAttribute('data-for', t.id);
-          fr.innerHTML = '<td colspan="7"><div class="files-box"><div class="files-muted">加载产出…</div></div></td>';
-          tb.appendChild(fr);
-          fillTaskFiles(fr, t.id);
-        }
-      });
-      if (!tasks.length) tb.innerHTML = '<tr><td colspan="7" style="color:#98a2b6">暂无任务</td></tr>';
+      taskCache = tasks;
+      renderTaskTable();
     }).catch(function (e) { console.warn('overview', e); });
   }
 
@@ -968,8 +1118,23 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     var tb = document.getElementById('taskBody');
     var cur = tb.getAttribute('data-open') || '';
     tb.setAttribute('data-open', cur === tid ? '' : tid);
-    loadOverview();
+    renderTaskTable();
   }
+  document.getElementById('taskPagePrev').addEventListener('click', function () {
+    if (taskPage <= 1) return;
+    taskPage--;
+    var tb = document.getElementById('taskBody');
+    if (tb) tb.setAttribute('data-open', '');
+    renderTaskTable();
+  });
+  document.getElementById('taskPageNext').addEventListener('click', function () {
+    var pages = Math.max(1, Math.ceil(taskCache.length / TASK_PAGE_SIZE));
+    if (taskPage >= pages) return;
+    taskPage++;
+    var tb = document.getElementById('taskBody');
+    if (tb) tb.setAttribute('data-open', '');
+    renderTaskTable();
+  });
   document.getElementById('taskBody').addEventListener('click', function (e) {
     if (e.target.closest && e.target.closest('a.dl')) return;
     var btn = e.target.closest ? e.target.closest('button[data-open]') : null;
@@ -2193,19 +2358,19 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       '<div class="acard">' +
         '<h3>企业微信聊天记录 ' +
           '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (p.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">管理后台「各群记录」只读调用聊天记录解析服务（默认 <code>http://127.0.0.1:8767</code>）。请先在该项目启动 <code>start.ps1</code> 并复制开放读取 API Key。群白名单一行一个；值班扫描必须填写关注群，留空只浏览不自动提交。</p>' +
+        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">管理后台「会话记录」只读调用聊天记录解析服务（默认 <code>http://127.0.0.1:8767</code>）。请先在该项目启动 <code>start.ps1</code> 并复制开放读取 API Key。关注会话一行一个，群聊和单聊都可以；值班扫描必须填写关注会话，留空只浏览不自动提交。</p>' +
         '<div class="cfg-grid">' +
           '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="wecomChat" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://127.0.0.1:8767"></div></div>' +
           '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="wecomChat" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-API-Key') + '"></div></div>' +
-          '<div class="f-row span2"><label>关注群（值班必填，一行一个）</label><div class="inp"><textarea data-f="wecomChat" data-k="groups" rows="3" placeholder="申报材料群">' + esc(groups) + '</textarea></div></div>' +
-          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已配置密钥 · 可打开各群记录' : '未配置 · 看板无法列出消息') + '</div></div>' +
+          '<div class="f-row span2"><label>关注会话（值班必填）</label><div class="inp"><textarea data-f="wecomChat" data-k="groups" rows="3" placeholder="会话名称或编号">' + esc(groups) + '</textarea><div style="font-size:12px;color:#8a93a6;margin-top:6px">也可在会话记录左侧点 ★ 直接关注；此处与看板同步。群聊、单聊都会扫描。</div></div></div>' +
+          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已配置密钥 · 可打开会话记录' : '未配置 · 看板无法列出消息') + '</div></div>' +
           '<div class="f-row"><label>连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomHealthBtn">检测解析服务</button><span id="wecomHealthMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
         '</div>' +
-        '<h3 style="margin:22px 0 10px;font-size:14px">聊天值班（硅基流动）' +
-          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (w.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (w.hasKey ? '值班密钥已配置' : '未配置值班密钥') + '</span></h3>' +
-        '<p style="margin:-4px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">Qwen 只认群里的修改意见；认到之后才交给 Gemini 匹配申报书并提交到「待确认」。不会自动写入正文。</p>' +
+        '<h3 style="margin:22px 0 10px;font-size:14px">聊天值班（Gemini）' +
+          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (w.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (w.hasKey ? 'Gemini 已配置' : '未配置 Gemini') + '</span></h3>' +
+        '<p style="margin:-4px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">判断使用与出计划相同的 Gemini，按固定题目只认会话里的修改意见，再匹配申报书并提交到「待确认」。不会自动写入正文。模型：' + esc(w.model || '未配置') + '。</p>' +
         '<div class="cfg-grid">' +
-          '<div class="f-row"><label>开启值班</label><div style="padding-top:10px"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" data-f="wecomWatch" data-k="enabled"' + (w.enabled ? ' checked' : '') + '> 扫描关注群新消息</label></div></div>' +
+          '<div class="f-row"><label>开启值班</label><div style="padding-top:10px"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" data-f="wecomWatch" data-k="enabled"' + (w.enabled ? ' checked' : '') + '> 扫描已关注会话的新消息</label></div></div>' +
           '<div class="f-row"><label>识别到意见后</label><div class="inp"><select data-f="wecomWatch" data-k="mode">' +
             '<option value="auto"' + (mode === 'auto' ? ' selected' : '') + '>自动提交待确认任务</option>' +
             '<option value="review"' + (mode === 'review' ? ' selected' : '') + '>只列入待人审</option>' +
@@ -2214,10 +2379,10 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
           '<div class="f-row"><label>扫描间隔（秒）</label><div class="inp"><input data-f="wecomWatch" data-k="intervalSec" value="' + esc(w.intervalSec || 120) + '" placeholder="120"></div></div>' +
           '<div class="f-row"><label>回看窗口（小时）</label><div class="inp"><input data-f="wecomWatch" data-k="windowHours" value="' + esc(w.windowHours || 48) + '" placeholder="48"></div></div>' +
           '<div class="f-row"><label>值班账号</label><div class="inp"><input data-f="wecomWatch" data-k="owner" value="' + esc(w.owner || '') + '" placeholder="任务归属用户名，可空"></div></div>' +
-          '<div class="f-row"><label>模型 ID</label><div class="inp"><input data-f="wecomWatch" data-k="model" value="' + esc(w.model || 'Qwen/Qwen3.5-4B') + '" placeholder="Qwen/Qwen3.5-4B"></div></div>' +
-          '<div class="f-row span2"><label>硅基流动 Base URL</label><div class="inp"><input data-f="wecomWatch" data-k="baseUrl" value="' + esc(w.baseUrl || 'https://api.siliconflow.cn/v1') + '" placeholder="https://api.siliconflow.cn/v1"></div></div>' +
-          '<div class="f-row span2"><label>硅基流动 API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="wecomWatch" data-k="apiKey" value="" placeholder="' + (w.hasKey ? '••••••••（已配置）' : '填入 sk-') + '"></div></div>' +
-          '<div class="f-row"><label>值班连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomWatchProbeBtn">检测值班模型</button> <button type="button" class="mini" id="wecomWatchRunBtn">立即扫描</button><span id="wecomWatchProbeMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
+          '<div class="f-row"><label>判断超时（秒）</label><div class="inp"><input data-f="wecomWatch" data-k="timeoutSec" value="' + esc(w.timeoutSec || 60) + '" placeholder="60"></div></div>' +
+          '<div class="f-row"><label>意见等待（分钟）</label><div class="inp"><input data-f="wecomWatch" data-k="opinionWaitMin" value="' + esc(w.opinionWaitMin != null ? w.opinionWaitMin : 60) + '" placeholder="60"></div></div>' +
+          '<div class="f-row span2"><label>无独立意见时</label><div class="chk" style="padding-top:10px"><input type="checkbox" data-f="wecomWatch" data-k="allowNoOpinion"' + (w.allowNoOpinion ? ' checked' : '') + '> 允许仅凭申报书标注栏提交</div></div>' +
+          '<div class="f-row"><label>值班连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomWatchProbeBtn">检测 Gemini</button> <button type="button" class="mini" id="wecomWatchRunBtn">立即扫描</button><span id="wecomWatchProbeMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
         '</div>' +
         '<div class="cfg-save-row">' +
           '<button type="button" class="mini cfg-save-one">保存聊天记录配置</button>' +

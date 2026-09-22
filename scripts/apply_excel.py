@@ -124,6 +124,26 @@ def _apply_joined(cells, joined, start, end, rep):
     if fi == li:
         _set_cell(cells[fi], prefix + rep + suffix)
         return True
+    parts = rep.split(SEP_ROW) if SEP_ROW in rep else [rep]
+    span_len = li - fi + 1
+    if len(parts) == span_len:
+        for j, part in enumerate(parts):
+            idx = fi + j
+            if j == 0:
+                _set_cell(cells[idx], prefix + part)
+            elif j == span_len - 1:
+                _set_cell(cells[idx], part + suffix)
+            else:
+                _set_cell(cells[idx], part)
+        return True
+    if len(parts) > 1 and len(parts) < span_len:
+        for j, part in enumerate(parts):
+            idx = fi + j
+            _set_cell(cells[idx], (prefix + part) if j == 0 else part)
+        for idx in range(fi + len(parts), li):
+            _set_cell(cells[idx], "")
+        _set_cell(cells[li], suffix)
+        return True
     _set_cell(cells[fi], prefix + rep)
     for i in range(fi + 1, li):
         if cells[i]["text"]:

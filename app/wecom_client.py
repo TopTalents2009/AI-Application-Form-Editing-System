@@ -111,7 +111,9 @@ async def _get(path: str, params: dict | None = None, *, need_key: bool = True) 
 
 
 async def health() -> dict:
+    from . import wecom_local as L
     cfg = load_config()
+    local = L.status()
     out = {
         "configured": bool(cfg.get("wecomChatConfigured")),
         "baseUrl": _root(),
@@ -121,7 +123,17 @@ async def health() -> dict:
         "error": "",
         "hint": "",
         "source_count": 0,
+        "readMode": "http",
     }
+    if local.get("ok"):
+        out["ok"] = True
+        out["service_ok"] = True
+        out["auth_ok"] = True
+        out["readMode"] = "local"
+        out["source_count"] = int(local.get("sources") or 0)
+        out["dataRoot"] = local.get("root") or ""
+        out["hint"] = "看板直接读取本地同步目录，消息不再整段经过解析服务"
+        return out
     try:
         data = await _get(PREFIX + "/health", need_key=False)
     except WecomError as e:
@@ -350,20 +362,28 @@ def _msg_sort_key(m: dict) -> str:
 
 
 async def list_sources() -> dict:
+    from . import wecom_local as L
+    if L.available():
+        items = await asyncio.to_thread(L.list_sources)
+        if items:
+            return {"items": items, "count": len(items), "readMode": "local"}
     try:
         rows = await _api_get("/api/sources")
         if isinstance(rows, list):
             items = [x for x in rows if isinstance(x, dict)]
-            return {"items": items, "count": len(items)}
+            return {"items": items, "count": len(items), "readMode": "http"}
     except WecomError:
         pass
     data = await _get(PREFIX + "/sources")
     items = data.get("data") if isinstance(data.get("data"), list) else []
-    return {"items": items, "count": int(data.get("count") or len(items))}
+    return {"items": items, "count": int(data.get("count") or len(items)), "readMode": "http"}
 
 
 async def _sessions_of(source_id: str, limit: int = 1000) -> list:
+    from . import wecom_local as L
     sid = str(source_id or "").strip()
+    if L.available() and L.has_source(sid):
+        return await asyncio.to_thread(L.list_sessions, sid, limit)
     try:
         rows = await _api_get("/api/sources/" + _enc(sid) + "/sessions", {"limit": limit})
         if isinstance(rows, list):
@@ -398,7 +418,14 @@ async def _messages_of(source_id: str, session_id: str, *, start_date: str = "",
     return [_normalize_msg(dict(x)) for x in items if isinstance(x, dict)]
 
 
-async def list_merged_groups(*, kind: str = "group", q: str = "", source_id: str = "", limit: int = 400) -> dict:
+async def list_merged_groups(
+    *,
+    kind: str = "group",
+    q: str = "",
+    source_id: str = "",
+    limit: int = 400,
+    watch_only: bool = False,
+) -> dict:
     srcs = (await list_sources()).get("items") or []
     want = str(source_id or "").strip()
     if want and want not in ("*", "all"):
@@ -411,14 +438,14 @@ async def list_merged_groups(*, kind: str = "group", q: str = "", source_id: str
         if not sid:
             return []
         try:
-            sessions = await _sessions_of(sid, 1000)
+            sessions = await _sessions_of(sid, 5000 if watch_only else 1000)
         except WecomError:
             return []
         rows = []
         for it in sessions:
             if kind != "all" and not is_group(it):
                 continue
-            if not match_allowlist(it, allow):
+            if watch_only and allow and not match_allowlist(it, allow):
                 continue
             if qn:
                 blob = (str(it.get("display_name") or "") + " " + str(it.get("username") or "")).lower()
@@ -447,7 +474,9 @@ async def list_merged_messages(
     limit: int = 80,
     tail: bool = False,
     full: bool = False,
+    from_end: int = 0,
 ) -> dict:
+    from . import wecom_local as L
     cid = str(session_id or "").strip()
     if not cid:
         raise WecomError("BAD_REQUEST", "缺少 session_id")
@@ -456,19 +485,43 @@ async def list_merged_messages(
     if want and want not in ("*", "all"):
         srcs = [s for s in srcs if str(s.get("id") or "") == want]
 
+    lim = max(1, min(int(limit or 80), 200))
+    off = max(0, int(offset or 0))
+    fe = max(0, int(from_end or 0))
+    window = bool(tail or fe)
+    if full:
+        per_src = 0
+    elif window:
+        per_src = fe + lim
+    else:
+        per_src = min(2000, max(off + lim, lim))
+
     async def one(src: dict) -> tuple:
         sid = str(src.get("id") or "")
+        trunc = False
         try:
-            msgs = await _messages_of(sid, cid, start_date=start_date, end_date=end_date, limit=5000)
+            if L.available() and L.has_source(sid):
+                msgs, trunc = await asyncio.to_thread(
+                    L.read_window, sid, cid,
+                    need=0 if full else per_src,
+                    start_date=start_date, end_date=end_date,
+                )
+            else:
+                fetch = 5000 if full else per_src
+                msgs = await _messages_of(sid, cid, start_date=start_date, end_date=end_date, limit=fetch)
+                trunc = bool(fetch and len(msgs) >= fetch)
         except WecomError:
             msgs = []
-        return msgs, src
+        return msgs, src, trunc
 
     batches = list(await asyncio.gather(*[one(s) for s in srcs])) if srcs else []
     replicas = []
     nonempty = []
     display = ""
-    for msgs, src in batches:
+    truncated_any = False
+    read_mode = "local" if L.available() else "http"
+    for msgs, src, trunc in batches:
+        truncated_any = truncated_any or bool(trunc)
         n = len(msgs or [])
         replicas.append({
             "source_id": str(src.get("id") or ""),
@@ -484,7 +537,7 @@ async def list_merged_messages(
                     if name:
                         display = name
                         break
-    merged = merge_messages(nonempty or batches, cid)
+    merged = merge_messages(nonempty, cid)
     have = [r for r in replicas if int(r.get("msg_count") or 0) > 0]
     if full:
         return {
@@ -496,12 +549,32 @@ async def list_merged_messages(
             "session_id": cid,
             "replicas": have or replicas,
             "display_name": display,
+            "readMode": read_mode,
+            "hasEarlier": False,
+            "hasNewer": False,
+            "fromEnd": 0,
         }
-    lim = max(1, min(int(limit or 80), 200))
-    if tail:
-        off = max(0, len(merged) - lim)
-    else:
-        off = max(0, int(offset or 0))
+    if window:
+        end = len(merged) - fe
+        if end < 0:
+            end = 0
+        start = max(0, end - lim)
+        page = merged[start:end]
+        has_earlier = bool(truncated_any or start > 0)
+        return {
+            "items": page,
+            "count": len(page),
+            "total": fe + len(page) + (1 if has_earlier else 0),
+            "offset": fe,
+            "limit": lim,
+            "session_id": cid,
+            "replicas": have or replicas,
+            "display_name": display,
+            "readMode": read_mode,
+            "hasEarlier": has_earlier,
+            "hasNewer": fe > 0,
+            "fromEnd": fe,
+        }
     page = merged[off: off + lim]
     return {
         "items": page,
@@ -512,6 +585,10 @@ async def list_merged_messages(
         "session_id": cid,
         "replicas": have or replicas,
         "display_name": display,
+        "readMode": read_mode,
+        "hasEarlier": off + lim < len(merged),
+        "hasNewer": off > 0,
+        "fromEnd": 0,
     }
 
 
@@ -687,9 +764,17 @@ async def list_messages(
 
 
 async def search(q: str, *, source_id: str = "", session_id: str = "", limit: int = 50) -> dict:
+    from . import wecom_local as L
     qn = str(q or "").strip()
     if not qn:
         raise WecomError("BAD_REQUEST", "请输入关键词")
+    if L.available() and str(session_id or "").strip():
+        rows = await asyncio.to_thread(
+            L.search_session, qn, str(session_id).strip(),
+            source_id=str(source_id or ""), limit=limit,
+        )
+        items = [_normalize_msg(dict(x)) for x in rows if isinstance(x, dict)]
+        return {"items": items, "count": len(items), "q": qn, "readMode": "local"}
     params = {"q": qn[:80], "limit": max(1, min(int(limit or 50), 200))}
     if source_id:
         params["source_id"] = str(source_id)
