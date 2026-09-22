@@ -88,7 +88,20 @@
   "wecomChat": {
     "baseUrl": "http://127.0.0.1:8767",
     "apiKey": "填入",
-    "groups": []
+    "groups": [],
+    "watch": {
+      "enabled": true,
+      "mode": "auto",
+      "intervalSec": 120,
+      "windowHours": 48,
+      "opinionWaitMin": 60,
+      "allowNoOpinion": false,
+      "owner": "",
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "apiKey": "填入",
+      "model": "Qwen/Qwen3.5-4B",
+      "timeoutSec": 60
+    }
   },
   "portal": {
     "sdkUrl": "http://192.168.2.23:8086/api/ext-research/plugin/sdk.js",

@@ -223,6 +223,13 @@ def _temp_of(prof) -> float:
         return LLM_TEMPERATURE
 
 
+def _strip_think(s: str) -> str:
+    t = str(s or "")
+    t = re.sub(r"<think>.*?</think>", "", t, flags=re.S | re.I)
+    t = re.sub(r"<reasoning>.*?</reasoning>", "", t, flags=re.S | re.I)
+    return t.strip()
+
+
 async def _read_genai_sse(resp: httpx.Response) -> tuple[str, dict]:
     parts, usage, buf = [], {}, ""
     async for chunk in resp.aiter_text():
@@ -265,11 +272,16 @@ async def _read_genai_sse(resp: httpx.Response) -> tuple[str, dict]:
     return "".join(parts), usage
 
 
-async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIMEOUT_DEFAULT, model=None, retries=None, apply_profile_timeout: bool = True):
-    try:
-        prof = resolve_llm(model)
-    except ValueError as e:
-        raise LlmError(str(e))
+async def chat(messages, *, json_mode: bool = False, timeout_s: float = LLM_TIMEOUT_DEFAULT, model=None, retries=None, apply_profile_timeout: bool = True, profile=None):
+    if isinstance(profile, dict) and profile.get("apiKey") and (profile.get("baseUrl") or profile.get("model") or profile.get("id")):
+        prof = dict(profile)
+        if not prof.get("model"):
+            prof["model"] = prof.get("id") or ""
+    else:
+        try:
+            prof = resolve_llm(model)
+        except ValueError as e:
+            raise LlmError(str(e))
     if apply_profile_timeout and prof.get("timeoutSec"):
         timeout_s = float(prof["timeoutSec"])
     if api_format_of(prof.get("apiFormat")) == "genai":
@@ -291,6 +303,8 @@ async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, ret
     with_stream_opts = True
     with_search = bool(prof.get("enableSearch"))
     search_style = "google" if with_search else ""
+    with_thinking = "enableThinking" in (prof or {})
+    thinking_val = bool(prof.get("enableThinking")) if with_thinking else None
     trust = httpx_trust_env()
     timeout = httpx.Timeout(timeout_s, connect=LLM_CONNECT_TIMEOUT)
     n_try = int(retries) if retries is not None else LLM_RETRIES
@@ -304,6 +318,8 @@ async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, ret
             payload["reasoning_effort"] = prof["reasoningEffort"]
         if with_json:
             payload["response_format"] = {"type": "json_object"}
+        if with_thinking:
+            payload["enable_thinking"] = bool(thinking_val)
         if with_search and search_style == "google":
             payload["tools"] = [{"google_search": {}}]
         elif with_search and search_style == "type":
@@ -326,7 +342,7 @@ async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, ret
                         data = _decode_json_object(r.text or "")
                     content = _choice_text(data)
                     usage = (data.get("usage") or {}) if isinstance(data, dict) else {}
-            return {"content": content or "", "usage": usage or {}}
+            return {"content": _strip_think(content or ""), "usage": usage or {}}
         except Exception as e:  # noqa: BLE001
             last_err = e
             m = str(e)
@@ -335,6 +351,9 @@ async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, ret
                     search_style = "type"
                     continue
                 with_search = False
+                continue
+            if with_thinking and m.startswith("HTTP 400") and re.search("think|reason|effort|未知|unknown|unexpected|invalid", m, re.I):
+                with_thinking = False
                 continue
             if with_effort and m.startswith("HTTP 400") and re.search("reason|thinking|effort|未知|unknown|unexpected|invalid", m, re.I):
                 with_effort = False

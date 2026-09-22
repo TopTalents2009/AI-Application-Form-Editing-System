@@ -1600,6 +1600,86 @@ function setFbMsg(ok, text) {
 function revokeFbUrls() {
   fbFiles.forEach(function (x) { if (x.url) URL.revokeObjectURL(x.url); });
 }
+function fbImageExt(file) {
+  var t = String((file && file.type) || '').toLowerCase();
+  if (t === 'image/jpeg') return '.jpg';
+  if (t === 'image/png') return '.png';
+  if (t === 'image/gif') return '.gif';
+  if (t === 'image/webp') return '.webp';
+  var n = String((file && file.name) || '');
+  var m = n.match(/\.(jpe?g|png|gif|webp)$/i);
+  if (!m) return '.png';
+  return m[0].toLowerCase() === '.jpeg' ? '.jpg' : m[0].toLowerCase();
+}
+function fbIsImageFile(file) {
+  if (!file) return false;
+  return /^image\//i.test(file.type || '') || /\.(jpe?g|png|gif|webp)$/i.test(file.name || '');
+}
+function addFbImageFiles(list) {
+  var added = 0;
+  Array.prototype.forEach.call(list || [], function (f) {
+    if (!fbIsImageFile(f)) return;
+    if (f.size > 8 * 1024 * 1024) { setFbMsg(false, '超过 8MB：' + (f.name || '粘贴图片')); return; }
+    var name = (f.name && !/^image\.(png|jpe?g|gif|webp)$/i.test(f.name)) ? f.name : ('粘贴图片-' + Date.now() + '-' + (fbFiles.length + 1) + fbImageExt(f));
+    var key = String(f.name || name) + ':' + f.size + ':' + (f.lastModified || 0);
+    if (fbFiles.some(function (x) { return x.key === key; })) return;
+    if (fbFiles.length >= 8) { setFbMsg(false, '最多 8 张图片'); return; }
+    var file = f;
+    if (!f.name) {
+      try { file = new File([f], name, { type: f.type || 'image/png' }); } catch (e) { file = f; }
+    }
+    fbFiles.push({ file: file, key: key, url: URL.createObjectURL(file) });
+    added++;
+  });
+  if (added) renderFbThumbs();
+  return added;
+}
+function fbFilesFromClipboard(dt) {
+  var out = [];
+  if (!dt) return out;
+  var items = dt.items || [];
+  var i, it, f;
+  for (i = 0; i < items.length; i++) {
+    it = items[i];
+    if (it && it.kind === 'file' && /^image\//i.test(it.type || '')) {
+      f = it.getAsFile && it.getAsFile();
+      if (f) out.push(f);
+    }
+  }
+  if (out.length) return out;
+  if (dt.files && dt.files.length) {
+    for (i = 0; i < dt.files.length; i++) {
+      if (fbIsImageFile(dt.files[i])) out.push(dt.files[i]);
+    }
+  }
+  return out;
+}
+function fbPasteDataImage(dt, done) {
+  var html = '';
+  try { html = (dt && dt.getData) ? (dt.getData('text/html') || '') : ''; } catch (e) { html = ''; }
+  var m = String(html).match(/src=["'](data:image\/(?:png|jpe?g|gif|webp);base64,[^"']+)["']/i);
+  if (!m) return false;
+  fetch(m[1]).then(function (r) { return r.blob(); }).then(function (blob) {
+    var type = blob.type || 'image/png';
+    var ext = type.indexOf('jpeg') >= 0 ? '.jpg' : ('.' + (type.split('/')[1] || 'png'));
+    var file;
+    try { file = new File([blob], '粘贴图片' + ext, { type: type }); }
+    catch (e) { file = blob; }
+    addFbImageFiles([file]);
+    if (done) done(true);
+  }).catch(function () { if (done) done(false); });
+  return true;
+}
+function onFbPaste(ev) {
+  var dt = ev.clipboardData;
+  var files = fbFilesFromClipboard(dt);
+  if (files.length) {
+    ev.preventDefault();
+    addFbImageFiles(files);
+    return;
+  }
+  if (fbPasteDataImage(dt)) ev.preventDefault();
+}
 function renderFbThumbs() {
   var box = $('fbThumbs');
   if (!box) return;
@@ -1727,17 +1807,18 @@ function initFeedback() {
     if (ev.key === 'Escape' && mask && !mask.hidden) closeFb();
   });
   if (input) input.addEventListener('change', function () {
-    var added = Array.prototype.slice.call(this.files || []);
+    addFbImageFiles(this.files || []);
     this.value = '';
-    added.forEach(function (f) {
-      if (!/^image\//i.test(f.type) && !/\.(jpe?g|png|gif|webp)$/i.test(f.name)) return;
-      if (f.size > 8 * 1024 * 1024) { setFbMsg(false, '超过 8MB：' + f.name); return; }
-      var key = f.name + ':' + f.size + ':' + f.lastModified;
-      if (fbFiles.some(function (x) { return x.key === key; })) return;
-      if (fbFiles.length >= 8) { setFbMsg(false, '最多 8 张图片'); return; }
-      fbFiles.push({ file: f, key: key, url: URL.createObjectURL(f) });
-    });
-    renderFbThumbs();
+  });
+  var ta = $('fbContent');
+  if (ta) ta.addEventListener('paste', onFbPaste);
+  var drop = document.querySelector('#fbMask .fb-drop');
+  if (drop) drop.addEventListener('paste', onFbPaste);
+  if (mask) mask.addEventListener('paste', function (ev) {
+    if (mask.hidden) return;
+    var t = ev.target;
+    if (t && (t.id === 'fbContent' || (t.closest && t.closest('.fb-drop')))) return;
+    onFbPaste(ev);
   });
   if (thumbs) thumbs.addEventListener('click', function (ev) {
     var btn = ev.target.closest ? ev.target.closest('.chip-x') : null;

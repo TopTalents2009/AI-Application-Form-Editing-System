@@ -173,9 +173,10 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 
 <section class="card wecom-home" id="wecomHome">
   <h2>各群记录</h2>
-  <p class="wecom-lead">同一群在多台电脑上只显示一条。浏览消息时可勾选「申报书」和修改意见（聊天文本或文件）后点底部「上传任务」；也可按日期窗自动「拆解任务」。生成计划后仍需人工确认才会写入。</p>
+  <p class="wecom-lead">同一群在多台电脑上只显示一条。浏览消息时可勾选「申报书」和修改意见（聊天文本或文件）后点底部「上传任务」；也可按日期窗自动「拆解任务」。值班模型认出修改意见后会交给 Gemini 配申报书，任务停在待确认，确认后才会写入。</p>
   <div class="msg" id="wecomMsg"></div>
   <div class="wecom-status" id="wecomStatus">检测解析服务…</div>
+  <div class="wecom-status" id="wecomWatchStatus" style="margin-top:6px"></div>
   <div class="wecom-board">
     <aside class="wecom-side">
       <div class="wecom-side-hd">
@@ -221,12 +222,12 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
       <h2 id="fbTitle">意见反馈</h2>
       <button type="button" class="ghost" id="fbCloseBtn">关闭</button>
     </div>
-    <p class="fb-hint">描述使用中的问题或建议，可附截图。管理员会在后台看到。</p>
-    <textarea id="fbContent" class="fb-ta" rows="5" maxlength="4000" placeholder="请填写反馈内容…"></textarea>
+    <p class="fb-hint">描述使用中的问题或建议，可点下方选择图片，也可在输入框 Ctrl+V 粘贴截图。管理员会在后台看到。</p>
+    <textarea id="fbContent" class="fb-ta" rows="5" maxlength="4000" placeholder="请填写反馈内容… 也可 Ctrl+V 粘贴截图"></textarea>
     <label class="drop fb-drop" for="fbFiles">
       <input type="file" id="fbFiles" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" multiple>
       <span class="dz-main">点击选择图片（可多选，最多 8 张）</span>
-      <span class="dz-sub">jpg / png / gif / webp，单张不超过 8MB；点缩略图 × 移除</span>
+      <span class="dz-sub">jpg / png / gif / webp，单张不超过 8MB；也可在输入框粘贴；点缩略图 × 移除</span>
     </label>
     <div class="fb-thumbs" id="fbThumbs"></div>
     <div class="fb-actions">
@@ -290,6 +291,6 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 
 <script src="/public/session.js?v=py55"></script>
 <script src="/public/wecom-board.js?v=py2"></script>
-<script src="/public/app.js?v=py65"></script>
+<script src="/public/app.js?v=py66"></script>
 </body>
 </html>

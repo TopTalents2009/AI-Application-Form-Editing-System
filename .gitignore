@@ -4,8 +4,9 @@ config.default.json
 .env
 .env.*
 
-# runtime data (申报书原文、意见、计划、库快照)
+# runtime data (申报书原文、意见、计划、库快照) and watch cursor
 tasks/
+data/
 batches/
 client_inbox/
 feedback/

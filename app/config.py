@@ -18,6 +18,8 @@ LLM_TIMEOUT_SECTION = 360.0
 LLM_STREAM = False
 PLAN_CONCURRENCY = 2
 EFFORT_LABELS = {"low": "短（low）", "medium": "中（medium）", "high": "长（high）"}
+SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
+WATCH_MODEL_DEFAULT = "Qwen/Qwen3.5-4B"
 
 def llm_api_base(url: str) -> str:
     """统一成 OpenAI 兼容根。已带 /v1、/v3、/api/v3 的保持原样（火山方舟是 /api/v3）。"""
@@ -251,6 +253,69 @@ def _wecom_chat_block(c: dict) -> dict:
         "apiKey": key,
         "groups": groups,
         "configured": bool(key),
+        "watch": _wecom_watch_block(raw),
+    }
+
+
+def _wecom_watch_block(raw: dict) -> dict:
+    """聊天值班：硅基流动小模型认意见，Gemini 再配申报书。"""
+    w = raw.get("watch") if isinstance(raw.get("watch"), dict) else {}
+    mode = str(w.get("mode") or "").strip().lower()
+    if mode not in ("auto", "review", "off"):
+        mode = "auto"
+    interval = max(30, min(_as_int(w.get("intervalSec") or w.get("interval"), 120), 3600))
+    window = max(6, min(_as_int(w.get("windowHours"), 48), 168))
+    wait_min = max(0, min(_as_int(w.get("opinionWaitMin"), 60), 24 * 60))
+    base = str(w.get("baseUrl") or SILICONFLOW_BASE).strip().rstrip("/")
+    if not base or FILL_MARK in base:
+        base = SILICONFLOW_BASE
+    model = str(w.get("model") or WATCH_MODEL_DEFAULT).strip() or WATCH_MODEL_DEFAULT
+    if FILL_MARK in model:
+        model = WATCH_MODEL_DEFAULT
+    key = _usable_secret(w.get("apiKey") or w.get("api_key"))
+    timeout = max(15, min(_as_int(w.get("timeoutSec"), 60) or 60, 180))
+    owner = str(w.get("owner") or w.get("ownerUsername") or "").strip()
+    enabled = w.get("enabled")
+    if enabled is None:
+        enabled = bool(key) and mode != "off"
+    else:
+        enabled = _as_bool(enabled, bool(key)) and mode != "off"
+    return {
+        "enabled": bool(enabled),
+        "mode": mode,
+        "intervalSec": interval,
+        "windowHours": window,
+        "opinionWaitMin": wait_min,
+        "allowNoOpinion": _as_bool(w.get("allowNoOpinion"), False),
+        "owner": owner,
+        "baseUrl": llm_api_base(base),
+        "apiKey": key,
+        "model": model,
+        "timeoutSec": timeout,
+        "configured": bool(key and model),
+    }
+
+
+def resolve_watch_llm() -> dict:
+    """值班识别模型（与 Gemini 计划模型分开）。"""
+    watch = ((load_config().get("wecomChat") or {}).get("watch")) or {}
+    key = _usable_secret(watch.get("apiKey"))
+    model = str(watch.get("model") or WATCH_MODEL_DEFAULT).strip() or WATCH_MODEL_DEFAULT
+    base = llm_api_base(str(watch.get("baseUrl") or SILICONFLOW_BASE))
+    if not key or not model:
+        raise ValueError("未配置值班模型：请在管理后台填写硅基流动 API Key")
+    return {
+        "id": model,
+        "model": model,
+        "label": "值班识别",
+        "baseUrl": base,
+        "apiKey": key,
+        "stream": False,
+        "timeoutSec": max(15, min(_as_int(watch.get("timeoutSec"), 60) or 60, 180)),
+        "temperature": LLM_TEMPERATURE,
+        "apiFormat": "openai",
+        "enableThinking": False,
+        "ready": True,
     }
 
 
@@ -616,6 +681,19 @@ def _as_int(val, fallback: int) -> int:
         return fallback
 
 
+def _as_bool(val, fallback: bool = False) -> bool:
+    if val in (None, ""):
+        return fallback
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    if s in ("1", "true", "yes", "on"):
+        return True
+    if s in ("0", "false", "no", "off"):
+        return False
+    return fallback
+
+
 def _merge_grok(raw: dict, grok: dict):
     if grok.get("baseUrl") is not None:
         raw["baseUrl"] = llm_api_base(str(grok.get("baseUrl") or ""))
@@ -781,8 +859,43 @@ def _merge_wecom_chat(raw: dict, wecom: dict):
                 if s and s not in groups:
                     groups.append(s)
         blob["groups"] = groups
+    if isinstance(wecom.get("watch"), dict):
+        _merge_wecom_watch(blob, wecom.get("watch") or {})
     if blob:
         raw["wecomChat"] = blob
+
+
+def _merge_wecom_watch(blob: dict, watch: dict):
+    """值班模型配置。密钥留空不改。"""
+    cur = blob.get("watch") if isinstance(blob.get("watch"), dict) else {}
+    if "enabled" in watch:
+        cur["enabled"] = _as_bool(watch.get("enabled"), False)
+    if watch.get("mode") is not None:
+        mode = str(watch.get("mode") or "").strip().lower()
+        if mode in ("auto", "review", "off"):
+            cur["mode"] = mode
+    if watch.get("intervalSec") not in (None, ""):
+        cur["intervalSec"] = max(30, min(_as_int(watch.get("intervalSec"), 120), 3600))
+    if watch.get("windowHours") not in (None, ""):
+        cur["windowHours"] = max(6, min(_as_int(watch.get("windowHours"), 48), 168))
+    if watch.get("opinionWaitMin") not in (None, ""):
+        cur["opinionWaitMin"] = max(0, min(_as_int(watch.get("opinionWaitMin"), 60), 24 * 60))
+    if "allowNoOpinion" in watch:
+        cur["allowNoOpinion"] = _as_bool(watch.get("allowNoOpinion"), False)
+    if "owner" in watch:
+        cur["owner"] = str(watch.get("owner") or "").strip()
+    if watch.get("baseUrl") is not None:
+        base = str(watch.get("baseUrl") or SILICONFLOW_BASE).strip().rstrip("/")
+        cur["baseUrl"] = llm_api_base(base or SILICONFLOW_BASE)
+    if watch.get("model") is not None:
+        mid = str(watch.get("model") or WATCH_MODEL_DEFAULT).strip() or WATCH_MODEL_DEFAULT
+        cur["model"] = mid
+    if watch.get("timeoutSec") not in (None, ""):
+        cur["timeoutSec"] = max(15, min(_as_int(watch.get("timeoutSec"), 60) or 60, 180))
+    key = _usable_secret(watch.get("apiKey")) if "apiKey" in watch else ""
+    if key:
+        cur["apiKey"] = key
+    blob["watch"] = cur
 
 
 def _merge_pool(raw: dict, pool: dict):
@@ -937,12 +1050,31 @@ def editor_config() -> dict:
             "hasKey": bool(cfg.get("wecomChatApiKey")),
             "groups": list(cfg.get("wecomChatGroups") or []),
             "configured": bool(cfg.get("wecomChatConfigured")),
+            "watch": _pack_wecom_watch(((cfg.get("wecomChat") or {}).get("watch")) or {}),
         },
         "classifyModel": (cfg.get("model") if model_family(cfg.get("model") or "") == "gemini" else "") or gemini["id"],
         "hasDefault": DEFAULT_CONFIG_PATH.exists(),
     }
     pub["configured"] = bool(gemini.get("ready") or grok.get("ready") or doubao.get("ready") or cfg.get("configured"))
     return pub
+
+
+def _pack_wecom_watch(w: dict) -> dict:
+    w = w if isinstance(w, dict) else {}
+    return {
+        "enabled": bool(w.get("enabled")),
+        "mode": str(w.get("mode") or "auto"),
+        "intervalSec": int(w.get("intervalSec") or 120),
+        "windowHours": int(w.get("windowHours") or 48),
+        "opinionWaitMin": int(w.get("opinionWaitMin") or 60),
+        "allowNoOpinion": bool(w.get("allowNoOpinion")),
+        "owner": str(w.get("owner") or ""),
+        "baseUrl": str(w.get("baseUrl") or SILICONFLOW_BASE),
+        "model": str(w.get("model") or WATCH_MODEL_DEFAULT),
+        "timeoutSec": int(w.get("timeoutSec") or 60),
+        "hasKey": bool(w.get("apiKey")),
+        "configured": bool(w.get("configured")),
+    }
 
 
 def frontend_config() -> dict:

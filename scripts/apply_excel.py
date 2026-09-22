@@ -263,7 +263,10 @@ def write_xls_com(src, out, sheets):
         import pythoncom
         import win32com.client
     except ImportError as e:
-        raise RuntimeError("写入 .xls 需要本机安装 Microsoft Excel，以及 pywin32") from e
+        raise RuntimeError(
+            "写入旧版 .xls 需要本机安装 Microsoft Excel，以及 Python 包 pywin32。"
+            "请在当前解释器执行：pip install pywin32"
+        ) from e
 
     mutations = []
     for sh in sheets:
@@ -317,15 +320,46 @@ def write_xls_com(src, out, sheets):
             pass
 
 
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def sniff_excel_kind(path):
+    """按文件头判断真实格式。聊天里常把 xlsx 存成 .xls。"""
+    ext = os.path.splitext(str(path or ""))[1].lower()
+    head = b""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+    except OSError:
+        head = b""
+    if head.startswith(b"PK"):
+        if ext == ".xlsm":
+            return "xlsm"
+        try:
+            import zipfile
+            with zipfile.ZipFile(path) as z:
+                names = [str(n or "").replace("\\", "/").lower() for n in z.namelist()]
+            if any(n.endswith("xl/vbaProject.bin".lower()) or n.endswith("vbaproject.bin") for n in names):
+                return "xlsm"
+        except Exception:
+            pass
+        return "xlsx"
+    if head.startswith(_OLE_MAGIC):
+        return "xls"
+    if ext in (".xlsx", ".xlsm", ".xls"):
+        return ext.lstrip(".")
+    return ""
+
+
 def apply_file(src, out, backup, edits):
     src, out, backup = str(src), str(out), str(backup)
-    ext = os.path.splitext(src)[1].lower()
+    kind = sniff_excel_kind(src)
     shutil.copyfile(src, backup)
     if os.path.abspath(src) != os.path.abspath(out):
         shutil.copyfile(src, out)
 
-    if ext in (".xlsx", ".xlsm"):
-        wb, sheets = load_openpyxl_sheets(out, keep_vba=(ext == ".xlsm"))
+    if kind in ("xlsx", "xlsm"):
+        wb, sheets = load_openpyxl_sheets(out, keep_vba=(kind == "xlsm"))
         try:
             results = apply_edits_to_sheets(sheets, edits)
             write_openpyxl(wb, sheets, out)
@@ -337,7 +371,7 @@ def apply_file(src, out, backup, edits):
             raise
         return results
 
-    if ext == ".xls":
+    if kind == "xls":
         sheets = load_xls_sheets(src)
         results = apply_edits_to_sheets(sheets, edits)
         write_xls_com(src, out, sheets)

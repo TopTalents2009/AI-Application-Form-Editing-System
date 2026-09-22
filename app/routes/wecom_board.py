@@ -29,6 +29,29 @@ async def api_health(request: Request):
     return await W.health()
 
 
+@router.get("/api/wecom/watch")
+async def api_watch_status(request: Request):
+    _user(request)
+    from ..wecom_watch import public_status
+    return public_status()
+
+
+@router.post("/api/wecom/watch-run")
+async def api_watch_run(request: Request):
+    _user(request)
+    from ..wecom_watch import scan_once
+    return await scan_once(force=True)
+
+
+@router.post("/api/wecom/watch-probe")
+async def api_watch_probe(request: Request):
+    u = _user(request)
+    if u.get("role") != "admin":
+        raise HTTPException(403, "仅管理员可检测值班模型")
+    from ..wecom_watch_llm import probe_watch
+    return await probe_watch()
+
+
 @router.get("/api/wecom/sources")
 async def api_sources(request: Request):
     _user(request)
@@ -280,11 +303,10 @@ async def api_split_preview(body: dict, request: Request):
 @router.post("/api/wecom/split-create")
 async def api_split_create(body: dict, request: Request):
     _user(request)
-    import asyncio, base64
     from datetime import datetime, timedelta
     from ..main import runner
-    from ..wecom_cases import cluster_messages, annotate_existing, opinion_txt_bytes, resolve_app_upload, strip_cache_prefix
-    from ..runner import sanitize
+    from ..wecom_cases import cluster_messages, annotate_existing
+    from ..wecom_submit import submit_cases
     u = _user(request)
     body = body if isinstance(body, dict) else {}
     sid = str(body.get("session_id") or "").strip()
@@ -340,109 +362,15 @@ async def api_split_create(body: dict, request: Request):
                 "errors": [{"id": next(iter(want_set)), "detail": "没有找到该条申报书，请关闭窗口后重新拆解再上传"}],
             }
     force = bool(body.get("force"))
-    runnable, blocked = [], []
-    for c in cases:
-        if c.get("existing") and not force:
-            blocked.append({"id": c.get("id"), "filename": (c.get("app") or {}).get("filename"), "detail": "该群文件已经上传过，可打开已有任务"})
-            continue
-        if not (c.get("app") or {}).get("copies") and not c.get("ready"):
-            blocked.append({"id": c.get("id"), "filename": (c.get("app") or {}).get("filename"), "detail": "申报书未在各电脑缓存"})
-            continue
-        runnable.append(c)
-    cases = runnable[:20]
-    if not cases:
-        return {
-            "ok": False,
-            "created": [],
-            "skipped": [],
-            "errors": blocked or [{"detail": "没有可上传的申报书"}],
-        }
-
-    async def grab(copies: list) -> dict:
-        last = {"kind": "missing", "detail": "未缓存"}
-        try:
-            got = await W.fetch_attachment_any(copies, wait_s=50)
-        except W.WecomError as e:
-            return {"kind": "error", "detail": e.message}
-        if got.get("kind") == "file" and got.get("content"):
-            return got
-        last = got
-        if last.get("kind") == "pending":
-            last = dict(last)
-            last["detail"] = last.get("detail") or "远端助手还没回传文件"
-        return last
-
-    created, skipped, errors = [], [], []
-    for c in cases:
-        app = c.get("app") or {}
-        got = await grab(app.get("copies") or [])
-        if got.get("kind") != "file":
-            errors.append({"id": c.get("id"), "filename": app.get("filename"), "detail": got.get("detail") or "申报书未缓存"})
-            continue
-        raw = got.get("content") or b""
-        if len(raw) < 64:
-            errors.append({"id": c.get("id"), "filename": app.get("filename"), "detail": "申报书文件过小"})
-            continue
-        decided = resolve_app_upload(
-            str(app.get("filename") or ""),
-            str(got.get("filename") or ""),
-            app.get("message_id"),
-        )
-        if not decided.get("ok"):
-            errors.append({
-                "id": c.get("id"),
-                "filename": decided.get("filename") or app.get("filename"),
-                "detail": decided.get("detail") or "不是申报书",
-            })
-            continue
-        aname = sanitize(str(decided.get("filename") or app.get("filename") or "申报书.pdf"))
-        opinions = []
-        used = {aname}
-        for op in c.get("opinions") or []:
-            oname = sanitize(str(op.get("filename") or "意见.txt"))
-            base, n = oname, 2
-            while oname in used:
-                stem, ext = (base.rsplit(".", 1) + [""])[:2] if "." in base else (base, "")
-                oname = stem + "-" + str(n) + (("." + ext) if ext else "")
-                n += 1
-            used.add(oname)
-            if op.get("kind") == "text":
-                opinions.append({"name": oname, "dataB64": base64.b64encode(opinion_txt_bytes(op)).decode()})
-                continue
-            og = await grab(op.get("copies") or [])
-            if og.get("kind") != "file":
-                skipped.append({"id": c.get("id"), "filename": oname, "detail": og.get("detail") or "意见文档未缓存"})
-                continue
-            opinions.append({
-                "name": sanitize(strip_cache_prefix(str(og.get("filename") or oname), op.get("message_id")) or oname),
-                "dataB64": base64.b64encode(og.get("content") or b"").decode(),
-            })
-        try:
-            t = runner.create({
-                "engine": "api",
-                "app": {"name": aname, "dataB64": base64.b64encode(raw).decode()},
-                "opinions": opinions,
-                "source": "wecom",
-                "wecom": {
-                    "caseId": c.get("id"),
-                    "sessionId": sid,
-                    "sessionName": session_name,
-                    "appFile": aname,
-                    "messageId": app.get("message_id"),
-                },
-            }, owner=str(u.get("username") or ""))
-        except ValueError as e:
-            errors.append({"id": c.get("id"), "filename": aname, "detail": str(e)})
-            continue
-        runner.enqueue(t["id"])
-        created.append({"id": t["id"], "url": "/t/" + t["id"], "filename": aname, "caseId": c.get("id")})
-    return {
-        "ok": bool(created),
-        "created": created,
-        "skipped": skipped,
-        "errors": errors,
-        "hint": "已上传的任务会生成修改计划，确认后才会写入文件。" if created else "",
-    }
+    return await submit_cases(
+        runner,
+        cases,
+        session_id=sid,
+        session_name=session_name,
+        owner=str(u.get("username") or ""),
+        force=force,
+        source_tag="wecom",
+    )
 
 
 def _norm_copies(raw) -> list:

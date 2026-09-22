@@ -193,3 +193,9 @@ def _startup():
             print("[auth] " + n, flush=True)
     except Exception as e:
         print("[auth] MySQL 初始化失败，登录功能不可用：" + str(e)[:200], flush=True)
+    try:
+        from .wecom_watch import start_watch
+        start_watch(asyncio.get_running_loop())
+        print("[wecom-watch] 值班循环已启动", flush=True)
+    except Exception as e:
+        print("[wecom-watch] 启动失败：" + str(e)[:200], flush=True)

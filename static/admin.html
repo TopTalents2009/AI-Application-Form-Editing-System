@@ -479,6 +479,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         <div class="msg" id="wecomMsg"></div>
         <div class="acard" style="margin-bottom:0">
           <div class="wecom-status" id="wecomStatus">检测解析服务…</div>
+          <div class="wecom-status" id="wecomWatchStatus" style="margin-top:6px"></div>
           <div class="wecom-board">
             <aside class="wecom-side">
               <div class="wecom-side-hd">
@@ -1958,9 +1959,10 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     (root || document).querySelectorAll('[data-f="' + key + '"]').forEach(function (el) {
       var k = el.getAttribute('data-k');
       if (k === 'apiKey' || k === 'password') { if (el.value.trim()) p[k] = el.value.trim(); }
-      else if (k === 'stream') p.stream = el.checked;
-      else if (k === 'enableSearch') p.enableSearch = el.checked;
-      else if (k === 'timeoutSec') { var n = parseInt(el.value, 10); if (n > 0) p.timeoutSec = n; }
+      else if (el.type === 'checkbox') p[k] = !!el.checked;
+      else if (k === 'timeoutSec' || k === 'intervalSec' || k === 'windowHours' || k === 'opinionWaitMin') {
+        var n = parseInt(el.value, 10); if (n > 0 || k === 'opinionWaitMin') p[k] = isNaN(n) ? 0 : n;
+      }
       else if (k === 'temperature') { var t = parseFloat(el.value); if (!isNaN(t)) p.temperature = t; }
       else if (k === 'id') { if (el.value.trim()) p.id = el.value.trim(); }
       else if (k === 'baseUrl') p.baseUrl = el.value.trim();
@@ -2173,23 +2175,49 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
   }
 
+  function collectWecom(card) {
+    var p = collectFields('wecomChat', card);
+    p.watch = collectFields('wecomWatch', card);
+    return p;
+  }
+
   function renderWecomCard(ed) {
     var box = document.getElementById('wecomCfgCard');
     if (!box) return;
     var p = ed.wecomChat || {};
+    var w = p.watch || {};
     var ready = !!p.configured;
     var groups = (p.groups || []).join('\n');
+    var mode = w.mode || 'auto';
     box.innerHTML =
       '<div class="acard">' +
         '<h3>企业微信聊天记录 ' +
           '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (p.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">管理后台「各群记录」只读调用聊天记录解析服务（默认 <code>http://127.0.0.1:8767</code>）。请先在该项目启动 <code>start.ps1</code> 并复制开放读取 API Key。群白名单一行一个，留空表示列出全部已同步群。</p>' +
+        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">管理后台「各群记录」只读调用聊天记录解析服务（默认 <code>http://127.0.0.1:8767</code>）。请先在该项目启动 <code>start.ps1</code> 并复制开放读取 API Key。群白名单一行一个；值班扫描必须填写关注群，留空只浏览不自动提交。</p>' +
         '<div class="cfg-grid">' +
           '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="wecomChat" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://127.0.0.1:8767"></div></div>' +
           '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="wecomChat" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-API-Key') + '"></div></div>' +
-          '<div class="f-row span2"><label>关注群（可选，一行一个）</label><div class="inp"><textarea data-f="wecomChat" data-k="groups" rows="3" placeholder="申报材料群">' + esc(groups) + '</textarea></div></div>' +
+          '<div class="f-row span2"><label>关注群（值班必填，一行一个）</label><div class="inp"><textarea data-f="wecomChat" data-k="groups" rows="3" placeholder="申报材料群">' + esc(groups) + '</textarea></div></div>' +
           '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已配置密钥 · 可打开各群记录' : '未配置 · 看板无法列出消息') + '</div></div>' +
           '<div class="f-row"><label>连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomHealthBtn">检测解析服务</button><span id="wecomHealthMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
+        '</div>' +
+        '<h3 style="margin:22px 0 10px;font-size:14px">聊天值班（硅基流动）' +
+          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (w.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (w.hasKey ? '值班密钥已配置' : '未配置值班密钥') + '</span></h3>' +
+        '<p style="margin:-4px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">Qwen 只认群里的修改意见；认到之后才交给 Gemini 匹配申报书并提交到「待确认」。不会自动写入正文。</p>' +
+        '<div class="cfg-grid">' +
+          '<div class="f-row"><label>开启值班</label><div style="padding-top:10px"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" data-f="wecomWatch" data-k="enabled"' + (w.enabled ? ' checked' : '') + '> 扫描关注群新消息</label></div></div>' +
+          '<div class="f-row"><label>识别到意见后</label><div class="inp"><select data-f="wecomWatch" data-k="mode">' +
+            '<option value="auto"' + (mode === 'auto' ? ' selected' : '') + '>自动提交待确认任务</option>' +
+            '<option value="review"' + (mode === 'review' ? ' selected' : '') + '>只列入待人审</option>' +
+            '<option value="off"' + (mode === 'off' ? ' selected' : '') + '>关闭</option>' +
+          '</select></div></div>' +
+          '<div class="f-row"><label>扫描间隔（秒）</label><div class="inp"><input data-f="wecomWatch" data-k="intervalSec" value="' + esc(w.intervalSec || 120) + '" placeholder="120"></div></div>' +
+          '<div class="f-row"><label>回看窗口（小时）</label><div class="inp"><input data-f="wecomWatch" data-k="windowHours" value="' + esc(w.windowHours || 48) + '" placeholder="48"></div></div>' +
+          '<div class="f-row"><label>值班账号</label><div class="inp"><input data-f="wecomWatch" data-k="owner" value="' + esc(w.owner || '') + '" placeholder="任务归属用户名，可空"></div></div>' +
+          '<div class="f-row"><label>模型 ID</label><div class="inp"><input data-f="wecomWatch" data-k="model" value="' + esc(w.model || 'Qwen/Qwen3.5-4B') + '" placeholder="Qwen/Qwen3.5-4B"></div></div>' +
+          '<div class="f-row span2"><label>硅基流动 Base URL</label><div class="inp"><input data-f="wecomWatch" data-k="baseUrl" value="' + esc(w.baseUrl || 'https://api.siliconflow.cn/v1') + '" placeholder="https://api.siliconflow.cn/v1"></div></div>' +
+          '<div class="f-row span2"><label>硅基流动 API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="wecomWatch" data-k="apiKey" value="" placeholder="' + (w.hasKey ? '••••••••（已配置）' : '填入 sk-') + '"></div></div>' +
+          '<div class="f-row"><label>值班连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomWatchProbeBtn">检测值班模型</button> <button type="button" class="mini" id="wecomWatchRunBtn">立即扫描</button><span id="wecomWatchProbeMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
         '</div>' +
         '<div class="cfg-save-row">' +
           '<button type="button" class="mini cfg-save-one">保存聊天记录配置</button>' +
@@ -2210,6 +2238,34 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
       }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });
     });
+    var pb = box.querySelector('#wecomWatchProbeBtn');
+    if (pb) pb.addEventListener('click', function () {
+      var msg = box.querySelector('#wecomWatchProbeMsg');
+      if (msg) msg.textContent = '检测中…';
+      fetch('/api/wecom/watch-probe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+        .then(function (res) {
+          var j = res.data || {};
+          if (!msg) return;
+          if (j.ok) msg.textContent = '✓ ' + (j.detail || '已连通') + ' · ' + (j.model || '') + ' · ' + (j.ms || 0) + 'ms';
+          else msg.textContent = '✗ ' + (j.error || j.detail || '失败');
+          msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
+        }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });
+    });
+    var rb = box.querySelector('#wecomWatchRunBtn');
+    if (rb) rb.addEventListener('click', function () {
+      var msg = box.querySelector('#wecomWatchProbeMsg');
+      if (msg) msg.textContent = '扫描中…';
+      fetch('/api/wecom/watch-run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+        .then(function (res) {
+          var j = res.data || {};
+          if (!msg) return;
+          if (j.ok) msg.textContent = '✓ 本轮完成' + (j.created && j.created.length ? '，提交 ' + j.created.length + ' 条' : '');
+          else msg.textContent = '✗ ' + (j.detail || '扫描未执行');
+          msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
+        }).catch(function (e) { if (msg) msg.textContent = '扫描失败：' + (e.message || e); });
+    });
   }
 
   function saveWecomConfig(card) {
@@ -2218,7 +2274,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     var ed = cfgData.edit || {};
     if (btn) btn.disabled = true;
     cardMsg(msg, false, '');
-    postConfig({ wecomChat: collectFields('wecomChat', card) }).then(function (res) {
+    postConfig({ wecomChat: collectWecom(card) }).then(function (res) {
       if (res.ok && res.data && res.data.version) {
         cardMsg(msg, true, '✓ 已保存');
         var got = res.data.edit || {};
@@ -2241,7 +2297,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       doubao: collectFields('doubao'),
       pool: collectFields('pool', document.getElementById('poolCfgCard')),
       papers: collectFields('papers', document.getElementById('papersCfgCard')),
-      wecomChat: collectFields('wecomChat', document.getElementById('wecomCfgCard')),
+      wecomChat: collectWecom(document.getElementById('wecomCfgCard')),
       classifyModel: document.getElementById('classifyModel').value
     };
     postConfig(payload).then(function (res) {

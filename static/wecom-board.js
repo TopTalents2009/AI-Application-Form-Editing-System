@@ -121,6 +121,29 @@
     }).catch(function (e) {
       if (st) st.innerHTML = '<span class="dot-bad">●</span> 检测失败：' + esc(e.message || e);
     });
+    loadWecomWatchStatus();
+  }
+  var wecomWatchTimer = null;
+  function loadWecomWatchStatus() {
+    var el = document.getElementById('wecomWatchStatus');
+    if (!el) return;
+    wecomQuery('/api/wecom/watch').then(function (res) {
+      var j = res.data || {};
+      if (!res.ok) {
+        el.textContent = '';
+        return;
+      }
+      var bits = [];
+      if (!j.enabled) bits.push('值班关闭');
+      else if (j.needGroups) bits.push('值班已开，请先填写关注群');
+      else if (!j.modelReady) bits.push('值班未配置模型密钥');
+      else bits.push('值班 ' + (j.mode === 'review' ? '待人审' : '自动提交待确认') + ' · ' + esc(j.model || ''));
+      if (j.running) bits.push('正在扫描');
+      else if (j.lastRunAt) bits.push('上次 ' + esc(j.lastRunAt));
+      if (j.lastNote) bits.push(esc(j.lastNote));
+      el.innerHTML = '<span class="' + (j.enabled && j.modelReady && !j.needGroups ? 'dot-ok' : '') + '">●</span> ' + bits.join(' · ');
+    }).catch(function () {});
+    if (!wecomWatchTimer) wecomWatchTimer = setInterval(loadWecomWatchStatus, 30000);
   }
   function renderWecomSourcesIfChanged() {
     var key = (wecomState.sources || []).map(function (s) {
