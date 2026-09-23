@@ -255,6 +255,16 @@ def _msg_fuse_key(m: dict) -> tuple:
     return ("t", clock, sender, typ, text)
 
 
+def _sync_stamp(value: str) -> str:
+    """把同步时间收成可比较、可展示的「YYYY-MM-DD HH:MM:SS」。"""
+    s = str(value or "").strip().replace("T", " ")
+    if "+" in s:
+        s = s.split("+", 1)[0].strip()
+    if s.endswith("Z"):
+        s = s[:-1].strip()
+    return s[:19]
+
+
 def merge_groups(pairs: list) -> list:
     buckets: dict[str, dict] = {}
     for sess, src in pairs:
@@ -271,6 +281,7 @@ def merge_groups(pairs: list) -> list:
                 "is_group": False,
                 "msg_count": 0,
                 "last_time": "",
+                "synced_at": "",
                 "replicas": [],
             }
             buckets[uid] = b
@@ -287,8 +298,17 @@ def merge_groups(pairs: list) -> list:
         lt = str(sess.get("last_time") or "")
         if lt > str(b.get("last_time") or ""):
             b["last_time"] = lt
+        sync = _sync_stamp(sess.get("synced_at") or src.get("last_sync") or "")
+        if sync > str(b.get("synced_at") or ""):
+            b["synced_at"] = sync
         sid = str(src.get("id") or "")
-        if any(r.get("source_id") == sid for r in b["replicas"]):
+        existing = next((r for r in b["replicas"] if r.get("source_id") == sid), None)
+        if existing:
+            if sync > str(existing.get("synced_at") or ""):
+                existing["synced_at"] = sync
+            if lt > str(existing.get("last_time") or ""):
+                existing["last_time"] = lt
+                existing["msg_count"] = n
             continue
         b["replicas"].append({
             "source_id": sid,
@@ -296,10 +316,10 @@ def merge_groups(pairs: list) -> list:
             "label": source_label(src),
             "msg_count": n,
             "last_time": lt,
-            "synced_at": str(sess.get("synced_at") or src.get("last_sync") or ""),
+            "synced_at": sync,
         })
     out = list(buckets.values())
-    out.sort(key=lambda x: str(x.get("last_time") or ""), reverse=True)
+    out.sort(key=lambda x: (str(x.get("synced_at") or ""), str(x.get("last_time") or "")), reverse=True)
     return out
 
 
@@ -384,13 +404,14 @@ async def _sessions_of(source_id: str, limit: int = 1000) -> list:
     sid = str(source_id or "").strip()
     if L.available() and L.has_source(sid):
         return await asyncio.to_thread(L.list_sessions, sid, limit)
+    remote_limit = 5000 if int(limit or 0) <= 0 else max(1, min(int(limit), 5000))
     try:
-        rows = await _api_get("/api/sources/" + _enc(sid) + "/sessions", {"limit": limit})
+        rows = await _api_get("/api/sources/" + _enc(sid) + "/sessions", {"limit": remote_limit})
         if isinstance(rows, list):
             return [x for x in rows if isinstance(x, dict)]
     except WecomError:
         pass
-    data = await _get(PREFIX + "/sources/" + _enc(sid) + "/sessions", {"limit": limit})
+    data = await _get(PREFIX + "/sources/" + _enc(sid) + "/sessions", {"limit": remote_limit})
     items = data.get("data") if isinstance(data.get("data"), list) else []
     return [x for x in items if isinstance(x, dict)]
 
@@ -438,7 +459,7 @@ async def list_merged_groups(
         if not sid:
             return []
         try:
-            sessions = await _sessions_of(sid, 5000 if watch_only else 1000)
+            sessions = await _sessions_of(sid, 0 if watch_only else 1000)
         except WecomError:
             return []
         rows = []
@@ -459,8 +480,11 @@ async def list_merged_groups(
         for chunk in await asyncio.gather(*[one(s) for s in srcs]):
             pairs.extend(chunk)
     items = merge_groups(pairs)
+    cap = max(1, min(int(limit or 400), 1000))
+    if watch_only:
+        cap = 1000
     if limit:
-        items = items[: max(1, min(int(limit), 1000))]
+        items = items[:cap]
     return {"items": items, "count": len(items), "source_id": want or "*", "kind": kind}
 
 

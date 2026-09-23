@@ -19,6 +19,20 @@ def _guard_task(request: Request, t: dict | None) -> dict:
     return t
 
 
+def _with_owner_name(t: dict) -> dict:
+    out = {k: v for k, v in t.items() if k != "dir"}
+    owner = str(out.get("owner") or "").strip()
+    out["ownerName"] = ""
+    if not owner:
+        return out
+    try:
+        from ..auth import real_names_by_username
+        out["ownerName"] = real_names_by_username([owner]).get(owner) or ""
+    except Exception:
+        out["ownerName"] = ""
+    return out
+
+
 def create_router(runner):
     router = APIRouter()
 
@@ -38,12 +52,21 @@ def create_router(runner):
         if u.get("role") != "admin":
             uname = str(u.get("username") or "")
             items = [x for x in items if str(x.get("owner") or "") == uname]
+        names = {}
+        try:
+            from ..auth import real_names_by_username
+            owners = [str(x.get("owner") or "").strip() for x in items]
+            names = real_names_by_username(owners)
+        except Exception:
+            names = {}
+        for item in items:
+            item["ownerName"] = names.get(str(item.get("owner") or "").strip()) or ""
         return {"tasks": items}
 
     @router.get("/api/tasks/{tid}")
     def get_task(tid: str, request: Request):
         t = _guard_task(request, runner.get(tid))
-        return {k: v for k, v in t.items() if k != "dir"}
+        return _with_owner_name(t)
 
     @router.get("/api/tasks/{tid}/plan")
     def get_plan(tid: str, request: Request):

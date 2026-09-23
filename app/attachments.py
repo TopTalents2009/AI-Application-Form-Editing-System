@@ -33,6 +33,7 @@ _TASK_ACTION = {
     "photo": "证件照无法通过改申报书正文替换。请按规格另行上传。",
     "sign": "电子签/签字扫描无法在正文完成。请在客户端或材料包中补签、补传。",
     "project": "项目证明/立项批文无法写入申报书项目表。请按意见补传证明材料（勿用论文代替）。",
+    "conversion": "成果转化证明（专利许可或转让协议、临床试验批件、孤儿药认定函等）无法写入申报书正文。请按意见另行补传扫描件，系统不能代替上传。",
 }
 
 KINDS = [
@@ -46,6 +47,7 @@ KINDS = [
     {"id": "photo", "label": "证件照", "keys": ("证件照", "一寸照", "白底照")},
     {"id": "sign", "label": "电子签", "keys": ("电子签", "电子签名", "签字扫描", "签名扫描")},
     {"id": "project", "label": "项目证明", "keys": ("项目证明", "项目材料", "项目扫描", "立项批文", "立项证明", "主持项目证明", "科研项目证明")},
+    {"id": "conversion", "label": "成果转化证明", "keys": ("成果转化证明", "成果转化", "转化证明")},
 ]
 KIND_POOL_ID = {
     "passport": "passport",
@@ -68,6 +70,7 @@ KIND_FOLDERS = {
     "equity": ("股权", "股权证明"),
     "paper": ("论文", "科研成果"),
     "project": ("项目证明", "项目"),
+    "conversion": ("成果转化", "转化证明"),
 }
 LOCAL_ATTACH_ROOT = Path(__file__).resolve().parent.parent / "附件"
 LOCAL_EXT = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".zip", ".xls", ".xlsx"}
@@ -77,7 +80,38 @@ NAME_KEYS = ("filename", "file_name", "name", "title", "title_zh", "原始文件
 KIND_KEYS = ("kind", "type", "category", "doc_type", "附件类型", "材料类型", "label", "分类")
 ID_KEYS = ("file_id", "fileId", "id", "attachment_id")
 PAPER_PATH = re.compile(r"paper|publication|论著|论文|著作|科研成果", re.I)
+_CONVERSION_PROOF_RE = re.compile(
+    r"成果转化.{0,16}(?:缺少|缺失|缺|需要|需补|未提供|未上传|没有).{0,8}证明"
+    r"|(?:缺少|缺失|需要|需补|未提供).{0,8}成果转化.{0,12}证明"
+    r"|转化证明.{0,10}(?:缺少|缺失|未提供|未上传|需补|请补)"
+)
 EXT_OK = re.compile(r"\.(pdf|docx?|jpe?g|png|tif{1,2}|webp|zip)$", re.I)
+
+
+def classify_talent_filename(filename: str) -> tuple[str, str]:
+    """聊天文件名归入人才附件类别。申报书、修改意见优先，材料名再按最长关键词。"""
+    from .wecom_cases import classify_file
+
+    name = str(filename or "").strip()
+    kind = classify_file(name)
+    if kind == "opinion":
+        return "opinion", "修改意见"
+    hit_id, hit_label, hit_len = "", "", 0
+    low = name.lower()
+    for item in KINDS:
+        words = list(item["keys"]) + list(KIND_FOLDERS.get(item["id"]) or ())
+        for kw in words:
+            token = str(kw or "").strip()
+            if len(token) < 2 or token.lower() not in low:
+                continue
+            if len(token) > hit_len:
+                hit_id, hit_label, hit_len = item["id"], item["label"], len(token)
+    explicit_app = bool(re.search(r"申报书|申请表|application\s*form", name, re.I))
+    if kind == "app" and (explicit_app or not hit_id):
+        return "app", "申报书"
+    if hit_id:
+        return hit_id, hit_label
+    return "other", "其他"
 
 
 def extract_needed_kinds(texts) -> list:
@@ -95,6 +129,8 @@ def extract_needed_kinds(texts) -> list:
 
 
 def _kind_needed(blob: str, kind: dict) -> bool:
+    if kind["id"] == "conversion":
+        return bool(_CONVERSION_PROOF_RE.search(blob or ""))
     for kw in kind["keys"]:
         start = 0
         low = blob if kw.isascii() else blob

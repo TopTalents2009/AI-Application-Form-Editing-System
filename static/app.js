@@ -554,6 +554,36 @@ function statusText(s) {
     arbitrating: '仲裁中', ready: '待确认配对', started: '执行中'
   }[s] || s;
 }
+function parseStamp(s) {
+  var m = String(s || '').match(/(\d{4})\D(\d{1,2})\D(\d{1,2})\D(\d{1,2})\D(\d{1,2})\D(\d{1,2})/);
+  if (!m) return 0;
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+}
+function formatElapsed(ms) {
+  if (!(ms >= 0)) ms = 0;
+  var sec = Math.floor(ms / 1000);
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor((sec % 3600) / 60);
+  var s = sec % 60;
+  function z(n) { return (n < 10 ? '0' : '') + n; }
+  if (h > 0) return h + ':' + z(m) + ':' + z(s);
+  return z(m) + ':' + z(s);
+}
+function runElapsed(since) {
+  var t0 = parseStamp(since);
+  if (!t0) return '';
+  return formatElapsed(Date.now() - t0);
+}
+function runSinceOf(t) {
+  if (!t) return '';
+  return t.runningSince || t.startedAt || '';
+}
+function statusLabel(s, since) {
+  var base = statusText(s);
+  if (s !== 'running') return base;
+  var el = runElapsed(since);
+  return el ? (base + ' ' + el) : base;
+}
 function createdKey(s) {
   var m = String(s || '').match(/(\d+)\D+(\d+)\D+(\d+)(?:\D+(\d+)\D+(\d+)\D+(\d+))?/);
   if (!m) return '';
@@ -574,7 +604,8 @@ function asSib(t) {
     id: t.id,
     status: t.status,
     appName: (typeof t.app === 'string' ? t.app : (t.app && t.app.name) || t.appName || ''),
-    mode: formModeOf(t)
+    mode: formModeOf(t),
+    runningSince: runSinceOf(t)
   };
 }
 function formModeOf(t) {
@@ -622,7 +653,7 @@ function paintNameCell(tr, row) {
     lis = '<ul class="tbooks' + (open ? '' : ' hidden') + '">';
     books.forEach(function (b, i) {
       lis += '<li data-i="' + i + '">' + modeBadge(b.mode) + '<span class="tbook-name" title="' + escAttr(b.appName || '') + '">' + esc(b.appName || '未命名') + '</span>';
-      if (b.status) lis += '<span class="badge st-' + escAttr(b.status) + '">' + esc(statusText(b.status)) + '</span>';
+      if (b.status) lis += statusBadgeHtml(b.status, b.status === 'running' ? (b.runningSince || '') : '');
       lis += '</li>';
     });
     lis += '</ul>';
@@ -709,14 +740,73 @@ function bindRowAct(tr) {
     openListRow(row);
   };
 }
+function taskOrigin(t) {
+  if (!t) return '人工提交';
+  var wecom = t.wecom && typeof t.wecom === 'object' ? t.wecom : {};
+  var name = String(t.wecomSession || wecom.sessionName || '').trim();
+  if (name) return name;
+  var src = String(t.source || '');
+  if (src === 'wecom' || src === 'wecom-watch') return '会话';
+  return '人工提交';
+}
+function taskOriginDetail(t) {
+  var origin = taskOrigin(t);
+  if (origin !== '人工提交') return origin;
+  var who = String((t && t.ownerName) || '').trim();
+  return who ? (origin + ' · ' + who) : origin;
+}
+function rowOrigin(row) {
+  var tasks = (row && row.sibs) || [];
+  if (!tasks.length) return taskOrigin(row && row.task);
+  var labels = [];
+  tasks.forEach(function (t) {
+    var lab = taskOrigin(t);
+    if (labels.indexOf(lab) < 0) labels.push(lab);
+  });
+  return labels.join('、') || '人工提交';
+}
+function rowRunSince(row) {
+  if (!row || row.status !== 'running') return '';
+  var best = '';
+  (row.sibs || []).forEach(function (t) {
+    if (!t || t.status !== 'running') return;
+    var s = runSinceOf(t);
+    if (s && (!best || s < best)) best = s;
+  });
+  if (best) return best;
+  return runSinceOf(row.task);
+}
+function statusBadgeHtml(status, since) {
+  var label = statusLabel(status, since);
+  if (status === 'running' && since) {
+    return '<span class="badge st-running" data-run-since="' + escAttr(since) + '" data-run-base="' + escAttr(statusText(status)) + '">' + esc(label) + '</span>';
+  }
+  return '<span class="badge st-' + escAttr(status) + '">' + esc(label) + '</span>';
+}
+function syncRunBadge(el, status, since) {
+  if (!el) return;
+  var label = statusLabel(status, since);
+  var cls = 'badge st-' + (status || '');
+  if (el.className !== cls) el.className = cls;
+  if (status === 'running' && since) {
+    el.setAttribute('data-run-since', since);
+    el.setAttribute('data-run-base', statusText(status));
+  } else {
+    el.removeAttribute('data-run-since');
+    el.removeAttribute('data-run-base');
+  }
+  if (el.textContent !== label) el.textContent = label;
+}
 function renderRow(row, tb) {
   var tr = document.createElement('tr');
   tr.setAttribute('data-key', rowKey(row));
   tr._row = row;
+  var origin = rowOrigin(row);
   tr.innerHTML =
     '<td class="col-time">' + esc(row.createdAt) + '</td>' +
     '<td class="col-name"></td>' +
-    '<td class="col-st"><span class="badge st-' + escAttr(row.status) + '">' + esc(statusText(row.status)) + '</span></td>' +
+    '<td class="col-src" title="' + escAttr(origin) + '">' + esc(origin) + '</td>' +
+    '<td class="col-st">' + statusBadgeHtml(row.status, rowRunSince(row)) + '</td>' +
     '<td class="col-act">' + actHtml(row) + '</td>';
   paintNameCell(tr, row);
   bindRowAct(tr);
@@ -730,13 +820,13 @@ function updateRow(tr, row) {
   var at = String(row.createdAt || '');
   if (timeTd && timeTd.textContent !== at) timeTd.textContent = at;
   paintNameCell(tr, row);
-  var badge = tr.querySelector('.col-st .badge');
-  if (badge) {
-    var cls = 'badge st-' + (row.status || '');
-    var tx = statusText(row.status);
-    if (badge.className !== cls) badge.className = cls;
-    if (badge.textContent !== tx) badge.textContent = tx;
+  var srcTd = tr.querySelector('.col-src');
+  if (srcTd) {
+    var origin = rowOrigin(row);
+    if (srcTd.textContent !== origin) srcTd.textContent = origin;
+    srcTd.title = origin;
   }
+  syncRunBadge(tr.querySelector('.col-st .badge'), row.status, rowRunSince(row));
   var act = tr.querySelector('.col-act');
   var html = actHtml(row);
   if (act && act.innerHTML !== html) {
@@ -814,7 +904,8 @@ function buildListRows(tasks, batches) {
       count: apps.length,
       books: apps.map(function (n) { return { id: '', appName: n, status: b.status, mode: kinds[n] || '' }; }),
       modes: apps.map(function (n) { return kinds[n] || ''; }),
-      batchId: b.id
+      batchId: b.id,
+      task: null
     });
   });
   Object.keys(grouped).forEach(function (bid) {
@@ -851,28 +942,48 @@ function buildListRows(tasks, batches) {
       count: 1,
       mode: formModeOf(t),
       modes: [formModeOf(t)],
-      id: t.id
+      id: t.id,
+      task: t
     });
   });
   rows.sort(function (a, b) { return createdKey(a.createdAt) > createdKey(b.createdAt) ? -1 : 1; });
   return rows;
+}
+var LIST_PAGE_SIZE = 17;
+var listPage = 1;
+var listRowsCache = [];
+function renderListPage() {
+  var n = listRowsCache.length;
+  var pages = Math.max(1, Math.ceil(n / LIST_PAGE_SIZE) || 1);
+  if (listPage > pages) listPage = pages;
+  if (listPage < 1) listPage = 1;
+  var start = (listPage - 1) * LIST_PAGE_SIZE;
+  var slice = listRowsCache.slice(start, start + LIST_PAGE_SIZE);
+  var tb = $('taskTable').querySelector('tbody');
+  $('emptyHint').style.display = n ? 'none' : 'block';
+  patchList(tb, slice);
+  syncSiblingsFromList();
+  var pager = $('listPager');
+  var info = $('listPageInfo');
+  var prev = $('listPagePrev');
+  var next = $('listPageNext');
+  if (pager) pager.classList.toggle('hidden', n <= LIST_PAGE_SIZE);
+  if (info) info.textContent = '第 ' + listPage + ' / ' + pages + ' 页 · 共 ' + n + ' 条';
+  if (prev) prev.disabled = listPage <= 1;
+  if (next) next.disabled = listPage >= pages;
+  var pill = $('listCount');
+  if (pill) {
+    if (n) { pill.textContent = n + ' 条'; pill.classList.remove('hidden'); }
+    else { pill.textContent = ''; pill.classList.add('hidden'); }
+  }
 }
 function refreshList() {
   Promise.all([
     fetch('/api/tasks').then(function (r) { return r.json(); }),
     fetch('/api/batches').then(function (r) { return r.json(); }).catch(function () { return { batches: [] }; })
   ]).then(function (pair) {
-    var rows = buildListRows((pair[0] && pair[0].tasks) || [], (pair[1] && pair[1].batches) || []);
-    var tb = $('taskTable').querySelector('tbody');
-    var n = rows.length;
-    $('emptyHint').style.display = n ? 'none' : 'block';
-    patchList(tb, rows);
-    syncSiblingsFromList();
-    var pill = $('listCount');
-    if (pill) {
-      if (n) { pill.textContent = n + ' 条'; pill.classList.remove('hidden'); }
-      else { pill.textContent = ''; pill.classList.add('hidden'); }
-    }
+    listRowsCache = buildListRows((pair[0] && pair[0].tasks) || [], (pair[1] && pair[1].batches) || []);
+    renderListPage();
   });
 }
 
@@ -928,9 +1039,14 @@ function renderDetail(t) {
   var retryLine = t.status === 'failed'
     ? '　<button type="button" class="mini" id="retryTaskBtn">重试</button><span id="retryErr" class="err"></span>'
     : '';
+  var runSince = (t.status === 'running') ? runSinceOf(t) : '';
+  var stHtml = runSince
+    ? '<b data-run-since="' + escAttr(runSince) + '" data-run-base="' + escAttr(statusText('running')) + '">' + esc(statusLabel('running', runSince)) + '</b>'
+    : '<b>' + esc(statusText(t.status)) + '</b>';
   $('detailMeta').innerHTML =
-    '状态：<b>' + statusText(t.status) + '</b>　·　创建：' + t.createdAt +
+    '状态：' + stHtml + '　·　创建：' + t.createdAt +
     (t.model ? '　·　模型：' + esc(t.modelLabel || t.model) : '') +
+    (taskOrigin(t) === '人工提交' && t.ownerName ? '　·　来源：' + esc(taskOriginDetail(t)) : '') +
     (t.appliedBy ? '　·　修改人：' + esc(t.appliedBy) : '') +
     (t.appliedAt ? '　·　确认写入：' + esc(t.appliedAt) : '') +
     (t.finishedAt ? '　·　结束：' + t.finishedAt : '') + warnLine + errLine + retryLine;
@@ -1047,10 +1163,7 @@ function syncSiblingsFromList() {
     updatePager();
     return;
   }
-  var tb = $('taskTable') && $('taskTable').querySelector('tbody');
-  if (!tb) return;
-  Array.prototype.forEach.call(tb.querySelectorAll('tr'), function (tr) {
-    var row = tr._row;
+  (listRowsCache || []).forEach(function (row) {
     if (!row || row.kind !== 'batch' || !row.sibs) return;
     var idx = -1;
     row.sibs.forEach(function (s, i) { if (s && String(s.id) === String(currentDetail)) idx = i; });
@@ -1835,8 +1948,25 @@ function initFeedback() {
 loadConfig();
 initUserBox();
 initFeedback();
+var listPrev = $('listPagePrev');
+var listNext = $('listPageNext');
+if (listPrev) listPrev.onclick = function () { if (listPage > 1) { listPage -= 1; renderListPage(); } };
+if (listNext) listNext.onclick = function () {
+  var pages = Math.max(1, Math.ceil(listRowsCache.length / LIST_PAGE_SIZE) || 1);
+  if (listPage < pages) { listPage += 1; renderListPage(); }
+};
 refreshList();
 setInterval(refreshList, 3000);
+setInterval(function () {
+  var nodes = document.querySelectorAll('[data-run-since]');
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    var base = el.getAttribute('data-run-base') || 'Agent 执行中';
+    var elap = runElapsed(el.getAttribute('data-run-since'));
+    var tx = elap ? (base + ' ' + elap) : base;
+    if (el.textContent !== tx) el.textContent = tx;
+  }
+}, 1000);
 (function bootFromUrl() {
   var id = taskIdFromLocation();
   if (!id) return;
@@ -2022,6 +2152,7 @@ function buildPlanEditor(el, t, plan) {
   var attSum = att.summary || (t.attachHit && t.attachHit.summary) || '';
   var pnoteCls = (preMiss || manualN) ? 'pnote warn' : 'pnote';
   var h = '<div class="' + pnoteCls + '">源文件申报书编号 <b class="pno">' + esc(appNo || '未识别') + '</b>　' + modeBadge(formModeOf(t)) + esc(t.app && t.app.name || '') +
+    '<br>来源：' + esc(taskOriginDetail(t)) +
     (poolSum ? '<br>库内检索：' + esc(poolSum) : '') +
     (attSum ? '<br>缺附件检索：' + esc(attSum) : '') +
     '<br>Gemini 已生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>为短摘要；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。' +

@@ -588,6 +588,69 @@ def format_pool_prompt(snap: dict) -> str:
     return "\n\n".join(chunks)
 
 
+def _rewrite_tree(value, pairs: list[tuple[str, str]]):
+    if isinstance(value, str):
+        text = value
+        for find, rep in pairs:
+            if find and find in text:
+                text = text.replace(find, rep)
+        return text
+    if isinstance(value, list):
+        return [_rewrite_tree(x, pairs) for x in value]
+    if isinstance(value, dict):
+        return {str(k): _rewrite_tree(v, pairs) for k, v in value.items()}
+    return value
+
+
+def _edit_pairs(edits: list, applied: list | None) -> list[tuple[str, str]]:
+    pairs = []
+    for i, e in enumerate(edits or []):
+        if not isinstance(e, dict):
+            continue
+        st = ""
+        if applied and i < len(applied) and isinstance(applied[i], dict):
+            st = str(applied[i].get("status") or "")
+        if applied and not st.startswith("hit"):
+            continue
+        find = str(e.get("find") or "").replace("\r\n", "\n").replace("\r", "\n")
+        rep = str(e.get("replace") or "").replace("\r\n", "\n").replace("\r", "\n")
+        if find:
+            pairs.append((find, rep))
+    return pairs
+
+
+def build_talent_export(
+    snap: dict | None,
+    edits: list | None = None,
+    applied: list | None = None,
+    *,
+    attach_id: str = "",
+    name: str = "",
+    mode: str = "",
+) -> dict:
+    """确认写入后的人才记录，字段结构与人才库 talent 记录一致。"""
+    talent = {}
+    if isinstance(snap, dict) and isinstance(snap.get("talent"), dict):
+        talent = dict(snap["talent"])
+    payload = talent.get("payload") if isinstance(talent.get("payload"), dict) else {}
+    record = {
+        "attach_id": str(talent.get("attach_id") or attach_id or ""),
+        "name": str(talent.get("name") or name or ""),
+        "mode": str(talent.get("mode") or mode or ""),
+        "source_year": talent.get("source_year") or "",
+        "profile_summary": str(talent.get("profile_summary") or ""),
+        "google_scholar_url": talent.get("google_scholar_url") or "",
+        "linkedin_url": talent.get("linkedin_url") or "",
+        "payload": payload,
+    }
+    if talent.get("id") not in (None, ""):
+        record["id"] = talent.get("id")
+    pairs = _edit_pairs(edits or [], applied)
+    if pairs:
+        record = _rewrite_tree(record, pairs)
+    return record
+
+
 def save_snapshot(task_dir: str | Path, snap: dict) -> None:
     d = Path(task_dir) / "work" / "tmp"
     d.mkdir(parents=True, exist_ok=True)

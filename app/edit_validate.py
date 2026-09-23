@@ -756,6 +756,130 @@ def declaring_company_names(app_text: str, extra: list | None = None) -> list[st
     return names
 
 
+_RANK_RE = re.compile(r"(?<!\d)(\d{1,2})\s*(\*)?\s*/\s*(\d{1,2})(?!\d)")
+_ROLE_RE = re.compile(r"第一作者兼通讯作者|共同第一作者、通讯作者|共同第一作者|第一作者|通讯作者|核心研究员|核心作者")
+_EXPLICIT_FIRST = re.compile(r"改为第一作者|改成第一作者|应为第一作者|是第一作者")
+_TITLE_STOP = {
+    "produced", "factor", "cells", "through", "system", "journal", "nature", "science",
+    "research", "university", "behavior", "immunity", "activation", "selective",
+    "inhibition", "inflammation", "resolution", "effectors", "control", "function",
+    "functions", "migration", "reports", "medicine",
+}
+_AUTHOR_FIELDS = ("replace", "opinionGemini", "opinionGrok", "opinionDoubao")
+
+
+def _title_tokens(text: str) -> set[str]:
+    return {
+        t for t in re.findall(r"[A-Za-z][A-Za-z'\-]{5,}", str(text or "").lower())
+        if t not in _TITLE_STOP
+    }
+
+
+def _last_rank(text: str):
+    ms = list(_RANK_RE.finditer(str(text or "")))
+    if not ms:
+        return None
+    m = ms[-1]
+    pos, total = int(m.group(1)), int(m.group(3))
+    if pos < 1 or total < 1 or pos > total:
+        return None
+    return {"pos": pos, "star": bool(m.group(2)), "total": total, "span": m.span(), "raw": m.group(0)}
+
+
+def _claims_first(text: str) -> bool:
+    blob = str(text or "")
+    return "第一作者" in blob or "共同第一" in blob
+
+
+def _same_paper(a: str, b: str) -> bool:
+    inter = _title_tokens(a) & _title_tokens(b)
+    if any(len(t) >= 12 for t in inter):
+        return True
+    return len(inter) >= 3
+
+
+def _kept_role(find_rank: dict, find_text: str) -> str:
+    roles = _ROLE_RE.findall(find_text or "")
+    if find_rank["pos"] > 1:
+        kept = []
+        for r in roles:
+            if "第一" in r or r in kept:
+                continue
+            kept.append(r)
+        if find_rank["star"] and "通讯作者" not in kept:
+            kept.insert(0, "通讯作者")
+        return "、".join(kept) if kept else ("通讯作者" if find_rank["star"] else "")
+    if find_rank["star"]:
+        return "第一作者兼通讯作者"
+    return "第一作者"
+
+
+def _apply_rank_and_role(text: str, rank_span: tuple, rank_raw: str, role_keep: str) -> str:
+    new = text[: rank_span[0]] + rank_raw + text[rank_span[1] :]
+    lines = new.split("\n")
+    idx = len(lines) - 1
+    while idx > 0 and not lines[idx].strip():
+        idx -= 1
+    line = lines[idx]
+    if _ROLE_RE.search(line):
+        cleaned = _ROLE_RE.sub("", line)
+        cleaned = re.sub(r"[、,，]{2,}", "、", cleaned).strip(" \t、,，")
+        if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", cleaned):
+            lines[idx] = role_keep
+        else:
+            lines[idx] = cleaned
+            if role_keep and role_keep not in cleaned:
+                lines.insert(idx + 1, role_keep)
+    elif role_keep:
+        lines.append(role_keep)
+    return "\n".join(x for x in lines if x is not None)
+
+
+def _downgrade_author_text(find: str, text: str) -> tuple[str, bool]:
+    fr = _last_rank(find)
+    rr = _last_rank(text)
+    if not fr or not rr or fr["pos"] <= 1 or _claims_first(find):
+        return text, False
+    if not _same_paper(find, text):
+        return text, False
+    better = rr["pos"] < fr["pos"]
+    if not better and not _claims_first(text):
+        return text, False
+    role = _kept_role(fr, find)
+    new = _apply_rank_and_role(text, rr["span"], fr["raw"], role)
+    return new, new != text
+
+
+def sanitize_paper_author_edits(edits: list) -> tuple[list, list[str]]:
+    """同一篇论文更新题名/期刊时，不得把非第一作者改成第一作者或更靠前的排序。"""
+    issues: list[str] = []
+    out = []
+    for i, e in enumerate(edits or [], 1):
+        if not isinstance(e, dict):
+            continue
+        ne = dict(e)
+        op = str(ne.get("opinion") or "") + str(ne.get("clause") or "")
+        find = str(ne.get("find") or "")
+        if _EXPLICIT_FIRST.search(op) or not _last_rank(find):
+            out.append(ne)
+            continue
+        changed = False
+        for key in _AUTHOR_FIELDS:
+            raw = str(ne.get(key) or "")
+            if not raw.strip():
+                continue
+            fixed, did = _downgrade_author_text(find, raw)
+            if did:
+                ne[key] = fixed
+                changed = True
+        if changed:
+            issues.append(
+                "【作者位次】第 %d 条同一篇论文保留原文作者排序与角色，未改成第一作者" % i
+            )
+        out.append(ne)
+    return out, issues
+
+
 def sanitize_declaring_company_edits(edits: list, app_text: str, extra_names: list | None = None) -> tuple[list, list[str]]:
     """正文里的申报企业全称改为「申报企业」；去掉虚构合作与「过往中试发生在拟入职企业」。"""
     names = declaring_company_names(app_text, extra_names)
@@ -788,6 +912,133 @@ def sanitize_declaring_company_edits(edits: list, app_text: str, extra_names: li
         ne["replace"] = rep
         out.append(ne)
     return out, issues
+
+
+_BOARD_ASK = re.compile(r"编委|客座编辑|特约主编")
+_BOARD_LIST = re.compile(r"列出|要列|补充|写上|体现")
+_GUEST_TOPIC = re.compile(r"策划并主编([^。；;\n]{2,80}?专题)")
+_NAMED_ROLE = re.compile(
+    r"(?:担任|现任|曾任)[^。；;\n]{0,24}《[^》]{2,40}》[^。；;\n]{0,16}(?:编委|副主编|主编|客座编辑|特约主编)"
+)
+_OTHER_HEAD = re.compile(r"4\s*[\.、．]\s*其他[（(]包括在国际学术会议做重要报告等情况[）)]")
+_BOARD_FIELDS = ("replace", "opinionGemini", "opinionGrok", "opinionDoubao")
+
+
+def _compact_board(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or ""))
+
+
+def _asks_editorial_board(text: str) -> bool:
+    s = _compact_board(text)
+    return bool(_BOARD_ASK.search(s) and _BOARD_LIST.search(s))
+
+
+def _editorial_facts(*blobs: str) -> list[str]:
+    text = "\n".join(str(x or "") for x in blobs)
+    found: list[str] = []
+    for m in _GUEST_TOPIC.finditer(text):
+        fact = "策划并主编" + _compact_board(m.group(1))
+        if fact not in found:
+            found.append(fact)
+    for m in _NAMED_ROLE.finditer(text):
+        fact = _compact_board(m.group(0))
+        if fact not in found:
+            found.append(fact)
+    return found[:4]
+
+
+def _other_section_anchor(app_text: str) -> str:
+    m = _OTHER_HEAD.search(str(app_text or ""))
+    if not m:
+        return ""
+    window = str(app_text or "")[m.start(): m.start() + 180]
+    lines = [ln.strip() for ln in window.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    anchor = lines[0]
+    if len(lines) > 1 and lines[1].lower().startswith("others"):
+        anchor += "\n" + lines[1]
+    return anchor
+
+
+def _edit_has_fact(edit: dict, facts: list[str]) -> bool:
+    blob = _compact_board("".join(str(edit.get(k) or "") for k in _BOARD_FIELDS))
+    return any(_compact_board(f) in blob for f in facts)
+
+
+def sanitize_editorial_board_edits(
+    edits: list,
+    clauses: list,
+    app_text: str,
+    pool_text: str = "",
+    leftovers: list | None = None,
+) -> tuple[list, list[str], list]:
+    """意见要求列出核心期刊编委时，只用申报书或人才库里已写明的任职，并固定写入「4.其他」。"""
+    issues: list[str] = []
+    asks = [c for c in (clauses or []) if isinstance(c, dict) and _asks_editorial_board(
+        str(c.get("opinion") or "") + str(c.get("clause") or "")
+    )]
+    lo = list(leftovers or [])
+    if not asks:
+        return list(edits or []), issues, lo
+    facts = _editorial_facts(app_text, pool_text)
+    cids = {str(c.get("cid") or "") for c in asks if c.get("cid")}
+    kept = []
+    dropped = False
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        blob = str(e.get("opinion") or "") + str(e.get("clause") or "") + str(e.get("clauseId") or "")
+        if _asks_editorial_board(blob) or str(e.get("clauseId") or "") in cids:
+            if facts and _edit_has_fact(e, facts):
+                kept.append(e)
+                continue
+            if _BOARD_ASK.search(_compact_board(
+                "".join(str(e.get(k) or "") for k in _BOARD_FIELDS) + blob
+            )):
+                dropped = True
+                continue
+        kept.append(e)
+    if dropped:
+        issues.append("【编委任职】已去掉申报书和人才库中没有的编委、主编或审稿身份")
+    covered = any(_edit_has_fact(e, facts) for e in kept) if facts else False
+    anchor = _other_section_anchor(app_text)
+    if facts and not covered and anchor and anchor in str(app_text or ""):
+        src = asks[0]
+        body = "学术兼职：" + "；".join(facts) + "。"
+        replace = anchor + "\n" + body
+        item = {
+            "find": anchor,
+            "replace": replace,
+            "clause": str(src.get("clause") or "列出核心期刊编委"),
+            "opinion": str(src.get("opinion") or ""),
+            "opinionGemini": replace,
+            "opinionGrok": "",
+            "opinionDoubao": "",
+            "opName": str(src.get("opName") or ""),
+            "clauseId": str(src.get("cid") or ""),
+            "section": str(src.get("section") or "专长成果"),
+            "_sec": str(src.get("section") or "专长成果"),
+            "_k": _compact_board(anchor),
+            "appNo": str(src.get("appNo") or ""),
+        }
+        kept.append(item)
+        covered = True
+        issues.append("【编委任职】已按已有材料写入「4.其他」：" + "；".join(facts))
+    if covered:
+        nxt = []
+        seen = set()
+        for line in lo:
+            s = str(line)
+            key = _compact_board(s)
+            if key in seen:
+                continue
+            if any(cid and cid in s for cid in cids) and re.search(r"编委|主编|审稿", s):
+                continue
+            seen.add(key)
+            nxt.append(line)
+        lo = nxt
+    return kept, issues, lo
 
 
 def validate_structured_edits(

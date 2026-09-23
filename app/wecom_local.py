@@ -155,7 +155,10 @@ def list_sessions(source_id: str, limit: int = 1000) -> list:
         return []
     rows = [x for x in rows if isinstance(x, dict)]
     rows.sort(key=lambda s: (str(s.get("last_time") or ""), str(s.get("synced_at") or "")), reverse=True)
-    lim = max(1, min(int(limit or 1000), 5000))
+    lim_in = int(limit or 0)
+    if lim_in <= 0:
+        return rows
+    lim = max(1, min(lim_in, 5000))
     return rows[:lim]
 
 

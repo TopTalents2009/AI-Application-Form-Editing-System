@@ -21,6 +21,17 @@ def admin_page():
     return FileResponse(STATIC_DIR / "admin.html", headers={"Cache-Control": "no-cache"})
 
 
+@router.post("/api/admin/users")
+def api_user_create(body: dict, request: Request):
+    actor = _admin(request)
+    try:
+        return {"ok": True, "user": auth.create_user(body or {}, actor)}
+    except auth.AuthError as e:
+        raise HTTPException(e.status, e.message)
+    except Exception as e:
+        raise HTTPException(503, "数据库不可用：" + str(e)[:160])
+
+
 @router.get("/api/admin/users")
 def api_users(request: Request):
     _admin(request)

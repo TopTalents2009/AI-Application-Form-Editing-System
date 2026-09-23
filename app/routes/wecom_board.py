@@ -31,6 +31,142 @@ def _http(e: W.WecomError) -> HTTPException:
     return HTTPException(status, e.message)
 
 
+def _file_upload_public() -> dict:
+    from ..config import load_config
+    cfg = load_config()
+    return {
+        "baseUrl": cfg.get("poolFileUploadUrl") or "",
+        "hasKey": bool(cfg.get("poolFileUploadKey")),
+        "configured": bool(cfg.get("poolFileUploadConfigured")),
+    }
+
+
+@router.post("/api/wecom/file-summary")
+async def api_file_summary(body: dict, request: Request):
+    """当前会话里的文件按人才附件类别汇总。"""
+    _admin(request)
+    from ..attachments import classify_talent_filename
+    body = body if isinstance(body, dict) else {}
+    sid = str(body.get("session_id") or "").strip()
+    if not sid:
+        raise HTTPException(400, "请先选择会话")
+    try:
+        data = await W.list_merged_messages(
+            sid,
+            source_id=str(body.get("source_id") or ""),
+            start_date=str(body.get("start_date") or ""),
+            end_date=str(body.get("end_date") or ""),
+            full=True,
+        )
+    except W.WecomError as e:
+        raise _http(e)
+    groups = {}
+    order = []
+    seen = set()
+    for m in data.get("items") or []:
+        if not isinstance(m, dict):
+            continue
+        fname = str(m.get("attachment_name") or "").strip()
+        if not fname and not m.get("has_attachment"):
+            continue
+        if not fname:
+            fname = str(m.get("text") or m.get("snippet") or "").strip()[:80]
+        if not fname:
+            continue
+        key = (fname, str(m.get("time_text") or ""), str(m.get("sender") or ""), str(m.get("message_id") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        cid, label = classify_talent_filename(fname)
+        if cid not in groups:
+            groups[cid] = {"id": cid, "label": label, "files": []}
+            order.append(cid)
+        groups[cid]["files"].append({
+            "filename": fname,
+            "sender": str(m.get("sender") or ""),
+            "time": str(m.get("time_text") or ""),
+            "messageId": m.get("message_id") or 0,
+            "copies": m.get("copies") or [],
+        })
+    return {
+        "ok": True,
+        "session_id": sid,
+        "messageCount": data.get("total") or 0,
+        "fileCount": len(seen),
+        "groups": [groups[k] for k in order],
+        "upload": _file_upload_public(),
+    }
+
+
+@router.post("/api/wecom/talent-files")
+async def api_upload_talent_files(body: dict, request: Request):
+    """把已分类文件上传到人才库人才附件。接口和 Key 未配置时不外发。"""
+    _admin(request)
+    info = _file_upload_public()
+    if not info["configured"]:
+        raise HTTPException(503, "人才附件上传接口和 Key 尚未配置")
+    body = body if isinstance(body, dict) else {}
+    aid = str(body.get("attachId") or body.get("attach_id") or "").strip()
+    files = body.get("files") if isinstance(body.get("files"), list) else []
+    if not aid:
+        raise HTTPException(400, "请填写人才编号")
+    if not files:
+        raise HTTPException(400, "请选择要上传的文件")
+    raise HTTPException(501, "上传接口已填写，但具体对接字段尚未实现")
+
+
+@router.post("/api/wecom/intent")
+async def api_intent(body: dict, request: Request):
+    """单条聊天记录的意图判断。气泡固定先标明已读。"""
+    _user(request)
+    from ..wecom_intent import judge_message
+    body = body if isinstance(body, dict) else {}
+    message = body.get("message") if isinstance(body.get("message"), dict) else {}
+    context = body.get("context") if isinstance(body.get("context"), list) else []
+    if not (str(message.get("text") or message.get("snippet") or "").strip() or str(message.get("filename") or message.get("attachment_name") or "").strip()):
+        return {
+            "ok": True,
+            "read": True,
+            "readLabel": "已读",
+            "intent": "other",
+            "intentLabel": "其他",
+            "need": "",
+            "action": "这条没有可分析的正文",
+        }
+    got = await judge_message(message, context)
+    got["ok"] = True
+    return got
+
+
+@router.post("/api/wecom/intent-page")
+async def api_intent_page(body: dict, request: Request):
+    """分析当前页聊天记录。结果与消息顺序一一对应。"""
+    _user(request)
+    from ..wecom_intent import judge_page
+    body = body if isinstance(body, dict) else {}
+    messages = body.get("messages") if isinstance(body.get("messages"), list) else []
+    if not messages:
+        raise HTTPException(400, "本页没有可分析的聊天记录")
+    items = await judge_page(messages[:80])
+    sid = str(body.get("session_id") or "").strip()
+    keys = body.get("keys") if isinstance(body.get("keys"), list) else []
+    if sid and keys:
+        from ..wecom_intent_store import save_many
+        save_many(sid, list(zip(keys, items)))
+    return {"ok": True, "items": items}
+
+
+@router.post("/api/wecom/intents/lookup")
+def api_intent_lookup(body: dict, request: Request):
+    """取已保存的意图，供刷新后挂回本页消息。"""
+    _user(request)
+    from ..wecom_intent_store import load_many
+    body = body if isinstance(body, dict) else {}
+    sid = str(body.get("session_id") or "").strip()
+    keys = body.get("keys") if isinstance(body.get("keys"), list) else []
+    return {"ok": True, "items": load_many(sid, keys[:80])}
+
+
 @router.get("/api/wecom/health")
 async def api_health(request: Request):
     _user(request)
@@ -120,18 +256,20 @@ async def api_watch_config_save(body: dict, request: Request):
 @router.get("/api/wecom/watch-logs")
 async def api_watch_logs(request: Request, limit: int = Query(40)):
     _user(request)
+    from ..wecom_watch import apply_review_to_log_list
     from ..wecom_watch_store import list_scan_runs
-    return list_scan_runs(limit=limit)
+    return apply_review_to_log_list(list_scan_runs(limit=limit))
 
 
 @router.get("/api/wecom/watch-logs/{record_id}")
 async def api_watch_log_one(record_id: str, request: Request):
     _user(request)
+    from ..wecom_watch import apply_review_to_log
     from ..wecom_watch_store import get_scan_run
     row = get_scan_run(record_id)
     if not row:
         raise HTTPException(404, "扫描记录不存在")
-    return row
+    return apply_review_to_log(row)
 
 
 @router.get("/api/wecom/sources")

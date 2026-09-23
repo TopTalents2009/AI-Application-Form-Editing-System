@@ -56,6 +56,14 @@ def test_education_proof_date_is_task():
     assert "education" in _ids(items)
 
 
+def test_conversion_proof_is_task_not_rewrite():
+    items = build_task_list(["6.成果转化缺少证明;"])
+    hit = next(x for x in items if x["id"] == "conversion")
+    assert "无法写入申报书正文" in hit["action"]
+    items = build_task_list(["建议给出具体产品名称和应用推广，依托哪些公司转化"])
+    assert "conversion" not in _ids(items)
+
+
 def test_no_task_when_only_form_rewrite():
     items = build_task_list(["工作经历请按职务职责/贡献改写，限 300 字"])
     assert "work_proof" not in _ids(items)
@@ -169,6 +177,7 @@ if __name__ == "__main__":
     test_passport_number_is_not_attachment_task()
     test_work_proof_time_is_task()
     test_education_proof_date_is_task()
+    test_conversion_proof_is_task_not_rewrite()
     test_no_task_when_only_form_rewrite()
     test_md_output()
     test_found_download_status()

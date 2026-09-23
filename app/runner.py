@@ -13,12 +13,15 @@ from .pdf_app import (
     ocr_scanned_pdf_to_text, pdf_kind, sniff_pdf, work_docx_name, _pdf_text_stats,
 )
 from .opinion_extract import resolve_ocr_timeout
-from .pool import lookup_for_app, format_pool_prompt, save_snapshot
+from .pool import lookup_for_app, format_pool_prompt, save_snapshot, build_talent_export
 from .edu_resume import enrich_education, save_snapshot as save_edu_snapshot
 from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block, public_attach_hit, build_task_list, public_task_list, format_task_list_md
 from .report_docx import write_compare_docx, write_task_list_docx
 from .form_reqs import extract_form_requirements, check_text_limits, check_replace_limits, enforce_edit_limits, limit_hint
-from .edit_validate import validate_structured_edits, clauses_from_edits, sanitize_declaring_company_edits
+from .edit_validate import (
+    validate_structured_edits, clauses_from_edits, sanitize_declaring_company_edits,
+    sanitize_paper_author_edits, sanitize_editorial_board_edits,
+)
 from .manual_fill import promote_unknown_to_manual_edits, extract_anchor, locate_anchor, is_rewrite_from_book
 from .form_kind import classify as classify_form
 from .wecom_locate import fill_app_identity, identity_of
@@ -42,6 +45,15 @@ TERMINAL = {"done", "failed"}
 PYENV = dict(os.environ, PYTHONIOENCODING="utf-8")
 RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+def _apply_exec_error(se: str, so: str) -> str:
+    """执行器失败时取 traceback 末行，避免只截到开头看不到异常类型。"""
+    blob = (se or so or "rc!=0").strip()
+    lines = [ln.strip() for ln in blob.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("Traceback") and len(lines) > 1:
+        blob = lines[-1]
+    return "编辑执行器失败：" + blob[:400]
+
 
 def rid() -> str:
     return format(int(time.time() * 1000), "x") + "-" + secrets.token_hex(3)
@@ -484,11 +496,15 @@ class TaskStore:
                 app["attachId"] = ident["attachId"]
             if ident.get("inputName") and not app.get("inputName"):
                 app["inputName"] = ident["inputName"]
+            wecom = t.get("wecom") if isinstance(t.get("wecom"), dict) else {}
             out.append({"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": app, "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId"), "owner": t.get("owner") or "",
                  "appliedBy": t.get("appliedBy") or "", "appliedAt": t.get("appliedAt") or "",
                  "personName": ident.get("personName") or "", "attachId": ident.get("attachId") or "",
                  "source": t.get("source") or "", "apiKeyId": t.get("apiKeyId") or 0,
-                 "wecomCaseId": ((t.get("wecom") or {}) if isinstance(t.get("wecom"), dict) else {}).get("caseId") or "",
+                 "wecomCaseId": wecom.get("caseId") or "",
+                 "wecomSession": wecom.get("sessionName") or "",
+                 "startedAt": t.get("startedAt") or "",
+                 "runningSince": t.get("runningSince") or "",
                  "versions": list(t.get("versions") or [])[-5:],
                  "deliverables": [{"name": o["name"], "size": o.get("size", 0)} for o in (t.get("deliverables") or [])]})
         return out
@@ -868,6 +884,11 @@ class TaskStore:
             "禁止写出申报企业法定全称。人才尚未入职时，已完成的中试/量产/产业化不得写成在申报企业完成。"
             "不得编造申报企业与申报人现单位「已有合作、深入对接、合作基础」。"
             "「单位是？」出现在经费栏时，按填表须知补「万元」，不要当成无法修改的疑问。"
+            "更新同一篇论文的题名、期刊或年份时，必须保留申报书原文的作者排序和角色"
+            "（如 12*/12、通讯作者）。不得改成 1/1、第一作者、共同第一作者或「第一作者兼通讯作者」。"
+            "位次大于 1 且带 * 时只写通讯作者。人才库作者排序与原文冲突时以申报书原文为准。"
+            "意见要求列出核心期刊编委时，只能写入申报书或人才库已写明的编委、主编、客座编辑任职，"
+            "并锚定「4.其他」栏。禁止把审稿专家、发表期刊或未出现的主编头衔写成编委。"
             "意见要求补充产品名称、应用推广或成果转化依托单位时，必须改定位句，"
             "用申报书已有产品/场景/合作单位类型写具体，禁止因缺型号或公司全称而只写 leftovers。"
         )
@@ -921,7 +942,7 @@ class TaskStore:
                 outputs.append({"name": f, "size": fp.stat().st_size, "dir": "output", "docxIntact": intact, "verify": detail})
                 if "对照表" in f: t["hasReport"] = True
         t["outputs"] = outputs
-        t["deliverables"] = [o for o in outputs if is_edited_output(o["name"]) or is_backup_output(o["name"]) or "对照表" in o["name"] or "遗留事项" in o["name"] or "任务清单" in o["name"]]
+        t["deliverables"] = [o for o in outputs if is_edited_output(o["name"]) or is_backup_output(o["name"]) or "对照表" in o["name"] or "遗留事项" in o["name"] or "任务清单" in o["name"] or o["name"].endswith("人才库.json")]
         return ok_count > 0
 
     def snapshot_version(self, t) -> dict | None:
@@ -1568,6 +1589,12 @@ class TaskStore:
             extra_names.append(hit.get("enterprise"))
         edits, co_issues = sanitize_declaring_company_edits(edits, texts["appText"], extra_names)
         struct_issues.extend(co_issues)
+        edits, au_issues = sanitize_paper_author_edits(edits)
+        struct_issues.extend(au_issues)
+        edits, eb_issues, leftovers = sanitize_editorial_board_edits(
+            edits, clauses, texts["appText"], pool_text, leftovers,
+        )
+        struct_issues.extend(eb_issues)
         for msg in struct_issues:
             tag_msg = msg if msg.startswith("【") else "【结构化校验】" + msg
             if tag_msg not in leftovers:
@@ -1631,6 +1658,7 @@ class TaskStore:
                     o for o in t["outputs"]
                     if is_edited_output(o["name"]) or is_backup_output(o["name"])
                     or "对照表" in o["name"] or "遗留事项" in o["name"] or "任务清单" in o["name"]
+                    or str(o["name"]).endswith("人才库.json")
                 ]
                 self.log(t, "已生成任务清单.docx（" + str(len(task_list)) + " 项，先查本地附件再查人才库）")
             except Exception as e:
@@ -1676,7 +1704,9 @@ class TaskStore:
         try:
             t["startedAt"] = now_str()
             await self.prepare(t)
-            t["status"] = "running"; self.persist(t)
+            t["status"] = "running"
+            t["runningSince"] = now_str()
+            self.persist(t)
             self.log(t, "大模型直连模式（生成编辑计划，等待人工确认）")
             edits, leftovers = await self.generate_plan(t)
             t["status"] = "planned"; self.persist(t)
@@ -1699,12 +1729,43 @@ class TaskStore:
         actor = str(actor or "").strip()
         who = ("，确认人：" + actor) if actor else ""
         try:
-            t["status"] = "running"; t["error"] = None; t.pop("applyWarning", None)
+            t["status"] = "running"; t["runningSince"] = now_str(); t["error"] = None; t.pop("applyWarning", None)
             if actor:
                 t["appliedBy"] = actor
                 t["appliedAt"] = now_str()
             self.persist(t)
             self.log(t, "人工确认完成（" + str(len(edits)) + " 条编辑），开始写入文件" + who)
+            edits, au_issues = sanitize_paper_author_edits(edits)
+            for msg in au_issues:
+                self.log(t, msg)
+                if msg not in leftovers:
+                    leftovers.append(msg)
+            pool_blob = ""
+            pool_p = Path(t["dir"]) / "work" / "tmp" / "pool.json"
+            if pool_p.is_file():
+                try:
+                    pool_blob = pool_p.read_text(encoding="utf-8")
+                except Exception:
+                    pool_blob = ""
+            app_for_board = ""
+            try:
+                app_for_board = self.read_prepared_texts(t).get("appText") or ""
+            except Exception:
+                pass
+            prev_clauses = []
+            plan_path_early = Path(t["dir"]) / "work" / "tmp" / "plan.json"
+            if plan_path_early.is_file():
+                try:
+                    prev_clauses = (json.loads(plan_path_early.read_text(encoding="utf-8")) or {}).get("clauses") or []
+                except Exception:
+                    prev_clauses = []
+            edits, eb_issues, leftovers = sanitize_editorial_board_edits(
+                edits, prev_clauses or clauses_from_edits(edits), app_for_board, pool_blob, leftovers,
+            )
+            for msg in eb_issues:
+                self.log(t, msg)
+                if msg not in leftovers:
+                    leftovers.append(msg)
             tmp_dir = Path(t["dir"]) / "work" / "tmp"; tmp_dir.mkdir(parents=True, exist_ok=True)
             plan_path = tmp_dir / "plan.json"
             prev_plan = {}
@@ -1833,7 +1894,7 @@ class TaskStore:
                     timeout=apply_timeout,
                 )
                 if rc != 0:
-                    t["status"] = "failed"; t["error"] = "编辑执行器失败：" + (se or so or "rc!=0")[:400]; return
+                    t["status"] = "failed"; t["error"] = _apply_exec_error(se, so); return
                 applied = json.loads(so).get("results") or []
             misses = sum(1 for a2 in applied if a2.get("status") == "miss")
             skips = sum(1 for a2 in applied if a2.get("status") == "skip")
@@ -1900,6 +1961,29 @@ class TaskStore:
                 self.log(t, "对照表 Word 生成失败，已保留 Markdown：" + str(e)[:120])
             lo_txt = "\n".join(str(i2 + 1) + ". " + s for i2, s in enumerate(leftovers)) if leftovers else "（无）"
             (out_dir / "遗留事项.md").write_text("# 遗留事项（需人工补充真实数据）\n\n" + lo_txt, encoding="utf-8")
+            try:
+                snap = {}
+                pool_path = tmp_dir / "pool.json"
+                if pool_path.is_file():
+                    snap = json.loads(pool_path.read_text(encoding="utf-8"))
+                app_meta = t.get("app") or {}
+                record = build_talent_export(
+                    snap if isinstance(snap, dict) else {},
+                    edits,
+                    applied,
+                    attach_id=str(app_meta.get("attachId") or app_meta.get("no") or app_no_of(app_meta.get("name") or "")),
+                    name=str(app_meta.get("personName") or ""),
+                    mode=str(app_meta.get("mode") or ""),
+                )
+                no = str(record.get("attach_id") or app_no_of(app_meta.get("name") or "") or "").strip()
+                pool_name = (no + "-人才库.json") if no else "人才库.json"
+                (out_dir / pool_name).write_text(
+                    json.dumps(record, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                self.log(t, "已生成人才库格式 " + pool_name)
+            except Exception as e:
+                self.log(t, "人才库格式输出失败：" + str(e)[:160])
             task_list = public_task_list(build_task_list(
                 leftovers,
                 attach=t.get("attachHit") or prev_plan.get("attachments") or {},

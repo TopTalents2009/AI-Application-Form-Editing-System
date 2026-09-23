@@ -108,6 +108,11 @@ def _copies(m: dict) -> list:
     return out
 
 
+_DOC_TITLE = re.compile(
+    r"表格|要求|结果|匹配|网络|安全|名录|样表|简介|统计|汇总|清单|需求|核对|模板|模版|说明|截图|证件照|白底"
+)
+
+
 def _person_app_stem(name: str) -> bool:
     """文件名几乎只有人名：张三.pdf / SANIYA ARFIN.pdf。带承诺、护照等附加字的不算。"""
     n = str(name or "").strip()
@@ -118,6 +123,8 @@ def _person_app_stem(name: str) -> bool:
     stem = re.sub(r"[_（）()\[\]【】]+", " ", stem)
     stem = re.sub(r"\s+", " ", stem).strip()
     if not stem or _DONE_NAME.search(stem) or _OPINION_NAME.search(stem) or _PERSON_SKIP.search(stem):
+        return False
+    if _DOC_TITLE.search(stem):
         return False
     if _NOT_FORM.search(stem) and not _APP_NAME.search(stem):
         return False
@@ -570,6 +577,7 @@ def annotate_existing(cases: list, runner) -> list:
                 "status": top.get("status"),
                 "url": top.get("url") or ("/t/" + str(top.get("id"))),
                 "score": top.get("score"),
+                "filename": top.get("appName") or "",
             }
             c["warnings"] = list(c.get("warnings") or []) + ["系统里已有较接近的修改任务，仍可再传一条"]
     return cases

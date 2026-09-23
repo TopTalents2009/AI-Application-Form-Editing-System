@@ -43,7 +43,39 @@ def test_hit_rows_integration():
     print("hit-rows ok", res)
 
 
+def test_merged_slave_clear_does_not_crash():
+    from openpyxl import Workbook
+    from apply_excel import load_openpyxl_sheets, apply_edits_to_sheets, write_openpyxl
+
+    src = ROOT / "scripts" / "_tmp_merge.xlsx"
+    out = ROOT / "scripts" / "_tmp_merge_out.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "学术成就：原文"
+    ws.merge_cells("A1:C1")
+    ws["A2"] = "保持不变"
+    wb.save(src)
+    wb.close()
+    book, sheets = load_openpyxl_sheets(src)
+    find = "学术成就：原文"
+    res = apply_edits_to_sheets(sheets, [{"find": find, "replace": "学术成就：已改"}])
+    assert res[0]["status"].startswith("hit")
+    # 合并从格被跨列改写标成清空时，不能对 MergedCell 赋值
+    row = sheets[0]["rows"][0]
+    row["cells"].append({"c": 2, "text": "", "dirty": True, "orig": None})
+    row["cells"].append({"c": 3, "text": "", "dirty": True, "orig": None})
+    write_openpyxl(book, sheets, out)
+    book2, sheets2 = load_openpyxl_sheets(out)
+    texts = [c["text"] for row in sheets2[0]["rows"] for c in row["cells"]]
+    assert any("已改" in t for t in texts), texts
+    for p in (src, out):
+        if p.exists():
+            p.unlink()
+    print("merged cell write ok")
+
+
 if __name__ == "__main__":
     test_tabbed_replace_splits_columns()
     test_hit_rows_integration()
+    test_merged_slave_clear_does_not_crash()
     print("ALL OK")

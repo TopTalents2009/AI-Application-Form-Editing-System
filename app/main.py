@@ -161,6 +161,38 @@ async def api_papers_health():
     from .papers import health
     return await health()
 
+@app.post("/api/project-proof/probe")
+async def api_project_proof_probe(request: Request):
+    """检测项目证明生成接口是否可达、密钥是否被接受。不返回密钥。"""
+    _require_admin(request)
+    import httpx
+    from .config import load_config
+    from .project_proof import generate_headers
+    cfg = (load_config().get("projectProof") or {}).get("generate") or {}
+    base = str(cfg.get("baseUrl") or "").rstrip("/")
+    path = str(cfg.get("path") or "/api/external/documents")
+    if not cfg.get("configured") or not base:
+        return {"ok": False, "service_ok": False, "auth_ok": False, "error": "生成接口未配置"}
+    url = base + (path if path.startswith("/") else "/" + path)
+    headers = generate_headers(cfg)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=8.0), trust_env=False) as client:
+            r = await client.post(url, headers=headers, json={"letters": []})
+    except httpx.HTTPError as e:
+        return {"ok": False, "service_ok": False, "auth_ok": False, "error": "无法连接：" + str(e)[:160]}
+    if r.status_code == 401:
+        return {"ok": False, "service_ok": True, "auth_ok": False, "status": 401, "error": "服务可达，但 API Key 无效"}
+    if r.status_code >= 400:
+        detail = ""
+        try:
+            body = r.json()
+            if isinstance(body, dict):
+                detail = str(body.get("error") or body.get("detail") or "")[:160]
+        except Exception:
+            detail = (r.text or "")[:160]
+        return {"ok": False, "service_ok": True, "auth_ok": True, "status": r.status_code, "error": detail or ("HTTP " + str(r.status_code))}
+    return {"ok": True, "service_ok": True, "auth_ok": True, "status": r.status_code}
+
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
@@ -196,6 +228,6 @@ def _startup():
     try:
         from .wecom_watch import start_watch
         start_watch(asyncio.get_running_loop())
-        print("[wecom-watch] 值班循环已启动", flush=True)
+        print("[wecom-watch] 值班已启动：聊天记录同步后增量扫描", flush=True)
     except Exception as e:
         print("[wecom-watch] 启动失败：" + str(e)[:200], flush=True)

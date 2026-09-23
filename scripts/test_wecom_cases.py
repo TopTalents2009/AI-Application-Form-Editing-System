@@ -29,6 +29,13 @@ def test_chat_short_name_is_app_until_cache_name_arrives():
     assert classify_file("16049申报书（修订）.docx") == "app"
 
 
+def test_plain_titles_are_not_forms():
+    from app.attachments import classify_talent_filename
+    for name in ("表格要求.xlsx", "网络安全.xlsx", "匹配结果.docx"):
+        assert classify_file(name) != "app", name
+        assert classify_talent_filename(name)[1] != "申报书", name
+
+
 def test_intent_agreement_never_app():
     assert classify_file("人才引进意向协议书-杜垚.pdf") == "ignore"
     assert classify_file("69230_人才引进意向协议书-杜垚.pdf") == "ignore"
@@ -151,6 +158,7 @@ def test_two_char_name_locate():
 if __name__ == "__main__":
     test_strip_message_id_prefix()
     test_chat_short_name_is_app_until_cache_name_arrives()
+    test_plain_titles_are_not_forms()
     test_intent_agreement_never_app()
     test_upload_rejects_intent_cached_as_person_pdf()
     test_cluster_person_pdf_warns_and_intent_name_ignored()

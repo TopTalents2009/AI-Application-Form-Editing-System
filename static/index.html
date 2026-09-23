@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py72">
+<link rel="stylesheet" href="/public/style.css?v=py89">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -107,12 +107,18 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         <thead><tr>
           <th class="col-time">时间</th>
           <th class="col-name">申报书</th>
+          <th class="col-src">来源</th>
           <th class="col-st">状态</th>
-          <th class="col-act"></th>
+          <th class="col-act">操作</th>
         </tr></thead>
         <tbody></tbody>
       </table>
       <div id="emptyHint" class="empty">暂无任务，先在左侧提交一个吧</div>
+    </div>
+    <div id="listPager" class="book-pager hidden">
+      <button type="button" class="ghost mini" id="listPagePrev">上一页</button>
+      <div class="page-mid"><div class="page-sub" id="listPageInfo">第 1 / 1 页 · 共 0 条</div></div>
+      <button type="button" class="ghost mini" id="listPageNext">下一页</button>
     </div>
   </div>
   </div>
@@ -198,7 +204,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         <input type="search" id="wecomGroupQ" placeholder="筛选会话" autocomplete="off">
         <div class="wecom-side-filters">
           <label class="wecom-filter-chip"><input type="checkbox" id="wecomOnlyGroup"> 仅群聊</label>
-          <label class="wecom-filter-chip"><input type="checkbox" id="wecomOnlyWatch"> 仅关注</label>
+          <label class="wecom-filter-chip"><input type="checkbox" id="wecomOnlyWatch" checked> 仅关注</label>
         </div>
         <div class="wecom-watch-hint" id="wecomWatchHint">点左侧 ★ 关注，群聊和单聊都会扫描</div>
       </div>
@@ -217,6 +223,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
           <button type="button" class="mini" id="wecomAiBtn">AI 解读</button>
           <button type="button" class="mini" id="wecomAiLogBtn">解读记录</button>
           <button type="button" class="mini" id="wecomSplitBtn">拆解任务</button>
+          <button type="button" class="mini" id="wecomIntentPageBtn">分析意图</button>
           <button type="button" class="mini" id="wecomReload">刷新</button>
         </div>
       </div>
@@ -324,7 +331,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </div>
 
 <script src="/public/session.js?v=py55"></script>
-<script src="/public/wecom-board.js?v=py22"></script>
-<script src="/public/app.js?v=py66"></script>
+<script src="/public/wecom-board.js?v=py40"></script>
+<script src="/public/app.js?v=py71"></script>
 </body>
 </html>

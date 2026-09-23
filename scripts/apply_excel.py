@@ -228,6 +228,25 @@ def load_openpyxl_sheets(path, keep_vba=False):
     return wb, sheets
 
 
+def _write_target(ws, row, col, new):
+    """合并单元格只有左上角可写。从格清空时跳过，避免 MergedCell.value 只读报错。"""
+    cell = ws.cell(row, col)
+    if type(cell).__name__ != "MergedCell":
+        return cell
+    anchor = None
+    for rng in ws.merged_cells.ranges:
+        if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
+            anchor = ws.cell(rng.min_row, rng.min_col)
+            if row == rng.min_row and col == rng.min_col:
+                return anchor
+            break
+    if anchor is None or new == "":
+        return None
+    if anchor.value not in (None, ""):
+        return None
+    return anchor
+
+
 def write_openpyxl(wb, sheets, out):
     for sh in sheets:
         ws = sh["ws"]
@@ -235,9 +254,15 @@ def write_openpyxl(wb, sheets, out):
             for cell in row["cells"]:
                 if not cell.get("dirty"):
                     continue
-                target = ws.cell(row["r"], cell["c"])
                 new = cell["text"]
+                target = _write_target(ws, row["r"], cell["c"], new)
+                if target is None:
+                    continue
                 orig = cell.get("orig")
+                if type(target).__name__ != "MergedCell" and target.row == row["r"] and target.column == cell["c"]:
+                    orig = cell.get("orig")
+                else:
+                    orig = target.value
                 if new == "":
                     target.value = None
                 elif isinstance(orig, (int, float)) and not isinstance(orig, bool):

@@ -116,6 +116,44 @@ def _user_count() -> int:
         conn.close()
 
 
+def create_user(body: dict, actor: dict | None = None) -> dict:
+    """管理员添加账号。密码由管理员设定，不要求用户首次改密。"""
+    username = str((body or {}).get("username") or "").strip()
+    real_name = str((body or {}).get("realName") or (body or {}).get("real_name") or "").strip()
+    department = str((body or {}).get("department") or "").strip()
+    password = str((body or {}).get("password") or "")
+    if not USER_RE.fullmatch(username):
+        raise AuthError("用户名为 3–32 位字母、数字或下划线")
+    if not NAME_RE.fullmatch(real_name):
+        raise AuthError("请填写真实姓名（2–32 字）")
+    if not department or len(department) > 64:
+        raise AuthError("请填写部门（不超过 64 字）")
+    if len(password) < 6 or len(password) > 64:
+        raise AuthError("密码长度 6–64 位")
+    role = str((body or {}).get("role") or "user")
+    if role not in ("user", "admin"):
+        raise AuthError("角色无效")
+    status = str((body or {}).get("status") or "active")
+    if status not in ("active", "disabled"):
+        raise AuthError("状态无效")
+    conn = db.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE username=%s", (username,))
+            if cur.fetchone():
+                raise AuthError("用户名已被占用")
+            cur.execute(
+                "INSERT INTO users (username, real_name, department, password_hash, role, status, must_set_credentials) "
+                "VALUES (%s,%s,%s,%s,%s,%s,0)",
+                (username, real_name, department, hash_password(password), role, status),
+            )
+            uid = cur.lastrowid
+            cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+            return public_user(cur.fetchone())
+    finally:
+        conn.close()
+
+
 def register(body: dict) -> dict:
     username, real_name, department, password = validate_register(body)
     conn = db.connect()
@@ -309,6 +347,37 @@ def user_by_token(token: str) -> dict | None:
             if not row or row.get("status") != "active":
                 return None
             return public_user(row)
+    finally:
+        conn.close()
+
+
+def real_names_by_username(names: list | None = None) -> dict:
+    """用户名 → 真实姓名。查不到的用户名不出现在结果里。"""
+    wanted = []
+    seen = set()
+    for raw in names or []:
+        name = str(raw or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        wanted.append(name)
+    if not wanted:
+        return {}
+    conn = db.connect()
+    try:
+        with conn.cursor() as cur:
+            marks = ",".join(["%s"] * len(wanted))
+            cur.execute(
+                "SELECT username, real_name FROM users WHERE username IN (" + marks + ")",
+                tuple(wanted),
+            )
+            out = {}
+            for row in cur.fetchall() or []:
+                uname = str(row.get("username") or "")
+                real = str(row.get("real_name") or "").strip()
+                if uname and real:
+                    out[uname] = real
+            return out
     finally:
         conn.close()
 

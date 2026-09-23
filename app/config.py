@@ -165,6 +165,8 @@ def load_config() -> dict:
     pool_key = _usable_secret(pool.get("apiKey") or pool.get("api_key") or c.get("poolApiKey"))
     pool_mode = str(pool.get("mode") or "all").strip() or "all"
     pool_ok = bool(pool_base and pool_key)
+    pool_file_url = str(pool.get("fileUploadUrl") or "").strip().rstrip("/")
+    pool_file_key = _usable_secret(pool.get("fileUploadKey") or "")
     papers = c.get("papers") if isinstance(c.get("papers"), dict) else {}
     papers_base = str(papers.get("baseUrl") or c.get("papersBaseUrl") or "").rstrip("/")
     papers_key = _usable_secret(papers.get("apiKey") or papers.get("api_key") or c.get("papersApiKey"))
@@ -202,6 +204,9 @@ def load_config() -> dict:
         "poolApiKey": pool_key,
         "poolMode": pool_mode,
         "poolConfigured": pool_ok,
+        "poolFileUploadUrl": pool_file_url,
+        "poolFileUploadKey": pool_file_key,
+        "poolFileUploadConfigured": bool(pool_file_url and pool_file_key),
         "papersBaseUrl": papers_base,
         "papersApiKey": papers_key,
         "papersUsername": papers_user,
@@ -266,7 +271,7 @@ def _wecom_chat_block(c: dict) -> dict:
 
 
 def _wecom_watch_block(raw: dict) -> dict:
-    """聊天值班调度。认意见走现有 Gemini，这里只保留开关和间隔。"""
+    """聊天值班调度。认意见走现有 Gemini。扫描由聊天记录同步触发，不再按固定间隔全量跑。"""
     w = raw.get("watch") if isinstance(raw.get("watch"), dict) else {}
     mode = str(w.get("mode") or "").strip().lower()
     if mode not in ("auto", "review", "off"):
@@ -919,8 +924,57 @@ def _merge_pool(raw: dict, pool: dict):
     mode = str(pool.get("mode") or "").strip()
     if mode:
         blob["mode"] = mode
+    if "fileUploadUrl" in pool:
+        blob["fileUploadUrl"] = str(pool.get("fileUploadUrl") or "").strip().rstrip("/")
+    upload_key = _usable_secret(pool.get("fileUploadKey")) if "fileUploadKey" in pool else ""
+    if upload_key:
+        blob["fileUploadKey"] = upload_key
     if blob:
         raw["pool"] = blob
+
+
+def _merge_project_proof(raw: dict, incoming: dict):
+    """项目证明：CodeBuddy 检索与生成 API。密钥留空不改。"""
+    blob = raw.get("projectProof") if isinstance(raw.get("projectProof"), dict) else {}
+    cb = blob.get("codebuddy") if isinstance(blob.get("codebuddy"), dict) else {}
+    gen = blob.get("generate") if isinstance(blob.get("generate"), dict) else {}
+    inc_cb = incoming.get("codebuddy") if isinstance(incoming.get("codebuddy"), dict) else {}
+    inc_gen = incoming.get("generate") if isinstance(incoming.get("generate"), dict) else {}
+
+    cmd = str(inc_cb.get("cmd") or "").strip()
+    if cmd:
+        cb["cmd"] = cmd
+    if inc_cb.get("timeoutSec") not in (None, ""):
+        cb["timeoutSec"] = max(30, min(_as_int(inc_cb.get("timeoutSec"), 180), 900))
+    if inc_cb.get("maxTurns") not in (None, ""):
+        cb["maxTurns"] = max(1, min(_as_int(inc_cb.get("maxTurns"), 10), 30))
+    if "model" in inc_cb:
+        cb["model"] = str(inc_cb.get("model") or "").strip()
+
+    base = str(inc_gen.get("baseUrl") or "").strip().rstrip("/")
+    if base and FILL_MARK not in base:
+        gen["baseUrl"] = base
+    if "apiKey" in inc_gen:
+        key = _usable_secret(inc_gen.get("apiKey"))
+        if key:
+            gen["apiKey"] = key
+    for src, dst in (("path", "path"), ("generatePath", "generatePath"), ("projectsPath", "projectsPath")):
+        val = str(inc_gen.get(src) or "").strip()
+        if val and FILL_MARK not in val:
+            gen[dst] = val
+    if inc_gen.get("timeoutSec") not in (None, ""):
+        gen["timeoutSec"] = max(30, min(_as_int(inc_gen.get("timeoutSec"), 300), 900))
+    if not str(gen.get("provider") or "").strip():
+        gen["provider"] = "autoref"
+    headers = gen.get("headers") if isinstance(gen.get("headers"), dict) else {}
+    if "Authorization" not in headers and gen.get("apiKey"):
+        headers["Authorization"] = "Bearer {{apiKey}}"
+    if "Content-Type" not in headers:
+        headers["Content-Type"] = "application/json"
+    gen["headers"] = headers
+    blob["codebuddy"] = cb
+    blob["generate"] = gen
+    raw["projectProof"] = blob
 
 
 def save_config(payload: dict, save_as_default: bool = False) -> dict:
@@ -947,6 +1001,9 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
     papers = payload.get("papers") if isinstance(payload.get("papers"), dict) else None
     if papers:
         _merge_papers(raw, papers)
+    proof = payload.get("projectProof") if isinstance(payload.get("projectProof"), dict) else None
+    if proof:
+        _merge_project_proof(raw, proof)
     wecom = payload.get("wecomChat") if isinstance(payload.get("wecomChat"), dict) else None
     if wecom:
         _merge_wecom_chat(raw, wecom)
@@ -1045,6 +1102,8 @@ def editor_config() -> dict:
             "hasKey": bool(cfg.get("poolApiKey")),
             "mode": cfg.get("poolMode") or "all",
             "configured": bool(cfg.get("poolConfigured")),
+            "fileUploadUrl": cfg.get("poolFileUploadUrl") or "",
+            "fileUploadHasKey": bool(cfg.get("poolFileUploadKey")),
         },
         "papers": {
             "baseUrl": cfg.get("papersBaseUrl") or "",
@@ -1054,6 +1113,7 @@ def editor_config() -> dict:
             "authMode": cfg.get("papersAuthMode") or "",
             "configured": bool(cfg.get("papersConfigured")),
         },
+        "projectProof": _pack_project_proof(cfg.get("projectProof") or {}),
         "wecomChat": {
             "baseUrl": cfg.get("wecomChatBaseUrl") or "",
             "hasKey": bool(cfg.get("wecomChatApiKey")),
@@ -1066,6 +1126,29 @@ def editor_config() -> dict:
     }
     pub["configured"] = bool(gemini.get("ready") or grok.get("ready") or doubao.get("ready") or cfg.get("configured"))
     return pub
+
+
+def _pack_project_proof(pp: dict) -> dict:
+    pp = pp if isinstance(pp, dict) else {}
+    cb = pp.get("codebuddy") if isinstance(pp.get("codebuddy"), dict) else {}
+    gen = pp.get("generate") if isinstance(pp.get("generate"), dict) else {}
+    return {
+        "codebuddy": {
+            "cmd": str(cb.get("cmd") or ""),
+            "timeoutSec": int(cb.get("timeoutSec") or 180),
+            "maxTurns": int(cb.get("maxTurns") or 10),
+            "model": str(cb.get("model") or ""),
+        },
+        "generate": {
+            "baseUrl": str(gen.get("baseUrl") or ""),
+            "hasKey": bool(gen.get("apiKey")),
+            "path": str(gen.get("path") or "/api/external/documents"),
+            "generatePath": str(gen.get("generatePath") or "/api/external/generate"),
+            "projectsPath": str(gen.get("projectsPath") or "/api/external/projects"),
+            "timeoutSec": int(gen.get("timeoutSec") or 300),
+            "configured": bool(gen.get("configured")),
+        },
+    }
 
 
 def _pack_wecom_watch(w: dict) -> dict:

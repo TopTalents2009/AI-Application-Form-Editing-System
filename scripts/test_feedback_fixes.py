@@ -6,6 +6,7 @@ from app.inline_opinions import extract_comment_items, is_column_wide_opinion, c
 from app.runner import split_source_units, _split_inline_numbered
 from app.edit_validate import (
     is_question_only_opinion, sanitize_declaring_company_edits, _employer_support_span,
+    sanitize_paper_author_edits, sanitize_editorial_board_edits,
 )
 from app.hj_form import remap_qm_section
 
@@ -133,6 +134,85 @@ def test_locate_conversion_not_tech_field():
     print("locate conversion ok", find[:40], "hint", hint)
 
 
+def test_keep_corresponding_author_on_same_paper():
+    find = (
+        "2019-10-08 00:00:00\t免疫情绪素：一种由易引发自身免疫反应的 T 细胞所产生的新的焦虑诱发因子"
+        "/Immuno-moodulin: a new anxiogenic factor produced by autoimmune-prone T cells\tbioRxiv\t12*/12\n通讯作者"
+    )
+    bad = (
+        "2020-05-18 00:00:00\tImmuno-moodulin：一种由膜联蛋白-A1转基因自身免疫倾向T细胞产生的新型致焦虑因子"
+        "/Immuno-moodulin: a new anxiogenic factor produced by Annexin-A1 transgenic autoimmune-prone T cells"
+        "\tBrain, Behavior, and Immunity\t1/1\n第一作者兼通讯作者"
+    )
+    other = (
+        "2008-12-01 00:00:00\t膜联蛋白 A1 和糖皮质激素作为炎症消退的效应因子"
+        "/Annexin A1 and glucocorticoids as effectors of the resolution of inflammation"
+        "\tNature Reviews Immunology\t2/2\n共同第一作者"
+    )
+    edits = [
+        {"find": find, "replace": bad, "opinionGemini": bad, "section": "专长成果"},
+        {"find": "2015-06-05\tMassage-like stroking boosts the immune system in mice\tScientific reports\t6/6", "replace": other},
+        {"find": find, "replace": bad, "opinion": "改为第一作者", "clause": "作者位次"},
+    ]
+    out, issues = sanitize_paper_author_edits(edits)
+    rep = out[0]["replace"]
+    assert "12*/12" in rep, rep
+    assert "第一作者" not in rep, rep
+    assert "通讯作者" in rep, rep
+    assert "Brain, Behavior, and Immunity" in rep
+    assert "12*/12" in out[0]["opinionGemini"]
+    assert "第一作者" not in out[0]["opinionGemini"]
+    assert "2/2" in out[1]["replace"]
+    assert "共同第一作者" in out[1]["replace"]
+    assert "1/1" in out[2]["replace"]
+    assert issues and "作者位次" in issues[0]
+    print("author rank ok", issues[0])
+
+
+def test_editorial_board_is_stable():
+    app = (
+        "4.其他（包括在国际学术会议做重要报告等情况）\n"
+        "Others(including lectures delivered at international academic conferences)\n"
+    )
+    pool = "申报人策划并主编神经元与免疫细胞双向交流研究专题，系统梳理其作用。"
+    clauses = [{
+        "cid": "S2",
+        "section": "专长成果",
+        "clause": "补充列出核心期刊编委任职",
+        "opinion": "2.科研情况及代表性成果中--核心期刊编委要列出;",
+    }]
+    invented = (
+        "4.其他（包括在国际学术会议做重要报告等情况）\n"
+        "Others(including lectures delivered at international academic conferences)\n"
+        "学术兼职与核心期刊编委：担任《Frontiers in Immunology》专刊主编，长期担任特约审稿专家。"
+    )
+    edits = [{
+        "find": app.strip(),
+        "replace": invented,
+        "opinionGemini": invented,
+        "clauseId": "S2",
+        "opinion": clauses[0]["opinion"],
+        "clause": clauses[0]["clause"],
+    }]
+    leftovers = [
+        "【Gemini·专长成果】[S2] 补充列出核心期刊编委任职：请人工核实",
+        "【Gemini·专长成果】【意见未覆盖】S2 补充列出核心期刊编委任职：2.科研情况及代表性成果中--核心期刊编委要列出;",
+        "【Gemini·其他】[S4] 补充提供承担项目的证明材料",
+    ]
+    out, issues, lo = sanitize_editorial_board_edits(edits, clauses, app, pool, leftovers)
+    assert len(out) == 1, out
+    assert "策划并主编神经元与免疫细胞双向交流研究专题" in out[0]["replace"]
+    assert "审稿" not in out[0]["replace"]
+    assert "Frontiers" not in out[0]["replace"]
+    assert out[0]["clauseId"] == "S2"
+    assert all("S2" not in str(x) for x in lo)
+    assert any("承担项目" in str(x) for x in lo)
+    assert issues
+    again, _, _ = sanitize_editorial_board_edits(out, clauses, app, pool, lo)
+    assert again[0]["replace"] == out[0]["replace"]
+    print("editorial board ok")
+
+
 if __name__ == "__main__":
     test_word_point_comment_anchors()
     test_split_wecom_screenshot_ocr()
@@ -141,4 +221,6 @@ if __name__ == "__main__":
     test_project_row_count()
     test_short_comment_expands_to_paragraph()
     test_locate_conversion_not_tech_field()
+    test_keep_corresponding_author_on_same_paper()
+    test_editorial_board_is_stable()
     print("ALL OK")
