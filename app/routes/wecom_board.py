@@ -43,8 +43,8 @@ def _file_upload_public() -> dict:
 
 @router.post("/api/wecom/file-summary")
 async def api_file_summary(body: dict, request: Request):
-    """当前会话里的文件按人才附件类别汇总。"""
-    _admin(request)
+    """当前会话里的文件按人才附件类别汇总。登录用户可用（主界面与管理页）。"""
+    _user(request)
     from ..attachments import classify_talent_filename
     body = body if isinstance(body, dict) else {}
     sid = str(body.get("session_id") or "").strip()
@@ -81,16 +81,40 @@ async def api_file_summary(body: dict, request: Request):
         if cid not in groups:
             groups[cid] = {"id": cid, "label": label, "files": []}
             order.append(cid)
+        sess_name = str(data.get("display_name") or body.get("session_name") or "")
+        copies = []
+        for c in m.get("copies") or []:
+            if not isinstance(c, dict):
+                continue
+            copies.append({
+                "source_id": str(c.get("source_id") or ""),
+                "source_label": str(c.get("source_label") or c.get("label") or ""),
+                "message_id": c.get("message_id") or m.get("message_id") or 0,
+                "session_id": str(c.get("session_id") or sid),
+            })
         groups[cid]["files"].append({
             "filename": fname,
             "sender": str(m.get("sender") or ""),
             "time": str(m.get("time_text") or ""),
             "messageId": m.get("message_id") or 0,
-            "copies": m.get("copies") or [],
+            "copies": copies,
+            "sessionId": sid,
+            "sessionName": sess_name,
         })
+    peers = []
+    try:
+        peers = await W.session_peers(sid)
+    except Exception:
+        peers = []
+    if peers:
+        for g in groups.values():
+            for f in g.get("files") or []:
+                f["copies"] = W.merge_copy_peers(f.get("copies") or [], peers)
+    sess_name = str(data.get("display_name") or body.get("session_name") or "")
     return {
         "ok": True,
         "session_id": sid,
+        "session_name": sess_name,
         "messageCount": data.get("total") or 0,
         "fileCount": len(seen),
         "groups": [groups[k] for k in order],
@@ -101,7 +125,7 @@ async def api_file_summary(body: dict, request: Request):
 @router.post("/api/wecom/talent-files")
 async def api_upload_talent_files(body: dict, request: Request):
     """把已分类文件上传到人才库人才附件。接口和 Key 未配置时不外发。"""
-    _admin(request)
+    _user(request)
     info = _file_upload_public()
     if not info["configured"]:
         raise HTTPException(503, "人才附件上传接口和 Key 尚未配置")
@@ -352,6 +376,8 @@ async def api_group_messages(
     limit: int = Query(80),
     tail: bool = Query(False),
     from_end: int = Query(0),
+    around_id: str = Query(""),
+    around_time: str = Query(""),
 ):
     _user(request)
     try:
@@ -359,6 +385,7 @@ async def api_group_messages(
             session_id, source_id=source_id,
             start_date=start_date, end_date=end_date,
             offset=offset, limit=limit, tail=tail, from_end=from_end,
+            around_id=around_id, around_time=around_time,
         )
     except W.WecomError as e:
         raise _http(e)
@@ -502,6 +529,9 @@ async def api_ai_read(body: dict, request: Request):
     if scope != "watch" and not sid:
         raise HTTPException(400, "缺少 session_id")
     try:
+        bind_raw = body.get("bind")
+        bind = True if bind_raw is None else bool(bind_raw)
+        bind_prompts = body.get("bindPrompts") if isinstance(body.get("bindPrompts"), list) else None
         got = await ai_read_chat(
             session_id=sid,
             session_name=str(body.get("session_name") or ""),
@@ -511,6 +541,9 @@ async def api_ai_read(body: dict, request: Request):
             window_hours=int(body.get("windowHours") or 48),
             runner=runner,
             scope=scope,
+            bind=bind,
+            bind_prompts=bind_prompts,
+            user=u,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -632,7 +665,10 @@ async def api_split_create(body: dict, request: Request):
         raise HTTPException(400, "缺少 session_id")
     start = str(body.get("start_date") or "").strip()[:10]
     end = str(body.get("end_date") or "").strip()[:10]
-    if not start and not end:
+    all_history = bool(body.get("allHistory")) or (
+        not start and not end and int(body.get("windowHours") or 48) <= 0
+    )
+    if not all_history and not start and not end:
         end = datetime.now().strftime("%Y-%m-%d")
         start = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
     try:

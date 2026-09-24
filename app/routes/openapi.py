@@ -145,6 +145,7 @@ def public_task(t: dict | None) -> dict:
         },
         "opinions": [{"name": o.get("name")} for o in (t.get("opinions") or []) if isinstance(o, dict)],
         "deliverables": [{"name": o.get("name"), "size": o.get("size", 0)} for o in (t.get("deliverables") or [])],
+        "talentAppFile": t.get("talentAppFile") or None,
         "log": [str(x) for x in logs[-30:]],
     }
 

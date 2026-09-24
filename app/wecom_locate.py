@@ -345,6 +345,20 @@ def locate_tasks(runner, body: dict) -> dict:
     }
 
 
+def pick_copy_locate(copy: dict | None, *, fallback_session_id: str = "", fallback_session_name: str = "") -> dict:
+    """从 copies 条目选出定位用的 session_id + message_id。"""
+    c = copy if isinstance(copy, dict) else {}
+    sid = str(c.get("session_id") or c.get("sessionId") or fallback_session_id or "").strip()
+    sname = str(c.get("session_name") or c.get("sessionName") or fallback_session_name or "").strip()
+    mid = str(c.get("message_id") or c.get("messageId") or "").strip()
+    return {
+        "sessionId": sid,
+        "sessionName": sname,
+        "messageId": mid,
+        "time": str(c.get("time") or c.get("time_text") or "").strip(),
+    }
+
+
 def fill_app_identity(t: dict, snap: dict | None = None) -> None:
     """把封面/库命中的姓名与人才编号写进任务 app，供列表与定位使用。"""
     if not isinstance(t, dict):

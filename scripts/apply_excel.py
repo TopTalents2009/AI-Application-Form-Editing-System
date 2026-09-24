@@ -48,6 +48,10 @@ def _set_cell(cell, text):
     cell["dirty"] = True
 
 
+_LABEL_FILL = re.compile(r"关键词|key\s*words|不超过\s*\d+\s*个", re.I)
+_EN_SUBTITLE = re.compile(r"key\s*words|no more than", re.I)
+
+
 def apply_edits_to_sheets(sheets, edits):
     """sheets: [{name, rows:[{r, cells:[{c,text,dirty,orig}]}]}]. 行列均为 1-based。"""
     results = []
@@ -74,12 +78,109 @@ def apply_edits_to_sheets(sheets, edits):
     return results
 
 
+def _is_label_fill(find, rep, cell_text):
+    """标题格整格被当成 find、replace 却是空白栏正文时，应写入下方空格而不是覆盖标题。"""
+    ft = str(find or "").strip()
+    ct = str(cell_text or "").strip()
+    rp = str(rep or "")
+    if not ft or ft != ct:
+        return False
+    if ft and ft in rp.replace("\n", "").replace("\r", ""):
+        return False
+    if len(ft) > 80:
+        return False
+    return bool(_LABEL_FILL.search(ft))
+
+
+def _row_cell_text(sh, r, c):
+    for row in sh.get("rows") or []:
+        if row["r"] != r:
+            continue
+        for cell in row["cells"]:
+            if cell["c"] == c:
+                return cell.get("text") or ""
+    return ""
+
+
+def _ensure_sheet_cell(sh, r, c, text):
+    rows = sh.setdefault("rows", [])
+    for row in rows:
+        if row["r"] != r:
+            continue
+        for cell in row["cells"]:
+            if cell["c"] == c:
+                _set_cell(cell, text)
+                return True
+        row["cells"].append({"c": c, "text": text, "dirty": True, "orig": None})
+        row["cells"].sort(key=lambda x: x["c"])
+        return True
+    i = 0
+    while i < len(rows) and rows[i]["r"] < r:
+        i += 1
+    rows.insert(i, {"r": r, "cells": [{"c": c, "text": text, "dirty": True, "orig": None}]})
+    return True
+
+
+def _merge_anchor_below(ws, start_row, col):
+    if ws is None:
+        return None
+    best = None
+    try:
+        ranges = list(ws.merged_cells.ranges)
+    except Exception:
+        return None
+    for rng in ranges:
+        if rng.min_col > col or rng.max_col < col:
+            continue
+        if rng.min_row <= start_row or rng.min_row > start_row + 12:
+            continue
+        val = cell_str(ws.cell(rng.min_row, rng.min_col).value)
+        if val:
+            continue
+        if best is None or rng.min_row < best[0]:
+            best = (rng.min_row, rng.min_col)
+    return best
+
+
+def _fill_empty_below(sh, title_row_idx, col, rep):
+    rows = sh.get("rows") or []
+    if title_row_idx < 0 or title_row_idx >= len(rows):
+        return False
+    title_r = rows[title_row_idx]["r"]
+    scan_from = title_r
+    for row in rows:
+        if row["r"] <= title_r:
+            continue
+        if row["r"] > title_r + 4:
+            break
+        t = ""
+        for cell in row["cells"]:
+            if cell["c"] == col:
+                t = cell.get("text") or ""
+                break
+        if t and _EN_SUBTITLE.search(t) and len(t) < 80:
+            scan_from = row["r"]
+            continue
+        break
+    target = _merge_anchor_below(sh.get("ws"), scan_from, col)
+    if target:
+        return _ensure_sheet_cell(sh, target[0], target[1], rep)
+    occupied = {row["r"] for row in rows}
+    for r in range(scan_from + 1, scan_from + 10):
+        t = _row_cell_text(sh, r, col)
+        if t and not (_EN_SUBTITLE.search(t) and len(t) < 80):
+            return False
+        if r not in occupied or not t:
+            return _ensure_sheet_cell(sh, r, col, rep)
+    return False
+
+
 def _hit_cells(sheets, find, rep, loose):
     rx = loose_regex(find) if loose else None
     if loose and rx is None:
         return False
     for sh in sheets:
-        for row in sh["rows"]:
+        for ri, row in enumerate(sh["rows"]):
             for cell in row["cells"]:
                 t = cell["text"]
                 if not t:
@@ -87,11 +188,19 @@ def _hit_cells(sheets, find, rep, loose):
                 if not loose:
                     p = t.find(find)
                     if p >= 0:
+                        if p == 0 and t.strip() == find.strip() and _is_label_fill(find, rep, t):
+                            if _fill_empty_below(sh, ri, cell["c"], rep):
+                                return True
+                            continue
                         _set_cell(cell, t[:p] + rep + t[p + len(find):])
                         return True
                 else:
                     m = rx.search(t)
                     if m:
+                        if m.start() == 0 and t.strip() == find.strip() and _is_label_fill(find, rep, t):
+                            if _fill_empty_below(sh, ri, cell["c"], rep):
+                                return True
+                            continue
                         _set_cell(cell, t[: m.start()] + rep + t[m.end():])
                         return True
     return False

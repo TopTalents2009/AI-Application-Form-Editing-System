@@ -236,6 +236,39 @@ def init_db() -> dict:
                 )
             except OperationalError:
                 pass
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS talent_app_files (
+                  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  attach_id VARCHAR(32) NOT NULL COMMENT '与人才库 attach_id 对应',
+                  version VARCHAR(16) NOT NULL COMMENT 'v1 / v2 / v3 …',
+                  version_n INT UNSIGNED NOT NULL DEFAULT 1,
+                  talent_id INT UNSIGNED NULL COMMENT '人才库内部 id',
+                  person_name VARCHAR(128) NOT NULL DEFAULT '',
+                  mode VARCHAR(8) NOT NULL DEFAULT '',
+                  task_id VARCHAR(64) NOT NULL DEFAULT '',
+                  orig_name VARCHAR(255) NOT NULL DEFAULT '',
+                  stored_name VARCHAR(180) NOT NULL,
+                  mime VARCHAR(80) NOT NULL DEFAULT '',
+                  size INT UNSIGNED NOT NULL DEFAULT 0,
+                  file_data LONGBLOB NULL COMMENT '兼容旧列，不再写入',
+                  payload_json LONGTEXT NULL COMMENT '人才库字段 JSON（talent/enterprise）',
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (id),
+                  UNIQUE KEY uk_attach_ver (attach_id, version),
+                  KEY idx_taf_attach (attach_id),
+                  KEY idx_taf_task (task_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            try:
+                cur.execute(
+                    "ALTER TABLE talent_app_files ADD COLUMN payload_json LONGTEXT NULL "
+                    "COMMENT '人才库字段 JSON（talent/enterprise）'"
+                )
+            except OperationalError as e:
+                if not (e.args and e.args[0] == 1060):
+                    raise
             cur.execute("SELECT COUNT(*) AS n FROM users")
             n = int((cur.fetchone() or {}).get("n") or 0)
             if n == 0:

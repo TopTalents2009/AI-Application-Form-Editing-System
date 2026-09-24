@@ -488,6 +488,61 @@ async def list_merged_groups(
     return {"items": items, "count": len(items), "source_id": want or "*", "kind": kind}
 
 
+def message_ids_of(m: dict | None) -> list[str]:
+    out = []
+    if not isinstance(m, dict):
+        return out
+    mid = str(m.get("message_id") or "").strip()
+    if mid:
+        out.append(mid)
+    for c in m.get("copies") or []:
+        if not isinstance(c, dict):
+            continue
+        cid = str(c.get("message_id") or "").strip()
+        if cid and cid not in out:
+            out.append(cid)
+    return out
+
+
+def find_message_index(merged: list, around_id: str = "", around_time: str = "") -> int:
+    aid = str(around_id or "").strip()
+    atime = str(around_time or "").strip()
+    if aid:
+        for i, m in enumerate(merged or []):
+            if aid in message_ids_of(m):
+                return i
+    if atime:
+        for i, m in enumerate(merged or []):
+            if str((m or {}).get("time_text") or "") == atime:
+                return i
+    return -1
+
+
+def slice_around(merged: list, *, limit: int = 80, around_id: str = "", around_time: str = "") -> dict | None:
+    """把目标消息切进一页，并算出 from_end，便于各群记录窗口跳转。"""
+    items = merged if isinstance(merged, list) else []
+    n = len(items)
+    if n <= 0:
+        return None
+    lim = max(1, min(int(limit or 80), 200))
+    idx = find_message_index(items, around_id, around_time)
+    if idx < 0:
+        return None
+    before = min(idx, max(8, lim // 4))
+    start = idx - before
+    end = start + lim
+    if end > n:
+        end = n
+        start = max(0, end - lim)
+    return {
+        "start": start,
+        "end": end,
+        "from_end": n - end,
+        "index": idx,
+        "hit": idx - start,
+    }
+
+
 async def list_merged_messages(
     session_id: str,
     *,
@@ -499,6 +554,8 @@ async def list_merged_messages(
     tail: bool = False,
     full: bool = False,
     from_end: int = 0,
+    around_id: str = "",
+    around_time: str = "",
 ) -> dict:
     from . import wecom_local as L
     cid = str(session_id or "").strip()
@@ -512,8 +569,11 @@ async def list_merged_messages(
     lim = max(1, min(int(limit or 80), 200))
     off = max(0, int(offset or 0))
     fe = max(0, int(from_end or 0))
+    around_id = str(around_id or "").strip()
+    around_time = str(around_time or "").strip()
+    want_around = bool(around_id or around_time)
     window = bool(tail or fe)
-    if full:
+    if full or want_around:
         per_src = 0
     elif window:
         per_src = fe + lim
@@ -527,11 +587,11 @@ async def list_merged_messages(
             if L.available() and L.has_source(sid):
                 msgs, trunc = await asyncio.to_thread(
                     L.read_window, sid, cid,
-                    need=0 if full else per_src,
+                    need=0 if (full or want_around) else per_src,
                     start_date=start_date, end_date=end_date,
                 )
             else:
-                fetch = 5000 if full else per_src
+                fetch = 5000 if (full or want_around) else per_src
                 msgs = await _messages_of(sid, cid, start_date=start_date, end_date=end_date, limit=fetch)
                 trunc = bool(fetch and len(msgs) >= fetch)
         except WecomError:
@@ -563,7 +623,7 @@ async def list_merged_messages(
                         break
     merged = merge_messages(nonempty, cid)
     have = [r for r in replicas if int(r.get("msg_count") or 0) > 0]
-    if full:
+    if full and not want_around:
         return {
             "items": merged,
             "count": len(merged),
@@ -578,6 +638,29 @@ async def list_merged_messages(
             "hasNewer": False,
             "fromEnd": 0,
         }
+    if want_around:
+        sliced = slice_around(merged, limit=lim, around_id=around_id, around_time=around_time)
+        if sliced:
+            page = merged[sliced["start"]:sliced["end"]]
+            fe2 = int(sliced["from_end"] or 0)
+            return {
+                "items": page,
+                "count": len(page),
+                "total": len(merged),
+                "offset": fe2,
+                "limit": lim,
+                "session_id": cid,
+                "replicas": have or replicas,
+                "display_name": display,
+                "readMode": read_mode,
+                "hasEarlier": sliced["start"] > 0,
+                "hasNewer": fe2 > 0,
+                "fromEnd": fe2,
+                "aroundHit": True,
+                "aroundIndex": sliced["hit"],
+            }
+        window = True
+        fe = 0
     if window:
         end = len(merged) - fe
         if end < 0:
@@ -616,6 +699,76 @@ async def list_merged_messages(
     }
 
 
+def merge_copy_peers(copies: list | None, peers: list | None) -> list:
+    """把拥有该会话的其它电脑补进 copies，沿用已有 message_id 去查缓存。"""
+    out = []
+    seen = set()
+    mids = []
+    cid = ""
+    for raw in copies or []:
+        if not isinstance(raw, dict):
+            continue
+        sid = str(raw.get("source_id") or "").strip()
+        cid = cid or str(raw.get("session_id") or "").strip()
+        try:
+            mid = int(raw.get("message_id") or 0)
+        except (TypeError, ValueError):
+            mid = 0
+        if mid and mid not in mids:
+            mids.append(mid)
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        row = dict(raw)
+        row["source_id"] = sid
+        if cid and not str(row.get("session_id") or "").strip():
+            row["session_id"] = cid
+        if mid:
+            row["message_id"] = mid
+        out.append(row)
+    fallback_mid = mids[0] if mids else 0
+    for p in peers or []:
+        if not isinstance(p, dict):
+            continue
+        sid = str(p.get("source_id") or p.get("id") or "").strip()
+        if not sid or sid in seen or not fallback_mid:
+            continue
+        seen.add(sid)
+        out.append({
+            "source_id": sid,
+            "source_label": str(p.get("source_label") or p.get("label") or ""),
+            "kind": str(p.get("kind") or ""),
+            "message_id": fallback_mid,
+            "session_id": cid or str(p.get("session_id") or ""),
+        })
+    return out
+
+
+async def session_peers(session_id: str) -> list[dict]:
+    """拥有该会话的电脑（本地有会话缓存的源；无本地目录的远端源仍列入）。"""
+    cid = str(session_id or "").strip()
+    if not cid:
+        return []
+    from . import wecom_local as L
+    srcs = (await list_sources()).get("items") or []
+    out = []
+    for src in srcs:
+        sid = str(src.get("id") or "").strip()
+        if not sid:
+            continue
+        has = True
+        if L.available() and L.has_source(sid):
+            has = await asyncio.to_thread(L.source_has_session, sid, cid)
+        if not has:
+            continue
+        out.append({
+            "source_id": sid,
+            "kind": str(src.get("kind") or ""),
+            "label": source_label(src),
+        })
+    return out
+
+
 def _pack_try(got: dict) -> dict:
     label = str(got.get("source_label") or got.get("source_id") or "")
     return {
@@ -629,6 +782,12 @@ def _pack_try(got: dict) -> dict:
 async def fetch_attachment_any(copies: list, *, wait_s: float = 50.0) -> dict:
     jobs = []
     seen = set()
+    cid = ""
+    for raw in copies or []:
+        if isinstance(raw, dict) and not cid:
+            cid = str(raw.get("session_id") or "").strip()
+    if cid:
+        copies = merge_copy_peers(copies, await session_peers(cid))
     for raw in copies or []:
         if not isinstance(raw, dict):
             continue

@@ -24,7 +24,8 @@
     sources: [], sourceId: '*', sourceKind: '', sessionId: '', sessionName: '',
     offset: 0, limit: 80, total: 0, fromEnd: 0, hasEarlier: false, searchMode: false, replicas: [], tail: true,
     sessionKey: '', msgKey: '', sourceKey: '', pageItems: [], pick: { app: null, opinions: [] },
-    watchGroups: [], watchOnly: true
+    watchGroups: [], watchOnly: true, focusMid: '', sessionReplicas: [], replicaMap: {},
+    railTab: 'ai', pendingLocate: null, locateHoldFiles: false, aiStale: false, bindPromptView: 'time_window'
   };
   var wecomGroupTimer = null;
   var wecomMsgTimer = null;
@@ -70,7 +71,7 @@
     var n = (copies || []).length;
     if (!n) return '点击下载';
     var names = (copies || []).map(function (c) { return c.source_label || c.source_id; }).filter(Boolean);
-    return '可查 ' + names.join(' · ') + ' · 点击下载';
+    return '可查 ' + names.join(' · ') + ' 等拥有该会话的电脑 · 点击下载';
   }
   function wecomParseJsonAttr(el, name) {
     try {
@@ -266,10 +267,20 @@
     return bits.length ? bits.join(' · ') : '未记录原消息';
   }
 
-  function wecomOpenSession(sid, name) {
+  function wecomOpenSession(sid, name, opts) {
+    opts = opts || {};
     sid = String(sid || '');
     name = String(name || '');
     if (!sid && !name) return;
+    if (opts.aroundId || opts.aroundTime) {
+      wecomState.pendingLocate = {
+        sessionId: sid,
+        sessionName: name,
+        messageId: String(opts.aroundId || ''),
+        time: String(opts.aroundTime || ''),
+        skipDates: !!opts.skipDates
+      };
+    }
     var list = document.getElementById('wecomSessions');
     var wrap = null;
     if (list) {
@@ -296,7 +307,11 @@
       if (title) title.textContent = name || sid || '未选择会话';
       var stream = document.getElementById('wecomStream');
       if (stream) stream.innerHTML = '<div class="wecom-empty">加载中…</div>';
-      loadWecomMessages();
+      loadWecomMessages(false, {
+        aroundId: opts.aroundId || '',
+        aroundTime: opts.aroundTime || '',
+        skipDates: !!opts.skipDates
+      });
     }
     var chat = document.querySelector('.wecom-chat');
     if (chat && chat.scrollIntoView) chat.scrollIntoView({ block: 'nearest' });
@@ -892,6 +907,7 @@
         var sid = it.username || '';
         var name = it.display_name || sid || '未命名会话';
         var reps = it.replicas || [];
+        wecomRememberReplicas(sid, reps);
         var nrep = reps.length;
         var labels = reps.map(function (r) { return r.label || r.source_id; }).filter(Boolean).join('、');
         var meta = (it.synced_at ? '同步 ' + it.synced_at : '未同步') +
@@ -918,6 +934,8 @@
           wecomState.sessionId = (wrap && wrap.getAttribute('data-id')) || '';
           wecomState.sessionName = (wrap && wrap.getAttribute('data-name')) || '';
           wecomState.replicas = wecomParseJsonAttr(btn, 'data-replicas');
+          wecomState.sessionReplicas = wecomState.replicas || [];
+          wecomRememberReplicas(wecomState.sessionId, wecomState.sessionReplicas);
           wecomState.offset = 0;
           wecomState.fromEnd = 0;
           wecomState.tail = true;
@@ -925,7 +943,14 @@
           wecomState.msgKey = '';
           wecomMsgReq += 1;
           wecomPickReset(true);
-          wecomAiReset();
+          if (wecomRailIsOpen()) {
+            if (wecomState.railTab === 'files' && !wecomState.locateHoldFiles) wecomFileLoad();
+            if (wecomState.railTab === 'ai' && wecomAiLastRead) {
+              wecomState.aiStale = true;
+              var staleEl = document.getElementById('wecomAiStale');
+              if (staleEl) staleEl.hidden = false;
+            }
+          }
           list.querySelectorAll('.wecom-item-wrap').forEach(function (x) { x.classList.toggle('on', x === wrap); });
           var stream = document.getElementById('wecomStream');
           if (stream) stream.innerHTML = '<div class="wecom-empty">加载中…</div>';
@@ -938,11 +963,22 @@
   function wecomMsgAlive(reqId, sid) {
     return reqId === wecomMsgReq && sid === wecomState.sessionId;
   }
-  function loadWecomMessages(quiet) {
+  function loadWecomMessages(quiet, opts) {
+    opts = opts || {};
     var stream = document.getElementById('wecomStream');
     var title = document.getElementById('wecomChatTitle');
     var sub = document.getElementById('wecomChatSub');
     var pager = document.getElementById('wecomPager');
+    var sid = wecomState.sessionId;
+    var pend = wecomState.pendingLocate;
+    if (pend && String(pend.sessionId || '') === String(sid || '')) {
+      if (!opts.aroundId && pend.messageId) opts.aroundId = pend.messageId;
+      if (!opts.aroundTime && pend.time) opts.aroundTime = pend.time;
+      if (pend.skipDates) opts.skipDates = true;
+    }
+    var aroundId = String(opts.aroundId || wecomState.focusMid || '').trim();
+    var aroundTime = String(opts.aroundTime || '').trim();
+    if (aroundId) wecomState.focusMid = aroundId;
     if (!wecomState.sessionId) {
       if (!quiet) {
         wecomFail(stream, '选择会话后显示消息。');
@@ -951,9 +987,9 @@
       return;
     }
     var reqId = ++wecomMsgReq;
-    var sid = wecomState.sessionId;
     if (title) title.textContent = wecomState.sessionName || wecomState.sessionId;
     var q = ((document.getElementById('wecomMsgQ') || {}).value || '').trim();
+    if (aroundId || aroundTime) q = '';
     var hasMsgs = !!(stream && stream.querySelector('.wecom-msg'));
     if (!quiet) {
       if (stream) stream.innerHTML = '<div class="wecom-empty">加载中…</div>';
@@ -982,10 +1018,15 @@
       return;
     }
     wecomState.searchMode = false;
-    var start = (document.getElementById('wecomStart') || {}).value || '';
-    var end = (document.getElementById('wecomEnd') || {}).value || '';
-    var url = '/api/wecom/groups/' + encodeURIComponent(sid) + '/messages?limit=' + wecomState.limit +
-      '&tail=1&from_end=' + (wecomState.fromEnd || 0);
+    var start = opts.skipDates ? '' : ((document.getElementById('wecomStart') || {}).value || '');
+    var end = opts.skipDates ? '' : ((document.getElementById('wecomEnd') || {}).value || '');
+    var url = '/api/wecom/groups/' + encodeURIComponent(sid) + '/messages?limit=' + wecomState.limit;
+    if (aroundId || aroundTime) {
+      if (aroundId) url += '&around_id=' + encodeURIComponent(aroundId);
+      if (aroundTime) url += '&around_time=' + encodeURIComponent(aroundTime);
+    } else {
+      url += '&tail=1&from_end=' + (wecomState.fromEnd || 0);
+    }
     if (wecomSourceParam()) url += '&source_id=' + encodeURIComponent(wecomSourceParam());
     if (start) url += '&start_date=' + encodeURIComponent(start);
     if (end) url += '&end_date=' + encodeURIComponent(end);
@@ -1001,19 +1042,43 @@
       wecomState.fromEnd = d.fromEnd || 0;
       wecomState.hasEarlier = !!d.hasEarlier;
       wecomState.tail = true;
-      if (d.replicas && d.replicas.length) wecomState.replicas = d.replicas;
+      if (d.replicas && d.replicas.length) {
+        wecomState.replicas = d.replicas;
+        wecomRememberReplicas(wecomState.sessionId, d.replicas);
+      }
       if (d.display_name && !wecomState.sessionName) wecomState.sessionName = d.display_name;
       if (title && wecomState.sessionName) title.textContent = wecomState.sessionName;
       var items = d.items || [];
       var names = wecomReplicaNames();
       var pageNote = wecomState.fromEnd ? ('已跳过最新 ' + wecomState.fromEnd + ' 条') : '最新';
+      if (d.aroundHit) pageNote = '已定位原文';
       if (sub) sub.textContent = '本页 ' + items.length + ' 条（重复已合并）· ' + pageNote +
         (d.readMode === 'local' ? ' · 本地直读' : '') +
         (start || end ? ' · 已按日期筛选' : '') + ' · ' + names;
       var key = wecomMsgKey(items);
+      var focusMid = aroundId || wecomState.focusMid || '';
       if (!(quiet && wecomState.msgKey === key)) {
         wecomState.msgKey = key;
-        renderWecomMsgs(stream, items, false, quiet);
+        renderWecomMsgs(stream, items, false, quiet, focusMid);
+      } else if (focusMid) {
+        wecomHighlightMid(focusMid);
+      }
+      if (aroundId || (pend && pend.messageId)) {
+        var hitMid = aroundId || (pend && pend.messageId) || '';
+        if (d.aroundHit || (hitMid && wecomHighlightMid(hitMid))) {
+          say(true, '已定位到聊天记录');
+        } else {
+          say(false, '各群记录中未找到对应原文');
+        }
+      }
+      var holdFiles = wecomState.locateHoldFiles;
+      var locateMid = aroundId || (pend && pend.messageId) || '';
+      wecomState.focusMid = '';
+      wecomState.pendingLocate = null;
+      wecomState.locateHoldFiles = false;
+      if (holdFiles) {
+        wecomRailOpen('files');
+        if (locateMid) wecomFileHighlightRow(locateMid);
       }
       if (pager) {
         pager.hidden = !wecomState.hasEarlier && wecomState.fromEnd <= 0;
@@ -1043,6 +1108,59 @@
       return (wecomIsLocalCopy(a) ? 0 : 1) - (wecomIsLocalCopy(b) ? 0 : 1);
     });
   }
+  function wecomRememberReplicas(sid, reps) {
+    wecomState.replicaMap = wecomState.replicaMap || {};
+    sid = String(sid || '').trim();
+    if (!sid || !reps || !reps.length) return;
+    var by = {};
+    ((wecomState.replicaMap[sid] || []).concat(reps)).forEach(function (r) {
+      var id = r && (r.source_id || r.id);
+      if (id) by[id] = r;
+    });
+    wecomState.replicaMap[sid] = Object.keys(by).map(function (k) { return by[k]; });
+  }
+  function wecomPeerReplicas() {
+    var sid = wecomState.sessionId || '';
+    var mapped = (wecomState.replicaMap && wecomState.replicaMap[sid]) || [];
+    if (mapped.length) return mapped;
+    if (wecomState.sessionReplicas && wecomState.sessionReplicas.length) return wecomState.sessionReplicas;
+    return wecomState.replicas || [];
+  }
+  function wecomExpandCopies(copies, mid, sessionId) {
+    copies = wecomSortCopies(copies || []);
+    var cid = String(sessionId || wecomState.sessionId || '').trim();
+    var bySrc = {};
+    var mids = [];
+    copies.forEach(function (c) {
+      if (!c || !c.source_id) return;
+      var row = {
+        source_id: c.source_id,
+        source_label: c.source_label || c.label || '',
+        kind: c.kind || '',
+        message_id: Number(c.message_id || 0),
+        session_id: c.session_id || cid
+      };
+      bySrc[row.source_id] = row;
+      if (row.message_id && mids.indexOf(row.message_id) < 0) mids.push(row.message_id);
+    });
+    var nmid = Number(mid || 0);
+    if (nmid && mids.indexOf(nmid) < 0) mids.push(nmid);
+    var fallback = mids[0] || nmid;
+    wecomPeerReplicas().forEach(function (r) {
+      var sid = r && (r.source_id || r.id);
+      if (!sid || bySrc[sid] || !fallback) return;
+      bySrc[sid] = {
+        source_id: sid,
+        source_label: r.label || r.source_label || '',
+        kind: r.kind || '',
+        message_id: fallback,
+        session_id: cid
+      };
+    });
+    return wecomSortCopies(Object.keys(bySrc).map(function (k) { return bySrc[k]; }).filter(function (c) {
+      return c.source_id && c.message_id;
+    }));
+  }
   function wecomCopiesOf(m) {
     var copies = [];
     if (m && Array.isArray(m.copies) && m.copies.length) {
@@ -1056,21 +1174,16 @@
         };
       }).filter(function (c) { return c.source_id && c.message_id; });
     } else {
-      var mid = Number((m && m.message_id) || 0);
-      if (mid) {
+      var oneMid = Number((m && m.message_id) || 0);
+      if (oneMid) {
         var sid = (m && m.source_id) || wecomSourceParam();
         if (sid) {
-          copies = [{ source_id: sid, message_id: mid, session_id: wecomState.sessionId, source_label: wecomRemoteName(), kind: wecomState.sourceKind || '' }];
-        } else {
-          copies = (wecomState.replicas || []).map(function (r) {
-            return { source_id: r.source_id, message_id: mid, session_id: wecomState.sessionId, source_label: r.label || '', kind: r.kind || '' };
-          }).filter(function (c) { return c.source_id && c.message_id; });
+          copies = [{ source_id: sid, message_id: oneMid, session_id: wecomState.sessionId, source_label: wecomRemoteName(), kind: wecomState.sourceKind || '' }];
         }
       }
     }
-    return wecomSortCopies(copies.filter(function (c, i, arr) {
-      return arr.findIndex(function (x) { return x.source_id === c.source_id; }) === i;
-    }));
+    var mid = Number((m && m.message_id) || (copies[0] && copies[0].message_id) || 0);
+    return wecomExpandCopies(copies, mid, wecomState.sessionId);
   }
   var WECOM_MEDIA_URL = /https?:\/\/\S*(?:wework\.qpic\.cn|wx\.qlogo\.cn|mmbiz\.qpic\.cn|pic\.weixin\.qq\.com|imunion\.weixin\.qq\.com|weixin\.qq\.com\/cgi-bin\/mmae-bin)\S*/gi;
   function wecomStripMediaUrls(s) {
@@ -1186,7 +1299,7 @@
     var chips = wrap.querySelectorAll('.wecom-pc');
     if (chips[idx]) chips[idx].className = 'wecom-pc' + (cls ? ' ' + cls : '');
   }
-  function renderWecomMsgs(stream, items, fromSearch, quiet) {
+  function renderWecomMsgs(stream, items, fromSearch, quiet, focusMid) {
     if (!items.length) {
       if (!quiet || !stream.querySelector('.wecom-msg')) {
         wecomFail(stream, fromSearch ? '没有命中的消息' : '该时间范围内没有消息');
@@ -1240,7 +1353,12 @@
       var cls = 'wecom-msg';
       if (wecomPickIsApp(m)) cls += ' is-app';
       if (wecomPickIsOpFile(m) || wecomPickIsOpText(m)) cls += ' is-op';
-      return '<div class="' + cls + '" data-i="' + i + '"><div class="meta"><span class="who">' + esc(who) + '</span><span>' + esc(when) + (typ ? ' · ' + esc(typ) : '') + '</span></div>' +
+      var mids = [String(mid || '')];
+      (copies || []).forEach(function (c) {
+        var cm = String((c && c.message_id) || '');
+        if (cm && mids.indexOf(cm) < 0) mids.push(cm);
+      });
+      return '<div class="' + cls + '" data-i="' + i + '" data-mid="' + escAttr(mid) + '" data-mids="' + escAttr(mids.join(',')) + '"><div class="meta"><span class="who">' + esc(who) + '</span><span>' + esc(when) + (typ ? ' · ' + esc(typ) : '') + '</span></div>' +
         (text ? '<div class="body">' + esc(text) + '</div>' : '') + extra + pickHtml +
         '<div class="wecom-intent-after" hidden></div></div>';
     }).join('');
@@ -1268,8 +1386,99 @@
     });
     wecomPickEnsureBar();
     wecomPickRefreshBar();
+    if (focusMid && wecomHighlightMid(focusMid)) {
+      return;
+    }
     if (quiet && !nearBottom) stream.scrollTop = keepScroll;
     else stream.scrollTop = stream.scrollHeight;
+  }
+  function wecomFindMsgEl(stream, mid) {
+    var want = String(mid || '').trim();
+    if (!stream || !want) return null;
+    var nodes = stream.querySelectorAll('.wecom-msg');
+    for (var i = 0; i < nodes.length; i++) {
+      if (String(nodes[i].getAttribute('data-mid') || '') === want) return nodes[i];
+      var extras = String(nodes[i].getAttribute('data-mids') || '').split(',');
+      if (extras.indexOf(want) >= 0) return nodes[i];
+    }
+    return null;
+  }
+  function wecomHighlightMid(mid) {
+    var stream = document.getElementById('wecomStream');
+    var hit = wecomFindMsgEl(stream, mid);
+    if (!hit) return false;
+    if (stream) stream.querySelectorAll('.wecom-msg.hit').forEach(function (el) { el.classList.remove('hit'); });
+    hit.classList.add('hit');
+    if (hit.scrollIntoView) hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return true;
+  }
+  function wecomGoChatSec() {
+    var sec = document.getElementById('sec-wecom') || document.getElementById('wecomHome');
+    if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function wecomLocateOrigin(btn) {
+    wecomLocateCopy({
+      sessionId: wecomState.sessionId,
+      sessionName: wecomState.sessionName,
+      messageId: String((btn && btn.getAttribute('data-mid')) || '').trim(),
+      time: String((btn && btn.getAttribute('data-time')) || '').trim()
+    });
+  }
+  function wecomFileHighlightRow(mid) {
+    var box = wecomFileBox();
+    if (!box) return;
+    var want = String(mid || '').trim();
+    box.querySelectorAll('.wecom-files-row.hit').forEach(function (el) { el.classList.remove('hit'); });
+    if (!want) return;
+    box.querySelectorAll('.wecom-files-row').forEach(function (row) {
+      var inp = row.querySelector('[data-mid]');
+      if (!inp || String(inp.getAttribute('data-mid') || '') !== want) return;
+      row.classList.add('hit');
+      if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+      setTimeout(function () { row.classList.remove('hit'); }, 2200);
+    });
+  }
+  function wecomLocateCopy(loc) {
+    loc = loc || {};
+    var sid = String(loc.sessionId || '').trim();
+    var sname = String(loc.sessionName || '').trim();
+    var mid = String(loc.messageId || '').trim();
+    var time = String(loc.time || '').trim();
+    if (!sid && !wecomState.sessionId) {
+      say(false, '请先选择会话');
+      return;
+    }
+    if (!mid && !time) {
+      say(false, '这条没有对应的聊天记录位置');
+      return;
+    }
+    var holdFiles = wecomRailIsOpen() && wecomState.railTab === 'files';
+    if (holdFiles) wecomState.locateHoldFiles = true;
+    wecomGoChatSec();
+    var qEl = document.getElementById('wecomMsgQ');
+    if (qEl) qEl.value = '';
+    sid = sid || wecomState.sessionId;
+    sname = sname || wecomState.sessionName;
+    if (sid && sid !== wecomState.sessionId) {
+      wecomState.locateHoldFiles = true;
+      wecomOpenSession(sid, sname, { aroundId: mid, aroundTime: time, skipDates: true });
+      return;
+    }
+    var stream = document.getElementById('wecomStream');
+    if (mid && stream && wecomFindMsgEl(stream, mid)) {
+      wecomHighlightMid(mid);
+      if (holdFiles) {
+        wecomRailOpen('files');
+        wecomFileHighlightRow(mid);
+        wecomState.locateHoldFiles = false;
+      }
+      say(true, '已定位到聊天记录');
+      return;
+    }
+    wecomState.locateHoldFiles = holdFiles || wecomState.locateHoldFiles;
+    wecomState.focusMid = mid;
+    wecomState.offset = 0;
+    loadWecomMessages(false, { aroundId: mid, aroundTime: time, skipDates: true });
   }
   function wecomIntentKey(m) {
     var copies = wecomCopiesOf(m);
@@ -1378,8 +1587,37 @@
     return document.getElementById('wecomFileBox');
   }
   function wecomFileGo() {
-    var sec = document.getElementById('sec-files');
-    if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    wecomRailOpen('files');
+  }
+  function wecomFileLoad() {
+    var box = wecomFileBox();
+    if (!wecomState.sessionId) {
+      say(false, '请先选择会话');
+      return;
+    }
+    if (!box) return;
+    box.innerHTML = '<div class="wecom-empty">正在汇总本会话文件…</div>';
+    var dates = wecomSplitDates();
+    fetch('/api/wecom/file-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: wecomState.sessionId,
+        session_name: wecomState.sessionName || '',
+        source_id: wecomSourceParam() || '',
+        start_date: dates.start_date,
+        end_date: dates.end_date
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) {
+          if (box) box.innerHTML = '<div class="wecom-empty">' + esc((x.j && x.j.detail) || '汇总失败') + '</div>';
+          return;
+        }
+        wecomFileRender(x.j || {});
+      }).catch(function (e) {
+        if (box) box.innerHTML = '<div class="wecom-empty">' + esc(e.message || '汇总失败') + '</div>';
+      });
   }
   var WECOM_FILE_PAGE = 15;
   var WECOM_FILE_CATS = ['申报书', '修改意见', '护照', '身份证明', '学历证明', '工作证明', '意向协议', '股权证明', '论文全文', '证件照', '电子签', '项目证明', '成果转化证明', '其他'];
@@ -1405,11 +1643,23 @@
           sender: f.sender || '',
           time: f.time || '',
           messageId: f.messageId || '',
-          copies: f.copies || []
+          copies: f.copies || [],
+          sessionId: f.sessionId || d.session_id || '',
+          sessionName: f.sessionName || d.session_name || ''
         });
       });
     });
     return rows;
+  }
+  function wecomFileLocatePayload(f) {
+    var copies = f.copies || [];
+    var c = copies[0] || {};
+    return {
+      sessionId: c.session_id || f.sessionId || wecomState.sessionId || '',
+      sessionName: c.session_name || c.sessionName || f.sessionName || wecomState.sessionName || '',
+      messageId: String(c.message_id || f.messageId || ''),
+      time: f.time || ''
+    };
   }
   function wecomFileSyncChecks() {
     document.querySelectorAll('#wecomFileBox [data-file]').forEach(function (el) {
@@ -1433,7 +1683,7 @@
     return wecomFileAllRows().filter(function (f) {
       if (cat && f.label !== cat) return false;
       if (!q) return true;
-      var blob = (f.label + ' ' + f.filename + ' ' + f.sender + ' ' + f.time).toLowerCase();
+      var blob = (f.label + ' ' + f.filename).toLowerCase();
       return blob.indexOf(q) >= 0;
     });
   }
@@ -1485,7 +1735,7 @@
     } else {
       html += '<div class="wecom-files-bar">' +
         '<div class="wecom-files-find">' +
-          '<label class="wecom-files-search"><span>搜索</span><input id="wecomFileQ" value="' + escAttr(wecomFileQuery) + '" placeholder="文件名、发送人" autocomplete="off"></label>' +
+          '<label class="wecom-files-search"><span>搜索</span><input id="wecomFileQ" value="' + escAttr(wecomFileQuery) + '" placeholder="文件名" autocomplete="off"></label>' +
           '<label class="wecom-files-cat"><span>类别</span><select id="wecomFileCat">' + catOpts + '</select></label>' +
         '</div>' +
         '<div class="wecom-files-meta">' +
@@ -1513,10 +1763,10 @@
           var key = wecomFileKey(f);
           var on = wecomFileChecked[key] ? ' checked' : '';
           html += '<label class="wecom-files-row"><input type="checkbox" data-file="1" data-key="' + escAttr(key) + '" data-name="' + escAttr(f.filename) + '" data-mid="' + escAttr(f.messageId) + '"' + on + '>' +
-            '<span class="tag">' + esc(lab) + '</span>' +
             '<span class="nm" title="' + escAttr(f.filename) + '">' + esc(f.filename || '未命名') + '</span>' +
-            '<span class="meta">' + esc(f.sender) + (f.time ? ' · ' + esc(f.time) : '') + '</span>' +
-            '<button type="button" class="mini wecom-files-dl" data-name="' + escAttr(f.filename || 'file') + '" data-copies="' + encodeURIComponent(JSON.stringify(f.copies || [])) + '" data-wecom-dl="' + escAttr(f.messageId || '') + '">下载</button></label>';
+            '<span class="wecom-files-acts">' +
+            '<button type="button" class="mini wecom-files-loc" data-locate="' + escAttr(JSON.stringify(wecomFileLocatePayload(f))) + '">定位</button>' +
+            '<button type="button" class="mini wecom-files-dl" data-name="' + escAttr(f.filename || 'file') + '" data-copies="' + encodeURIComponent(JSON.stringify(wecomExpandCopies(f.copies || [], f.messageId, f.sessionId || wecomState.sessionId))) + '" data-wecom-dl="' + escAttr(f.messageId || '') + '">下载</button></span></label>';
         });
         if (prevLab) html += '</div>';
         html += '</div>';
@@ -1568,6 +1818,17 @@
         wecomDownload(btn);
       });
     });
+    box.querySelectorAll('.wecom-files-loc').forEach(function (btn) {
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        try {
+          wecomLocateCopy(JSON.parse(btn.getAttribute('data-locate') || '{}'));
+        } catch (e) {
+          say(false, '定位参数无效');
+        }
+      });
+    });
     var up = document.getElementById('wecomFileUp');
     if (up) up.addEventListener('click', wecomFileUpload);
     if (qIn && keepFocus) {
@@ -1577,38 +1838,8 @@
     }
   }
   function wecomFileToggle() {
-    if (!wecomState.sessionId) {
-      say(false, '请先选择会话');
-      return;
-    }
-    var box = wecomFileBox();
-    wecomFileGo();
-    if (!box) {
-      say(false, '文件汇总窗口不在本页');
-      return;
-    }
-    box.hidden = false;
-    box.innerHTML = '<div class="wecom-empty">正在汇总本会话文件…</div>';
-    var dates = wecomSplitDates();
-    fetch('/api/wecom/file-summary', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: wecomState.sessionId,
-        source_id: wecomSourceParam() || '',
-        start_date: dates.start_date,
-        end_date: dates.end_date
-      })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (x) {
-        if (!x.ok) {
-          if (box) box.innerHTML = '<div class="wecom-empty">' + esc((x.j && x.j.detail) || '汇总失败') + '</div>';
-          return;
-        }
-        wecomFileRender(x.j || {});
-      }).catch(function (e) {
-        if (box) box.innerHTML = '<div class="wecom-empty">' + esc(e.message || '汇总失败') + '</div>';
-      });
+    wecomRailOpen('files');
+    wecomFileLoad();
   }
   function wecomFileUpload() {
     var msg = document.getElementById('wecomFileMsg');
@@ -2110,8 +2341,9 @@
   }
   function wecomDownload(btn) {
     var name = btn.getAttribute('data-name') || 'chat-file';
-    var copies = wecomSortCopies(wecomParseJsonAttr(btn, 'data-copies'));
+    var copies = wecomParseJsonAttr(btn, 'data-copies');
     var mid = Number(btn.getAttribute('data-wecom-dl') || 0);
+    copies = wecomExpandCopies(copies, mid, wecomState.sessionId);
     if (!copies.length) copies = wecomCopiesOf({ message_id: mid });
     var wrap = btn.closest('.wecom-file') || btn.parentElement;
     if (!copies.length) {
@@ -2121,10 +2353,25 @@
     btn.disabled = true;
     var idx = 0;
     var lastDetail = '';
+    var tried = [];
+    function wecomCopyFailHint(detail, label) {
+      var d = String(detail || '').trim();
+      var who = '「' + (label || '该电脑') + '」';
+      if (/message not found/i.test(d)) {
+        return who + '会话记录里没有这条消息（不是整批都没查到）';
+      }
+      if (!d) return who + '未缓存';
+      if (d.indexOf(who) === 0 || d.indexOf('「') === 0) return d;
+      return who + d;
+    }
     function failAll() {
       btn.textContent = btn.classList.contains('wecom-orig') ? '原文件未缓存' : '未缓存';
       btn.disabled = false;
-      wecomSetFileStatus(btn, lastDetail || (wecomReplicaNames(copies) + ' 均未缓存。需在对应电脑企业微信里打开过。'), 'bad');
+      var names = wecomReplicaNames(copies);
+      var sum = '已查 ' + copies.length + ' 台电脑（' + names + '），均未取到文件。';
+      if (tried.length) sum += ' ' + tried.join('；');
+      else if (lastDetail) sum += ' ' + lastDetail;
+      wecomSetFileStatus(btn, sum, 'bad');
     }
     function saveBlob(blob, label, copyIdx) {
       var href = URL.createObjectURL(blob);
@@ -2172,6 +2419,7 @@
             wecomSetFileStatus(btn, '已通知「' + label + '」助手回传，正在等文件…', 'wait');
             if (Date.now() > deadline) {
               lastDetail = '「' + label + '」等待超时。请确认该电脑企业微信助手在线，并打开过此文件。';
+              tried.push(lastDetail);
               wecomSetPcState(wrap, copyIdx, 'miss');
               tryNext();
               return;
@@ -2182,22 +2430,26 @@
           clearTimeout(hung);
           if (r.status === 404 || (r.ok && ct.indexOf('json') >= 0)) {
             return r.json().then(function (j) {
-              lastDetail = (j && j.detail) || ('「' + label + '」未缓存');
+              lastDetail = wecomCopyFailHint((j && j.detail) || '', label);
+              tried.push(lastDetail);
               wecomSetPcState(wrap, copyIdx, 'miss');
               tryNext();
             }).catch(function () {
-              lastDetail = '「' + label + '」未缓存';
+              lastDetail = wecomCopyFailHint('', label);
+              tried.push(lastDetail);
               wecomSetPcState(wrap, copyIdx, 'miss');
               tryNext();
             });
           }
           if (!r.ok) {
             return r.json().then(function (j) {
-              lastDetail = (j && j.detail) || ('「' + label + '」HTTP ' + r.status);
+              lastDetail = wecomCopyFailHint((j && j.detail) || ('HTTP ' + r.status), label);
+              tried.push(lastDetail);
               wecomSetPcState(wrap, copyIdx, 'miss');
               tryNext();
             }).catch(function () {
               lastDetail = '「' + label + '」失败';
+              tried.push(lastDetail);
               wecomSetPcState(wrap, copyIdx, 'miss');
               tryNext();
             });
@@ -2205,6 +2457,7 @@
           return r.blob().then(function (blob) {
             if (!blob || blob.size < 4) {
               lastDetail = '「' + label + '」空文件';
+              tried.push(lastDetail);
               wecomSetPcState(wrap, copyIdx, 'miss');
               tryNext();
               return;
@@ -2218,6 +2471,7 @@
           lastDetail = aborted
             ? ('「' + label + '」查询超时')
             : (e.message || ('「' + label + '」请求失败'));
+          tried.push(lastDetail);
           wecomSetPcState(wrap, copyIdx, 'miss');
           tryNext();
         });
@@ -2229,22 +2483,113 @@
   function wecomBoardEl() {
     return document.querySelector('.wecom-board');
   }
-  function wecomAiReset() {
+  function wecomRailEl() {
+    return document.getElementById('wecomRail');
+  }
+  function wecomRailIsOpen() {
+    var rail = wecomRailEl();
+    return !!(rail && !rail.hidden);
+  }
+  function wecomRailSyncTabs() {
+    document.querySelectorAll('.wecom-rail-tab').forEach(function (btn) {
+      btn.classList.toggle('on', btn.getAttribute('data-rail') === wecomState.railTab);
+    });
+    var aiPane = document.getElementById('wecomRailAi');
+    var filesPane = document.getElementById('wecomRailFiles');
+    if (aiPane) aiPane.hidden = wecomState.railTab !== 'ai';
+    if (filesPane) filesPane.hidden = wecomState.railTab !== 'files';
+  }
+  var WECOM_RAIL_W_KEY = 'wecomRailWidthPx';
+  var WECOM_RAIL_W_MIN = 280;
+  var WECOM_RAIL_W_MAX = 900;
+  var WECOM_RAIL_W_DEFAULT = 420;
+  function wecomRailWidthClamp(px) {
+    var n = Math.round(Number(px) || WECOM_RAIL_W_DEFAULT);
+    if (n < WECOM_RAIL_W_MIN) n = WECOM_RAIL_W_MIN;
+    if (n > WECOM_RAIL_W_MAX) n = WECOM_RAIL_W_MAX;
+    var board = wecomBoardEl();
+    if (board) {
+      var maxByBoard = Math.floor((board.getBoundingClientRect().width || 0) * 0.72);
+      if (maxByBoard >= WECOM_RAIL_W_MIN) n = Math.min(n, maxByBoard);
+    }
+    return n;
+  }
+  function wecomRailApplyWidth(px, persist) {
+    var board = wecomBoardEl();
+    if (!board) return;
+    var w = wecomRailWidthClamp(px);
+    board.style.setProperty('--wecom-rail-w', w + 'px');
+    if (persist) {
+      try { localStorage.setItem(WECOM_RAIL_W_KEY, String(w)); } catch (e) {}
+    }
+    return w;
+  }
+  function wecomRailRestoreWidth() {
+    var saved = 0;
+    try { saved = parseInt(localStorage.getItem(WECOM_RAIL_W_KEY) || '', 10) || 0; } catch (e) { saved = 0; }
+    wecomRailApplyWidth(saved || WECOM_RAIL_W_DEFAULT, false);
+  }
+  function wecomRailBindResizer() {
+    var handle = document.getElementById('wecomRailResizer');
+    var board = wecomBoardEl();
+    if (!handle || !board || handle.getAttribute('data-bound') === '1') return;
+    handle.setAttribute('data-bound', '1');
+    var dragging = false;
+    var startX = 0;
+    var startW = WECOM_RAIL_W_DEFAULT;
+    function onMove(ev) {
+      if (!dragging) return;
+      var dx = startX - (ev.clientX || 0);
+      wecomRailApplyWidth(startW + dx, false);
+    }
+    function onUp() {
+      if (!dragging) return;
+      dragging = false;
+      board.classList.remove('is-resizing-rail');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      var cur = getComputedStyle(board).getPropertyValue('--wecom-rail-w').replace('px', '').trim();
+      wecomRailApplyWidth(cur || startW, true);
+    }
+    handle.addEventListener('mousedown', function (ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      dragging = true;
+      startX = ev.clientX || 0;
+      var cur = parseFloat(getComputedStyle(board).getPropertyValue('--wecom-rail-w')) || WECOM_RAIL_W_DEFAULT;
+      startW = wecomRailWidthClamp(cur);
+      board.classList.add('is-resizing-rail');
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+  function wecomRailOpen(tab) {
+    wecomState.railTab = tab === 'files' ? 'files' : 'ai';
+    var rail = wecomRailEl();
+    if (rail) rail.hidden = false;
+    if (wecomBoardEl()) wecomBoardEl().classList.add('has-rail');
+    wecomRailRestoreWidth();
+    wecomRailBindResizer();
+    wecomRailSyncTabs();
+  }
+  function wecomRailClose() {
     wecomState.aiKey = '';
-    var panel = document.getElementById('wecomAiPanel');
-    var body = document.getElementById('wecomAiBody');
-    var sub = document.getElementById('wecomAiSub');
-    if (panel) panel.hidden = true;
-    if (wecomBoardEl()) wecomBoardEl().classList.remove('has-ai');
+    wecomState.aiStale = false;
+    var rail = wecomRailEl();
+    if (rail) rail.hidden = true;
+    if (wecomBoardEl()) wecomBoardEl().classList.remove('has-rail');
     wecomAiTab = 'read';
     wecomAiSyncTabs();
-    if (body) body.innerHTML = '<div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>';
+    var body = document.getElementById('wecomAiBody');
+    var sub = document.getElementById('wecomAiSub');
+    if (body) body.innerHTML = '<div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>' + wecomAiBindSkeleton();
     if (sub) sub.textContent = 'Gemini 读取当前日期窗内的会话';
   }
+  function wecomAiReset() {
+    wecomRailClose();
+  }
   function wecomAiOpen() {
-    var panel = document.getElementById('wecomAiPanel');
-    if (panel) panel.hidden = false;
-    if (wecomBoardEl()) wecomBoardEl().classList.add('has-ai');
+    wecomRailOpen('ai');
   }
   function wecomAiSyncTabs() {
     document.querySelectorAll('.wecom-ai-tab').forEach(function (btn) {
@@ -2258,7 +2603,7 @@
     else if (wecomAiLastRead) wecomAiRender(wecomAiLastRead);
     else {
       var body = document.getElementById('wecomAiBody');
-      if (body) body.innerHTML = '<div class="wecom-empty">点「AI 解读」将解读当前会话，配对申报书与修改意见并生成摘要。</div>';
+      if (body) body.innerHTML = '<div class="wecom-empty">点「AI 解读」将解读当前会话，配对申报书与修改意见并生成摘要。</div>' + wecomAiBindSkeleton();
     }
   }
   function wecomAiLoadHistory() {
@@ -2319,6 +2664,91 @@
     if (c === 'low') return '<span class="wecom-ai-tag">低置信</span>';
     return '';
   }
+  function wecomAiBindLabels() {
+    return {
+      time_window: '时间窗',
+      name_id: '编号匹配',
+      semantic: '语义上下文',
+      semantic_strict: '语义严格'
+    };
+  }
+  function wecomAiBindLocate(payload) {
+    wecomLocateCopy(payload || {});
+  }
+  function wecomAiBindOne(d, block) {
+    var html = '';
+    if (block.error) html += '<p style="color:var(--bad)">' + esc(block.error) + '</p>';
+    var talents = block.talents || [];
+    if (!talents.length) html += '<p>当前会话未识别到申报书版本</p>';
+    talents.forEach(function (t) {
+      html += '<div class="wecom-ai-bind-talent"><b>' + esc(t.label || t.attachId || '未识别编号') + '</b>';
+      (t.versions || []).forEach(function (v) {
+        var ops = v.opinions || [];
+        html += '<div class="wecom-ai-bind-ver">' +
+          '<div><span class="wecom-ai-bind-op" data-locate="' + escAttr(JSON.stringify({
+            sessionId: d.session_id || wecomState.sessionId,
+            sessionName: d.session_name || wecomState.sessionName,
+            messageId: String(v.messageId || ''),
+            time: v.time || ''
+          })) + '">' + esc(v.chatVersion || '') + ' · ' + esc(v.filename || '申报书') + '</span>' +
+          ' <span style="color:#8a93a6;font-size:11px">' + esc(v.time || '') + '</span></div>';
+        if (!ops.length) {
+          html += '<div class="wecom-ai-bind-miss">无对应修改意见</div>';
+        } else {
+          ops.forEach(function (op) {
+            html += '<div class="wecom-ai-bind-op-row"><span class="wecom-ai-bind-op" data-locate="' + escAttr(JSON.stringify({
+              sessionId: d.session_id || wecomState.sessionId,
+              sessionName: d.session_name || wecomState.sessionName,
+              messageId: String(op.messageId || ''),
+              time: op.time || ''
+            })) + '">意见 · ' + esc(op.kind === 'text' ? '会话文本' : (op.filename || '修改意见')) + '</span>' +
+              ' <span style="color:#8a93a6;font-size:11px">' + esc(op.time || '') + '</span></div>';
+          });
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+    var unbound = block.unboundOpinions || [];
+    if (unbound.length) html += '<p style="margin-top:8px;color:#8a93a6">未绑定意见 ' + unbound.length + ' 条</p>';
+    return html;
+  }
+  function wecomAiBindSkeleton() {
+    return '<div class="wecom-ai-card"><h5>申报书版本与修改意见</h5>' +
+      '<div class="wecom-ai-bind-tabs">' +
+      '<button type="button" class="wecom-ai-bind-tab on">时间窗</button>' +
+      '<button type="button" class="wecom-ai-bind-tab">编号匹配</button>' +
+      '<button type="button" class="wecom-ai-bind-tab">语义上下文</button>' +
+      '<button type="button" class="wecom-ai-bind-tab">语义严格</button>' +
+      '<button type="button" class="wecom-ai-bind-tab">并排</button></div>' +
+      '<p>本次记录无结构化绑定</p></div>';
+  }
+  function wecomAiBindBlock(d) {
+    var binds = d.bindPrompts;
+    if (!binds || !Object.keys(binds).length) {
+      return wecomAiBindSkeleton();
+    }
+    var labels = wecomAiBindLabels();
+    var keys = Object.keys(binds);
+    var view = wecomState.bindPromptView;
+    var side = view === 'side';
+    if (!side && keys.indexOf(view) < 0) view = keys[0];
+    wecomState.bindPromptView = side ? 'side' : view;
+    var tabs = '<div class="wecom-ai-bind-tabs">' + keys.map(function (k) {
+      return '<button type="button" class="wecom-ai-bind-tab' + (!side && k === view ? ' on' : '') + '" data-bind="' + escAttr(k) + '">' + esc(labels[k] || k) + '</button>';
+    }).join('') + '<button type="button" class="wecom-ai-bind-tab' + (side ? ' on' : '') + '" data-bind="side">并排</button></div>';
+    var html = '<div class="wecom-ai-card"><h5>申报书版本与修改意见</h5>' + tabs;
+    if (side) {
+      html += '<div class="wecom-ai-bind-side">' + keys.map(function (k) {
+        var block = binds[k] || {};
+        return '<div class="wecom-ai-bind-col"><div class="wecom-ai-bind-col-hd">' + esc(labels[k] || k) + '</div>' + wecomAiBindOne(d, block) + '</div>';
+      }).join('') + '</div>';
+    } else {
+      html += wecomAiBindOne(d, binds[view] || {});
+    }
+    html += '</div>';
+    return html;
+  }
   function wecomAiRender(d) {
     var body = document.getElementById('wecomAiBody');
     var sub = document.getElementById('wecomAiSub');
@@ -2344,7 +2774,9 @@
       var title = isWatch
         ? ('关注会话 ' + (d.groupCount || groups.length || 0) + ' 个')
         : (d.session_name || wecomState.sessionName || '');
-      var bits = [title, (d.start_date || '—') + ' ~ ' + (d.end_date || '—')];
+      var bits = [title];
+      if (d.start_date || d.end_date) bits.push((d.start_date || '—') + ' ~ ' + (d.end_date || '—'));
+      else if (!isWatch) bits.push('全部聊天记录');
       if (d.recordAt) bits.push('已保存 ' + d.recordAt);
       if (d.engine) bits.push(d.engine);
       if (d.model) bits.push(d.model);
@@ -2403,18 +2835,48 @@
             return o.kind === 'text' ? '会话文本' : (o.filename || '意见文档');
           }).join('、');
           var grp = c.session_name ? '<span style="color:#8a93a6">' + esc(c.session_name) + ' · </span>' : '';
-          return '<div class="wecom-ai-case">' + grp + '<b>' + esc(c.filename || c.id) + '</b> ' + st +
+          var canUp = c.ready && !c.existing;
+          var upBtn = canUp
+            ? ' <button type="button" class="mini primary" data-ai-up="' + escAttr(c.id || '') + '" data-sid="' + escAttr(c.session_id || d.session_id || '') + '">上传</button>'
+            : '';
+          return '<div class="wecom-ai-case" data-ai-case="' + escAttr(c.id || '') + '">' + grp + '<b>' + esc(c.filename || c.id) + '</b> ' + st + upBtn +
             '<div style="color:#8a93a6;margin-top:4px">' + esc(c.time || '') +
             (ops ? ' · 意见：' + esc(ops) : ' · 无配对意见') + '</div></div>';
         }).join('') + '</div>';
     }
+    var stale = wecomState.aiStale ? '<div class="wecom-ai-stale" id="wecomAiStale">已切换会话，请重新解读</div>' : '<div class="wecom-ai-stale" id="wecomAiStale" hidden>已切换会话，请重新解读</div>';
+    var bindBlock = wecomAiBindBlock(d);
     var acts = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
       '<button type="button" class="mini primary" id="wecomAiSplitGo">拆解任务</button>' +
       '<button type="button" class="mini" id="wecomAiRefresh">重新解读</button>' +
       '<button type="button" class="mini" id="wecomAiGoLog">解读记录</button></div>';
-    body.innerHTML = stats + sumBlock + opBlock + riskBlock + caseBlock + acts;
+    body.innerHTML = stats + stale + bindBlock + sumBlock + opBlock + riskBlock + caseBlock + acts;
+    body.querySelectorAll('.wecom-ai-bind-tab').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        wecomState.bindPromptView = btn.getAttribute('data-bind') || 'time_window';
+        wecomAiRender(d);
+      });
+    });
+    body.querySelectorAll('.wecom-ai-bind-op').forEach(function (btn) {
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        try {
+          wecomAiBindLocate(JSON.parse(btn.getAttribute('data-locate') || '{}'));
+        } catch (e) {
+          say(false, '定位参数无效');
+        }
+      });
+    });
     var splitGo = document.getElementById('wecomAiSplitGo');
     if (splitGo) splitGo.addEventListener('click', wecomSplitOpen);
+    body.querySelectorAll('[data-ai-up]').forEach(function (btn) {
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        wecomAiCaseUpload(btn, d);
+      });
+    });
     var refresh = document.getElementById('wecomAiRefresh');
     if (refresh) refresh.addEventListener('click', wecomAiRead);
     var goLog = document.getElementById('wecomAiGoLog');
@@ -2422,7 +2884,64 @@
     wecomAiLastRead = d;
     wecomAiTab = 'read';
     wecomAiSyncTabs();
+    wecomState.aiStale = false;
     wecomState.aiKey = [d.scope || 'session', d.session_id, d.start_date, d.end_date, d.messageCount, hasOp].join('\t');
+  }
+  function wecomAiCaseUpload(btn, d, force) {
+    var cid = (btn && btn.getAttribute && btn.getAttribute('data-ai-up')) || '';
+    if (!cid) {
+      say(false, '没有可上传的申报书');
+      return;
+    }
+    var sid = (btn.getAttribute('data-sid') || (d && d.session_id) || wecomState.sessionId || '').trim();
+    var sname = (d && d.session_name) || wecomState.sessionName || '';
+    if (!sid) {
+      say(false, '缺少会话，无法上传');
+      return;
+    }
+    var row = btn.closest('.wecom-ai-case') || btn.parentElement;
+    btn.disabled = true;
+    btn.textContent = '正在取文件…';
+    fetch('/api/wecom/split-create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        session_id: sid,
+        session_name: sname,
+        source_id: wecomSourceParam() || '',
+        start_date: '',
+        end_date: '',
+        windowHours: 0,
+        allHistory: true,
+        caseIds: [cid],
+        force: !!force
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        var got = x.j || {};
+        var created = (got.created || [])[0];
+        var err = (got.errors || [])[0];
+        if (!x.ok || got.ok === false || !created) {
+          btn.disabled = false;
+          btn.textContent = '上传';
+          say(false, (err && err.detail) || got.detail || '上传失败');
+          return;
+        }
+        var href = created.url || ('/t/' + created.id);
+        btn.outerHTML = '<a class="mini primary" href="' + escAttr(href) + '" target="_blank" rel="noopener">打开任务</a>' +
+          ' <span class="wecom-ai-tag ok">已上传</span>';
+        if (row) {
+          var tag = row.querySelector('.wecom-ai-tag.ok');
+          if (tag && tag.textContent.indexOf('可上传') >= 0) tag.textContent = '已上传';
+        }
+        say(true, '已上传到任务列表（生成计划后需确认）');
+        if (typeof loadOverview === 'function') loadOverview();
+      }).catch(function (e) {
+        btn.disabled = false;
+        btn.textContent = '上传';
+        say(false, e.message || '上传失败');
+      });
   }
   function wecomAiRead() {
     if (!wecomState.sessionId) {
@@ -2436,11 +2955,10 @@
     var sub = document.getElementById('wecomAiSub');
     var btn = document.getElementById('wecomAiBtn');
     var name = wecomState.sessionName || wecomState.sessionId;
-    if (body) body.innerHTML = '<div class="wecom-empty">正在解读当前会话…<br><span style="font-size:12px;color:#8a93a6">' + esc(name) + ' · 拉取本会话记录 → 规则拆解 → Gemini 配对申报书与修改意见</span></div>';
+    if (body) body.innerHTML = '<div class="wecom-empty">正在读取当前会话全部聊天记录…<br><span style="font-size:12px;color:#8a93a6">' + esc(name) + ' · 通读会话 → 列出申报书版本与对应修改意见</span></div>';
     if (sub) sub.textContent = '分析中 · ' + name;
     wecomAiLoading = true;
     if (btn) btn.disabled = true;
-    var dates = wecomSplitDates();
     fetch('/api/wecom/ai-read', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2449,9 +2967,11 @@
         session_id: wecomState.sessionId,
         session_name: wecomState.sessionName || '',
         source_id: wecomSourceParam() || '',
-        start_date: dates.start_date,
-        end_date: dates.end_date,
-        windowHours: 48
+        start_date: '',
+        end_date: '',
+        windowHours: 0,
+        bind: true,
+        bindPrompts: ['time_window', 'name_id', 'semantic', 'semantic_strict']
       })
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (x) {
@@ -2498,15 +3018,16 @@
     });
     var reload = document.getElementById('wecomReload');
     if (reload) reload.addEventListener('click', function () { wecomState.offset = 0; wecomState.fromEnd = 0; wecomState.tail = true; loadWecomBoard(); });
-    if (reload && document.querySelector('.admin-shell') && !document.getElementById('wecomFileBtn')) {
-      var fileBtn = document.createElement('button');
+    var fileBtn = document.getElementById('wecomFileBtn');
+    if (!fileBtn && reload && wecomFileBox()) {
+      fileBtn = document.createElement('button');
       fileBtn.type = 'button';
       fileBtn.className = 'mini';
       fileBtn.id = 'wecomFileBtn';
       fileBtn.textContent = '文件汇总';
       reload.parentNode.insertBefore(fileBtn, reload);
-      fileBtn.addEventListener('click', wecomFileToggle);
     }
+    if (fileBtn) fileBtn.addEventListener('click', wecomFileToggle);
     var aiBtn = document.getElementById('wecomAiBtn');
     if (aiBtn) aiBtn.addEventListener('click', wecomAiRead);
     var aiLogBtn = document.getElementById('wecomAiLogBtn');
@@ -2515,8 +3036,17 @@
     if (aiTabRead) aiTabRead.addEventListener('click', function () { wecomAiSetTab('read'); });
     var aiTabLog = document.getElementById('wecomAiTabLog');
     if (aiTabLog) aiTabLog.addEventListener('click', function () { wecomAiSetTab('log'); });
-    var aiClose = document.getElementById('wecomAiClose');
-    if (aiClose) aiClose.addEventListener('click', wecomAiReset);
+    wecomRailRestoreWidth();
+    wecomRailBindResizer();
+    var railClose = document.getElementById('wecomRailClose');
+    if (railClose) railClose.addEventListener('click', wecomRailClose);
+    var railTabAi = document.getElementById('wecomRailTabAi');
+    if (railTabAi) railTabAi.addEventListener('click', function () { wecomRailOpen('ai'); });
+    var railTabFiles = document.getElementById('wecomRailTabFiles');
+    if (railTabFiles) railTabFiles.addEventListener('click', function () {
+      wecomRailOpen('files');
+      if (wecomState.sessionId) wecomFileLoad();
+    });
     var splitBtn = document.getElementById('wecomSplitBtn');
     if (splitBtn) splitBtn.addEventListener('click', wecomSplitOpen);
     var intentPageBtn = document.getElementById('wecomIntentPageBtn');

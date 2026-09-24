@@ -13,6 +13,7 @@ from .routes import feedback as feedback_routes
 from .routes import wecom_board as wecom_board_routes
 from .routes import openapi as openapi_routes
 from .routes import api_apply as api_apply_routes
+from .routes import talent_files as talent_files_routes
 
 runner = TaskStore()
 batches = BatchStore(runner=runner)
@@ -92,6 +93,7 @@ app.include_router(feedback_routes.router)
 app.include_router(wecom_board_routes.router)
 app.include_router(openapi_routes.create_router(runner))
 app.include_router(api_apply_routes.router)
+app.include_router(talent_files_routes.router)
 
 @app.get("/api/config")
 def api_config(request: Request):

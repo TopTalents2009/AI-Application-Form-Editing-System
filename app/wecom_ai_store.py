@@ -5,6 +5,7 @@ import secrets
 from datetime import datetime
 from pathlib import Path
 from .config import DATA_DIR, atomic_replace
+from .wecom_ai_bind import count_bindings
 
 _STORE_DIR = DATA_DIR / "data" / "wecom_ai_reads"
 _INDEX_PATH = _STORE_DIR / "index.json"
@@ -63,6 +64,7 @@ def save_ai_read(payload: dict, *, user: str = "") -> dict:
         "readyCount": int(payload.get("readyCount") or 0),
         "model": str(payload.get("model") or ""),
         "summaryText": str(sumo.get("summary") or "")[:160],
+        "bindCount": count_bindings(payload.get("bindPrompts") if isinstance(payload.get("bindPrompts"), dict) else {}),
     }
     full = dict(payload)
     full["id"] = rid

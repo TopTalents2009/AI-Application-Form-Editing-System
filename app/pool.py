@@ -1,6 +1,6 @@
 """外部只读人才库 / 企业库客户端（/api/external-read/v1）"""
 from __future__ import annotations
-import json, re, asyncio
+import copy, json, re, asyncio
 from pathlib import Path
 from urllib.parse import urlparse, urlencode, quote
 import httpx
@@ -619,6 +619,59 @@ def _edit_pairs(edits: list, applied: list | None) -> list[tuple[str, str]]:
     return pairs
 
 
+def build_database_payload(doc: dict | None, original_payload: dict | None = None) -> dict:
+    """将修改后的申报书整理为人才库 payload（与 831 mapper.build_database_payload 对齐）。"""
+    out = copy.deepcopy(doc) if isinstance(doc, dict) else {}
+    orig = original_payload if isinstance(original_payload, dict) else {}
+    orig_basic = orig.get("申报人基本信息") if isinstance(orig.get("申报人基本信息"), dict) else {}
+    basic = out.get("申报人基本信息")
+    if isinstance(basic, dict):
+        if basic.get("回国前职务中文") and "回国前职务" in basic and "回国前职务" not in orig_basic:
+            basic.pop("回国前职务", None)
+        intro = str(basic.get("引进企业基本情况") or "").strip()
+        if intro and str(out.get("引进企业基本情况") or "").strip() == intro:
+            out.pop("引进企业基本情况", None)
+    return out
+
+
+def build_database_export(
+    snap: dict | None,
+    edits: list | None = None,
+    applied: list | None = None,
+    *,
+    attach_id: str = "",
+    name: str = "",
+    mode: str = "",
+) -> dict:
+    """可回写人才库的 database.json：{"talent": {...payload...}, "enterprise": ...}。"""
+    snap = snap if isinstance(snap, dict) else {}
+    src = snap.get("talent") if isinstance(snap.get("talent"), dict) else {}
+    talent = copy.deepcopy(src)
+    if attach_id and not talent.get("attach_id"):
+        talent["attach_id"] = str(attach_id)
+    if name and not talent.get("name"):
+        talent["name"] = str(name)
+    if mode and not talent.get("mode"):
+        talent["mode"] = str(mode)
+    original_payload = copy.deepcopy(talent["payload"]) if isinstance(talent.get("payload"), dict) else {}
+    last_app = copy.deepcopy(talent["last_application"]) if talent.get("last_application") else None
+    pairs = _edit_pairs(edits or [], applied)
+    if pairs:
+        talent = _rewrite_tree(talent, pairs)
+    payload = talent.get("payload") if isinstance(talent.get("payload"), dict) else {}
+    talent["payload"] = build_database_payload(payload, original_payload)
+    if last_app is not None:
+        talent["last_application"] = last_app
+    result = {"talent": talent}
+    enterprise = snap.get("enterprise") if isinstance(snap.get("enterprise"), dict) else None
+    if enterprise:
+        ent = copy.deepcopy(enterprise)
+        if pairs:
+            ent = _rewrite_tree(ent, pairs)
+        result["enterprise"] = ent
+    return result
+
+
 def build_talent_export(
     snap: dict | None,
     edits: list | None = None,
@@ -628,27 +681,12 @@ def build_talent_export(
     name: str = "",
     mode: str = "",
 ) -> dict:
-    """确认写入后的人才记录，字段结构与人才库 talent 记录一致。"""
-    talent = {}
-    if isinstance(snap, dict) and isinstance(snap.get("talent"), dict):
-        talent = dict(snap["talent"])
-    payload = talent.get("payload") if isinstance(talent.get("payload"), dict) else {}
-    record = {
-        "attach_id": str(talent.get("attach_id") or attach_id or ""),
-        "name": str(talent.get("name") or name or ""),
-        "mode": str(talent.get("mode") or mode or ""),
-        "source_year": talent.get("source_year") or "",
-        "profile_summary": str(talent.get("profile_summary") or ""),
-        "google_scholar_url": talent.get("google_scholar_url") or "",
-        "linkedin_url": talent.get("linkedin_url") or "",
-        "payload": payload,
-    }
-    if talent.get("id") not in (None, ""):
-        record["id"] = talent.get("id")
-    pairs = _edit_pairs(edits or [], applied)
-    if pairs:
-        record = _rewrite_tree(record, pairs)
-    return record
+    """人才库 talent 记录（含 payload / last_application）。"""
+    export = build_database_export(
+        snap, edits, applied, attach_id=attach_id, name=name, mode=mode,
+    )
+    talent = export.get("talent")
+    return talent if isinstance(talent, dict) else {}
 
 
 def save_snapshot(task_dir: str | Path, snap: dict) -> None:

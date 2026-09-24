@@ -13,7 +13,7 @@ from .pdf_app import (
     ocr_scanned_pdf_to_text, pdf_kind, sniff_pdf, work_docx_name, _pdf_text_stats,
 )
 from .opinion_extract import resolve_ocr_timeout
-from .pool import lookup_for_app, format_pool_prompt, save_snapshot, build_talent_export
+from .pool import lookup_for_app, format_pool_prompt, save_snapshot, build_database_export
 from .edu_resume import enrich_education, save_snapshot as save_edu_snapshot
 from .attachments import resolve_missing, format_attach_prompt, save_snapshot as save_attach_snapshot, leftover_lines, public_plan_block, public_attach_hit, build_task_list, public_task_list, format_task_list_md
 from .report_docx import write_compare_docx, write_task_list_docx
@@ -204,6 +204,44 @@ def expand_qm_work_plan_clauses(clauses: list) -> list:
     return out
 
 
+_PAPER_AND_PROJECT_RE = re.compile(r"项目论文|论文.{0,8}项目|两个模块|两个栏目")
+
+
+def expand_qm_paper_project_clauses(clauses: list) -> list:
+    """「补充项目论文材料 / 这两个模块」拆成论文章 + 项目章各一条。"""
+    out = list(clauses or [])
+    used = {str(c.get("cid") or "") for c in out}
+    have = {}
+    for c in out:
+        have.setdefault(str(c.get("sourceId") or ""), set()).add(str(c.get("section") or ""))
+    extras = []
+    for c in clauses or []:
+        blob = str(c.get("clause") or "") + str(c.get("opinion") or "")
+        if not _PAPER_AND_PROJECT_RE.search(blob):
+            continue
+        sid = str(c.get("sourceId") or "")
+        got = have.setdefault(sid, set())
+        for sec, clause in (
+            ("论文", "补充论文模块申报书文字内容"),
+            ("项目", "补充项目模块申报书文字内容及相关证明材料"),
+        ):
+            if sec in got:
+                continue
+            suffix = "-PAP" if sec == "论文" else "-PRJ"
+            cid = unique_cid(str(c.get("cid") or "S0") + suffix, used)
+            used.add(cid)
+            extras.append({
+                "cid": cid,
+                "sourceId": c.get("sourceId"),
+                "section": sec,
+                "clause": clause,
+                "opinion": c.get("opinion") or "",
+                "opName": c.get("opName") or "",
+            })
+            got.add(sec)
+    return out + extras
+
+
 def classify_clauses_heuristic(blocks: list, hj: bool, allowed_sec: set) -> list:
     clauses = []
     used = set()
@@ -310,6 +348,9 @@ ITEM_HEAD = re.compile(
     r"|[①②③④⑤⑥⑦⑧⑨⑩]\s*"
     r")"
 )
+TITLE_COLON = re.compile(
+    r"^[\u4e00-\u9fa5A-Za-z0-9《》「」\"“”（）()、]{4,40}[：:]"
+)
 
 def norm_sid(s) -> str:
     s = str(s or "").strip().upper().strip("[]() ")
@@ -318,15 +359,22 @@ def norm_sid(s) -> str:
         return "S" + str(int(m.group(1))) + (m.group(2) or "")
     return s
 
-def split_source_units(text: str) -> list:
+def split_source_units(text: str, app_no: str = "") -> list:
     text = str(text or "").replace("\xa0", " ").replace("\u3000", " ")
     units = []
-    for blk in M.split_opinion_blocks(text):
+    blocks = M.split_opinion_blocks(text)
+    if app_no:
+        blocks, _notes = M.keep_blocks_for_app(blocks, app_no)
+    for blk in blocks:
         units.extend(_split_items(blk))
     return units
 
 def _chunk_has_item(cur) -> bool:
     return any(ITEM_HEAD.match(x.strip()) for x in cur if str(x).strip())
+
+
+def _chunk_has_title(cur) -> bool:
+    return any(TITLE_COLON.match(x.strip()) for x in cur if str(x).strip())
 
 
 def _split_inline_numbered(text: str) -> list[str]:
@@ -378,6 +426,10 @@ def _split_items(blk: str) -> list:
         # 已是编号条目时，下一条编号必须切开。短句如「3.承担项目需要证明材料;」
         # 以前因不足 20 字被粘到下一条，导致「论文重新梳理」丢失。
         if ITEM_HEAD.match(s) and cur and (_chunk_has_item(cur) or len("".join(cur).strip()) >= 20):
+            push()
+        elif TITLE_COLON.match(s) and cur and (
+            _chunk_has_title(cur) or _chunk_has_item(cur) or len("".join(cur).strip()) >= 12
+        ):
             push()
         cur.append(line)
     push()
@@ -506,6 +558,7 @@ class TaskStore:
                  "startedAt": t.get("startedAt") or "",
                  "runningSince": t.get("runningSince") or "",
                  "versions": list(t.get("versions") or [])[-5:],
+                 "talentAppFile": t.get("talentAppFile") or None,
                  "deliverables": [{"name": o["name"], "size": o.get("size", 0)} for o in (t.get("deliverables") or [])]})
         return out
 
@@ -799,12 +852,25 @@ class TaskStore:
         return ""
 
     def collect_opinion_blocks(self, texts, t=None) -> list:
+        app_no = ""
+        if t is not None:
+            app_no = str((t.get("app") or {}).get("no") or "").strip() or app_no_of(
+                str((t.get("app") or {}).get("name") or "")
+            )
         blocks = []
         for of in texts.get("opinionFiles") or []:
             raw = str(of.get("text") or "")
             units = split_inline_units(raw)
             if not units:
-                units = split_source_units(raw)
+                raw_blocks = M.split_opinion_blocks(raw)
+                if app_no:
+                    raw_blocks, id_notes = M.keep_blocks_for_app(raw_blocks, app_no)
+                    if t is not None:
+                        for msg in id_notes:
+                            self.log(t, msg)
+                units = []
+                for blk in raw_blocks:
+                    units.extend(_split_items(blk))
             if not units:
                 raw = raw.strip()
                 if raw:
@@ -892,6 +958,12 @@ class TaskStore:
             "意见要求补充产品名称、应用推广或成果转化依托单位时，必须改定位句，"
             "用申报书已有产品/场景/合作单位类型写具体，禁止因缺型号或公司全称而只写 leftovers。"
         )
+        if sec == "论文" and "论文系统题录" in str(attach_text or ""):
+            extra_guard += (
+                "【论文系统题录】附件检索已给出题目/期刊/年份/DOI 时，本章必须产出 edit 写入申报书「代表性论文」表，"
+                "find 锚定论文表头或「论文」栏原文；不得只写 leftovers、不得声称缺人才库就无法填。"
+                "引用数、影响因子、页码未知则留空，严禁编造。"
+            )
         form_reqs = (form_reqs + extra_guard) if form_reqs else extra_guard.strip()
         if hj:
             extra = hj_form_requirements(app_text)
@@ -1045,6 +1117,7 @@ class TaskStore:
             clauses = classify_clauses_heuristic(blocks, hj, allowed_sec)
         if not hj:
             clauses = expand_qm_work_plan_clauses(clauses)
+            clauses = expand_qm_paper_project_clauses(clauses)
         clauses = annotate_column_wide_clauses(clauses, texts["appText"])
         # 2) 兜底覆盖：LLM 漏掉的来源意见补一条，避免「意见未被提取/未修改」
         if clauses:
@@ -1103,9 +1176,13 @@ class TaskStore:
         if edu.get("needed"):
             self.log(t, "教育信息缺失：已检索人才库原始简历" + (("（" + "；".join(edu.get("notes") or []) + "）") if edu.get("notes") else ""))
         attach = {"needed": [], "items": [], "private": {}, "notes": [], "summary": ""}
-        self.log(t, "检索缺失附件（人才库优先；项目证明再走联网检索/生成接口）…")
+        self.log(t, "检索缺失附件（本地 → 人才库 → 聊天记录；论文再走论文系统；项目证明再走联网检索/生成接口）…")
+        raw_ops = [str(of.get("text") or "") for of in (texts.get("opinionFiles") or [])]
         try:
-            attach = await resolve_missing(t["id"], opinion_blob, snap, app_no, app_text=texts.get("appText") or "", task_dir=t["dir"])
+            attach = await resolve_missing(
+                t["id"], list(opinion_blob) + raw_ops, snap, app_no,
+                app_text=texts.get("appText") or "", task_dir=t["dir"],
+            )
             save_attach_snapshot(t["dir"], attach)
         except Exception as e:
             attach["notes"] = list(attach.get("notes") or []) + ["缺附件检索失败：" + str(e)[:160]]
@@ -1114,6 +1191,9 @@ class TaskStore:
         self.persist(t)
         if attach.get("needed"):
             self.log(t, "" + (attach.get("summary") or "缺附件检索完成") + (("（" + "；".join(attach.get("notes") or []) + "）") if attach.get("notes") else ""))
+            srcs = sorted({str(it.get("source") or "") for it in (attach.get("items") or []) if it.get("source")})
+            if srcs:
+                self.log(t, "缺附件来源：" + "、".join(srcs))
         attach_text = format_attach_prompt(attach)
         pair = compare_model_profiles()
         gem = pair.get("gemini") or {}
@@ -1609,7 +1689,7 @@ class TaskStore:
         for msg in check_replace_limits(edits, texts["appText"]):
             leftovers.append("【表内限字】" + msg)
         try:
-            attach = await resolve_missing(t["id"], opinion_blob + leftovers, snap, app_no, prev=attach, app_text=texts.get("appText") or "", task_dir=t["dir"])
+            attach = await resolve_missing(t["id"], list(opinion_blob) + leftovers + raw_ops, snap, app_no, prev=attach, app_text=texts.get("appText") or "", task_dir=t["dir"])
             save_attach_snapshot(t["dir"], attach)
         except Exception as e:
             self.log(t, "缺附件补检索失败：" + str(e)[:160])
@@ -1660,7 +1740,7 @@ class TaskStore:
                     or "对照表" in o["name"] or "遗留事项" in o["name"] or "任务清单" in o["name"]
                     or str(o["name"]).endswith("人才库.json")
                 ]
-                self.log(t, "已生成任务清单.docx（" + str(len(task_list)) + " 项，先查本地附件再查人才库）")
+                self.log(t, "已生成任务清单.docx（" + str(len(task_list)) + " 项，本地→人才库→论文系统）")
             except Exception as e:
                 self.log(t, "任务清单 Word 生成失败：" + str(e)[:120])
 
@@ -1961,13 +2041,14 @@ class TaskStore:
                 self.log(t, "对照表 Word 生成失败，已保留 Markdown：" + str(e)[:120])
             lo_txt = "\n".join(str(i2 + 1) + ". " + s for i2, s in enumerate(leftovers)) if leftovers else "（无）"
             (out_dir / "遗留事项.md").write_text("# 遗留事项（需人工补充真实数据）\n\n" + lo_txt, encoding="utf-8")
+            talent_export = None
             try:
                 snap = {}
                 pool_path = tmp_dir / "pool.json"
                 if pool_path.is_file():
                     snap = json.loads(pool_path.read_text(encoding="utf-8"))
                 app_meta = t.get("app") or {}
-                record = build_talent_export(
+                record = build_database_export(
                     snap if isinstance(snap, dict) else {},
                     edits,
                     applied,
@@ -1975,13 +2056,15 @@ class TaskStore:
                     name=str(app_meta.get("personName") or ""),
                     mode=str(app_meta.get("mode") or ""),
                 )
-                no = str(record.get("attach_id") or app_no_of(app_meta.get("name") or "") or "").strip()
+                talent_rec = record.get("talent") if isinstance(record.get("talent"), dict) else {}
+                no = str(talent_rec.get("attach_id") or app_no_of(app_meta.get("name") or "") or "").strip()
                 pool_name = (no + "-人才库.json") if no else "人才库.json"
                 (out_dir / pool_name).write_text(
                     json.dumps(record, ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
-                self.log(t, "已生成人才库格式 " + pool_name)
+                self.log(t, "已生成人才库字段 JSON " + pool_name)
+                talent_export = record
             except Exception as e:
                 self.log(t, "人才库格式输出失败：" + str(e)[:160])
             task_list = public_task_list(build_task_list(
@@ -2026,6 +2109,23 @@ class TaskStore:
                 self.snapshot_version(t)
             except Exception as e:
                 self.log(t, "版本快照失败：" + str(e)[:120])
+            try:
+                from .talent_app_files import public_row, save_from_task
+                saved = save_from_task(t, talent_export)
+                if saved:
+                    t["talentAppFile"] = public_row(saved)
+                    self.log(
+                        t,
+                        "已入库人才库字段 JSON "
+                        + str(saved.get("attach_id") or "")
+                        + " "
+                        + str(saved.get("version") or ""),
+                    )
+                    self.persist(t)
+                else:
+                    self.log(t, "未入库人才库字段：缺少人才编号或人才库 JSON")
+            except Exception as e:
+                self.log(t, "人才库字段入库失败：" + str(e)[:160])
             self.log(t, "完成：编辑 " + str(hits) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件" + who)
         except ValueError as e:
             t["status"] = "failed"; t["error"] = str(e)

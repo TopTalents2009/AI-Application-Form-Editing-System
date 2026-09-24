@@ -1086,6 +1086,16 @@ function renderDetail(t) {
     ul.appendChild(li);
   });
   if (!shown.length) ul.innerHTML = '<li style="border:none;background:none;padding-left:0;color:#98a1b3;font-size:13px">暂无产出</li>';
+  var tf = t.talentAppFile || {};
+  if (tf.id && tf.version) {
+    var liTf = document.createElement('li');
+    liTf.style.border = 'none';
+    liTf.style.background = 'none';
+    liTf.style.paddingLeft = '0';
+    liTf.innerHTML = '<span class="fs">人才库字段 JSON ' + esc(tf.attachId || '') + ' · ' + esc(tf.version) +
+      '</span> <a class="dl" href="/api/talent-files/' + encodeURIComponent(tf.id) + '/file">下载 JSON</a>';
+    ul.appendChild(liTf);
+  }
 
   var reportMd = shown.find(function (o) { return o.name === '修改对照表.md' || (o.name.indexOf('对照表') >= 0 && /\.md$/i.test(o.name)); });
   var reportDocx = shown.find(function (o) { return /对照表\.docx$/i.test(o.name) && o.name.indexOf('_修改后') < 0; });
@@ -2044,18 +2054,22 @@ function taskListHtml(list, tid) {
   if (!list.length) return '';
     var srcMap = {local:'本地附件', pool:'人才库', papers:'论文系统', codebuddy:'联网检索', generate:'生成接口', wecom:'聊天记录'};
   var h = '<div class="task-box"><div class="task-h">任务清单（系统改不了的附件）</div>';
-    h += '<p class="task-lead">护照、学历证明、工作经历证明等扫描件（含证明上的时间、日期）无法写入申报书正文。检索顺序：本机「附件」目录 → 人才库 → 聊天记录。确认后生成 <b>任务清单.docx</b>。</p>';
+    h += '<p class="task-lead">护照、学历证明、工作经历证明等扫描件无法写入申报书正文。检索顺序：本机「附件」目录 → 人才库 → 聊天记录；项目证明额外走联网检索和生成接口。确认后生成 <b>任务清单.docx</b>。</p>';
   if (tid) {
     h += '<p class="task-lead"><a class="dl" href="/api/tasks/' + encodeURIComponent(tid) + '/files?dir=output&name=' + encodeURIComponent('任务清单.docx') + '">下载任务清单.docx</a></p>';
   }
   h += '<ol class="task-ol">';
   list.forEach(function (it) {
     var st = it.statusLabel || (it.status === 'found' ? '已检索到参考文件' : '需另行提供');
+    var seenDl = {};
     h += '<li><div class="task-ttl">' + esc(it.title || '附件') + ' <em>' + esc(st) + '</em></div>';
     if (it.snippet) h += '<div class="task-snip">意见：' + esc(it.snippet) + '</div>';
     if (it.action) h += '<div class="task-act">' + esc(it.action) + '</div>';
     (it.downloads || []).forEach(function (d) {
       if (!d || !d.download) return;
+      var dk = String(d.source || '') + '|' + String(d.filename || d.title || '').toLowerCase();
+      if (seenDl[dk]) return;
+      seenDl[dk] = 1;
       var tag = srcMap[d.source] || '';
       var label = (tag ? '[' + tag + '] ' : '') + (d.filename || d.title || '下载');
       h += '<div><a class="dl" href="' + escAttr(d.download) + '">' + esc(label) + '</a></div>';
@@ -2081,7 +2095,11 @@ function missingAttHtml(att) {
     (by[k] || (by[k] = [])).push(it);
   });
   h += '<ul class="att-ul">';
+  var seenLab = {};
+  var shown = {};
   needed.forEach(function (lab) {
+    if (seenLab[lab]) return;
+    seenLab[lab] = 1;
     var hits = by[lab] || [];
     if (lab === '论文全文') {
       Object.keys(by).forEach(function (k) {
@@ -2089,15 +2107,29 @@ function missingAttHtml(att) {
       });
     }
     if (hits.length) {
+      var nShow = 0;
       hits.forEach(function (it) {
-        var src = it.source === 'papers' ? '论文系统' : '人才库';
+        var dk = String(it.source || '') + '|' + String(it.kind || lab) + '|' + String(it.filename || it.title || '').toLowerCase();
+        if (shown[dk]) return;
+        shown[dk] = 1;
+        nShow += 1;
+        var srcMap = {papers:'论文系统', wecom:'聊天记录', local:'本地附件', codebuddy:'联网检索', generate:'生成接口', pool:'人才库'};
+        var src = srcMap[it.source] || (it.source ? String(it.source) : '人才库');
         h += '<li><span class="att-k">' + esc(it.kind || lab) + '</span> <a class="dl" href="' + escAttr(it.download || '') + '">' + esc(it.filename || it.title || '下载') + '</a> <em>' + esc(src) + '</em></li>';
       });
+      if (!nShow) {
+        h += '<li class="att-miss"><span class="att-k">' + esc(lab) + '</span> 人才库未检索到可下载文件</li>';
+      }
     } else {
       h += '<li class="att-miss"><span class="att-k">' + esc(lab) + '</span> 人才库未检索到可下载文件</li>';
     }
   });
-  h += '</ul></div>';
+  h += '</ul>';
+  var notes = att.notes || [];
+  if (notes.length) {
+    h += '<p class="task-lead">' + notes.map(function (n) { return esc(n); }).join('；') + '</p>';
+  }
+  h += '</div>';
   return h;
 }
 

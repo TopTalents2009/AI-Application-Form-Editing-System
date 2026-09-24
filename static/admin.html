@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py89">
+<link rel="stylesheet" href="/public/style.css?v=py97">
 <style>
 :root{ --nav-w:216px; }
 *{box-sizing:border-box}
@@ -240,9 +240,15 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 /* ===== 各群记录看板 ===== */
 .wecom-status{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-bottom:14px;font-size:13px}
 .wecom-board{display:grid;grid-template-columns:280px 1fr;gap:0;align-items:start;border:1px solid #e6ebf4;border-radius:14px;overflow:hidden;background:#fff}
-.wecom-board.has-ai{grid-template-columns:280px minmax(0,1fr) minmax(260px,300px)}
-.wecom-ai{border-left:1px solid #e6ebf4;background:#f7f9fc;display:flex;flex-direction:column;min-width:0;max-height:560px}
-.wecom-ai[hidden]{display:none !important}
+.wecom-board.has-rail{grid-template-columns:280px minmax(0,1fr) minmax(280px,340px)}
+.wecom-rail{border-left:1px solid #e6ebf4;background:#f7f9fc;display:flex;flex-direction:column;min-width:0;max-height:560px}
+.wecom-rail[hidden]{display:none !important}
+.wecom-rail-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid #e6ebf4;background:#fff}
+.wecom-rail-tabs{display:flex;gap:6px;flex-wrap:wrap}
+.wecom-rail-tab{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer;color:#5b6577;font-family:inherit}
+.wecom-rail-tab.on{background:#2450a4;border-color:#2450a4;color:#fff}
+.wecom-rail-pane{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.wecom-rail-pane[hidden]{display:none !important}
 .wecom-ai-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid #e6ebf4;background:#fff}
 .wecom-ai-hd .grow{flex:1;min-width:0}
 .wecom-ai-title{font-size:14px;font-weight:700;color:var(--ink)}
@@ -304,6 +310,7 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 .wecom-stream{flex:1 1 0;height:0;min-height:0;overflow:auto;padding:14px 16px;background:#f4f6fa}
 .wecom-empty{color:#8a93a6;font-size:13.5px;padding:40px 16px;text-align:center;line-height:1.7}
 .wecom-msg{background:#fff;border:1px solid #e9edf5;border-radius:12px;padding:10px 12px;margin:0 0 10px;box-shadow:0 1px 2px rgba(16,32,64,.04)}
+.wecom-msg.hit{border-color:#2450a4;box-shadow:0 0 0 3px rgba(36,80,164,.22);background:#f4f8ff}
 .wecom-msg .meta{display:flex;gap:10px;align-items:baseline;font-size:12px;color:#8a93a6;margin-bottom:4px}
 .wecom-msg .who{font-weight:700;color:#2450a4}
 .wecom-msg .body{font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
@@ -398,12 +405,12 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
 @media (max-width:1100px){
   .user-create{grid-template-columns:1fr 1fr}
 }
-@media (max-width:900px){
+@media (max-width:980px){
   .api-create{grid-template-columns:1fr 1fr}
   .user-create{grid-template-columns:1fr 1fr}
-  .wecom-board,.wecom-board.has-ai{grid-template-columns:1fr}
+  .wecom-board,.wecom-board.has-rail{grid-template-columns:1fr}
   .wecom-side{border-right:none;border-bottom:1px solid #e6ebf4}
-  .wecom-ai{border-left:none;border-top:1px solid #e6ebf4;max-height:360px}
+  .wecom-rail{border-left:none;border-top:1px solid #e6ebf4;max-height:360px}
   .wecom-list,.wecom-stream{max-height:320px}
 }
 
@@ -611,6 +618,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
                   <button type="button" class="mini" id="wecomAiLogBtn">解读记录</button>
                   <button type="button" class="mini" id="wecomSplitBtn">拆解任务</button>
                   <button type="button" class="mini" id="wecomIntentPageBtn">分析意图</button>
+                  <button type="button" class="mini" id="wecomFileBtn">文件汇总</button>
                   <button type="button" class="mini" id="wecomReload">刷新</button>
                 </div>
               </div>
@@ -621,33 +629,36 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
                 <button type="button" class="ghost mini" id="wecomNext">更晚</button>
               </div>
             </div>
-            <aside class="wecom-ai" id="wecomAiPanel" hidden>
-              <div class="wecom-ai-hd">
-                <div class="grow">
-                  <div class="wecom-ai-title">AI 解读看板</div>
-                  <div class="wecom-ai-sub" id="wecomAiSub">Gemini 读取当前日期窗内的会话</div>
-                  <div class="wecom-ai-tabs">
-                    <button type="button" class="wecom-ai-tab on" id="wecomAiTabRead" data-tab="read">本次解读</button>
-                    <button type="button" class="wecom-ai-tab" id="wecomAiTabLog" data-tab="log">解读记录</button>
+            <aside class="wecom-rail" id="wecomRail" hidden>
+              <div class="wecom-rail-resizer" id="wecomRailResizer" title="拖动调整宽度"></div>
+              <div class="wecom-rail-hd">
+                <div class="wecom-rail-tabs">
+                  <button type="button" class="wecom-rail-tab on" id="wecomRailTabAi" data-rail="ai">AI 解读</button>
+                  <button type="button" class="wecom-rail-tab" id="wecomRailTabFiles" data-rail="files">文件汇总</button>
+                </div>
+                <button type="button" class="ghost mini" id="wecomRailClose" title="收起">收起</button>
+              </div>
+              <div class="wecom-rail-pane" id="wecomRailAi">
+                <div class="wecom-ai-hd">
+                  <div class="grow">
+                    <div class="wecom-ai-sub" id="wecomAiSub">Gemini 读取当前日期窗内的会话</div>
+                    <div class="wecom-ai-tabs">
+                      <button type="button" class="wecom-ai-tab on" id="wecomAiTabRead" data-tab="read">本次解读</button>
+                      <button type="button" class="wecom-ai-tab" id="wecomAiTabLog" data-tab="log">解读记录</button>
+                    </div>
                   </div>
                 </div>
-                <button type="button" class="ghost mini" id="wecomAiClose" title="收起">收起</button>
+                <div class="wecom-ai-body" id="wecomAiBody">
+                  <div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>
+                  <div class="wecom-ai-card"><h5>版本绑定</h5><div class="wecom-ai-bind-tabs"><button type="button" class="wecom-ai-bind-tab on">时间窗</button><button type="button" class="wecom-ai-bind-tab">编号匹配</button><button type="button" class="wecom-ai-bind-tab">语义上下文</button><button type="button" class="wecom-ai-bind-tab">并排</button></div><p>本次记录无结构化绑定</p></div>
+                </div>
               </div>
-              <div class="wecom-ai-body" id="wecomAiBody">
-                <div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>
+              <div class="wecom-rail-pane" id="wecomRailFiles" hidden>
+                <div id="wecomFileBox" class="wecom-files wecom-files-page">
+                  <div class="wecom-empty">请先在左侧选择会话，然后点「文件汇总」。</div>
+                </div>
               </div>
             </aside>
-          </div>
-        </div>
-      </section>
-
-      <!-- 文件汇总 -->
-      <section class="content-sec" id="sec-files">
-        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8"/></svg>文件汇总</h2>
-        <p class="sec-desc">先在上方会话记录里选中一个会话，再在这里按类别汇总文件，并上传到人才附件。上传接口和 Key 暂留空。</p>
-        <div class="acard" style="margin-bottom:0">
-          <div id="wecomFileBox" class="wecom-files wecom-files-page">
-            <div class="wecom-empty">请先在「会话记录」中选择会话，然后点「文件汇总」。</div>
           </div>
         </div>
       </section>
@@ -830,7 +841,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   </div>
 
 <script src="/public/session.js?v=py54"></script>
-<script src="/public/wecom-board.js?v=py40"></script>
+<script src="/public/wecom-board.js?v=py54"></script>
 <script>
 (function () {
   var me = null;
@@ -1184,7 +1195,14 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
           '<span class="fs">' + fmtSize(o.size) + '</span>' +
           '<a class="dl" href="' + href + '" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;vertical-align:-2px;margin-right:3px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>下载</a></li>';
       }).join('');
-      box.innerHTML = '<div class="fh">产出文件 · ' + files.length + ' 个</div><ul>' + lis + '</ul>';
+      var tf = t.talentAppFile || {};
+      var extra = '';
+      if (tf.id && tf.version) {
+        extra = '<div class="files-muted" style="margin-top:8px">已入库人才库字段 JSON ' +
+          esc(tf.attachId || '') + ' · <b>' + esc(tf.version) + '</b>' +
+          ' <a class="dl" href="/api/talent-files/' + encodeURIComponent(tf.id) + '/file">下载 JSON</a></div>';
+      }
+      box.innerHTML = '<div class="fh">产出文件 · ' + files.length + ' 个</div><ul>' + lis + '</ul>' + extra;
     }).catch(function (e) {
       var box = fr.querySelector('.files-box');
       if (box) box.innerHTML = '<div class="files-muted">读取失败：' + esc(e.message || '') + '</div>';
@@ -2466,7 +2484,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       '<div class="acard">' +
         '<h3>项目证明 API ' +
           '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (g.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (g.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">意见点名缺项目证明，且人才库与聊天记录都没有时，先用本机 CodeBuddy 联网检索，仍没有再调用生成接口。密钥留空表示不修改，界面不回显。</p>' +
+        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">意见点名缺项目证明时，人才库命中后仍会联网检索，随后调用生成接口。意见写「不必再联网检索」时跳过检索、仍生成。密钥留空表示不修改，界面不回显。</p>' +
         '<div class="cfg-grid">' +
           '<div class="f-row span2"><label>生成接口 Base URL</label><div class="inp"><input data-f="ppGen" data-k="baseUrl" value="' + esc(g.baseUrl || '') + '" placeholder="http://192.168.2.62:3602"></div></div>' +
           '<div class="f-row span2"><label>生成接口 API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="ppGen" data-k="apiKey" value="" placeholder="' + (g.hasKey ? '••••••••（已配置）' : '填入密钥') + '"></div></div>' +

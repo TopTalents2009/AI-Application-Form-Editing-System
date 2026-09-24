@@ -43,6 +43,60 @@ def test_hit_rows_integration():
     print("hit-rows ok", res)
 
 
+def test_keyword_label_fills_empty_cell_below():
+    sheets = [{
+        "name": "s1",
+        "rows": [
+            {"r": 96, "cells": [{"c": 2, "text": "研究领域关键词（不超过5个）", "dirty": False, "orig": "研究领域关键词（不超过5个）"}]},
+            {"r": 97, "cells": [{"c": 2, "text": "Key words (no more than 5 )", "dirty": False, "orig": "Key words (no more than 5 )"}]},
+            {"r": 105, "cells": [{"c": 2, "text": "2.代表性科研项目", "dirty": False, "orig": "2.代表性科研项目"}]},
+        ],
+    }]
+    kws = "计算机体系结构、能效计算、非易失性处理器、存内计算、系统安全"
+    res = apply_edits_to_sheets(sheets, [{"find": "研究领域关键词（不超过5个）", "replace": kws}])
+    assert res[0]["status"].startswith("hit"), res
+    rows = {row["r"]: row["cells"][0]["text"] for row in sheets[0]["rows"]}
+    assert rows[96] == "研究领域关键词（不超过5个）", rows[96]
+    assert rows[97].startswith("Key words"), rows[97]
+    assert kws in rows[98], rows
+    assert rows[105].startswith("2.代表性科研项目")
+    print("keyword fill-below ok")
+
+
+def test_keyword_write_uses_merged_value_cell():
+    from openpyxl import Workbook
+    from apply_excel import load_openpyxl_sheets, apply_edits_to_sheets, write_openpyxl
+
+    src = ROOT / "scripts" / "_tmp_kw.xlsx"
+    out = ROOT / "scripts" / "_tmp_kw_out.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws["B1"] = "研究领域关键词（不超过5个）"
+    ws["B2"] = "Key words (no more than 5 )"
+    ws.merge_cells("B2:E2")
+    ws.merge_cells("B3:E8")
+    ws["B9"] = "2.代表性科研项目(主持/参与)"
+    wb.save(src)
+    wb.close()
+    book, sheets = load_openpyxl_sheets(src)
+    kws = "计算机体系结构、能效计算"
+    res = apply_edits_to_sheets(sheets, [{"find": "研究领域关键词（不超过5个）", "replace": kws}])
+    assert res[0]["status"].startswith("hit"), res
+    write_openpyxl(book, sheets, out)
+    from openpyxl import load_workbook
+    wb2 = load_workbook(out)
+    ws2 = wb2.active
+    assert ws2["B1"].value == "研究领域关键词（不超过5个）"
+    assert "Key words" in str(ws2["B2"].value)
+    assert kws in str(ws2["B3"].value or "")
+    assert ws2["B9"].value.startswith("2.代表性科研项目")
+    wb2.close()
+    for p in (src, out):
+        if p.exists():
+            p.unlink()
+    print("keyword merged write ok")
+
+
 def test_merged_slave_clear_does_not_crash():
     from openpyxl import Workbook
     from apply_excel import load_openpyxl_sheets, apply_edits_to_sheets, write_openpyxl
@@ -77,5 +131,7 @@ def test_merged_slave_clear_does_not_crash():
 if __name__ == "__main__":
     test_tabbed_replace_splits_columns()
     test_hit_rows_integration()
+    test_keyword_label_fills_empty_cell_below()
+    test_keyword_write_uses_merged_value_cell()
     test_merged_slave_clear_does_not_crash()
     print("ALL OK")

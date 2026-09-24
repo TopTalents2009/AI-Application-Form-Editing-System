@@ -10,6 +10,7 @@ data/
 batches/
 client_inbox/
 feedback/
+talent_outputs/
 
 # vendored OCR tool (pip install -e tools/docreconstruct[hybrid])
 tools/docreconstruct/

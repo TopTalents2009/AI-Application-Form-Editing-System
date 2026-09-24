@@ -6,7 +6,7 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.default.json"
 FILL_MARK = "填入"
-APP_VERSION = "2.7.1"
+APP_VERSION = "2.7.2"
 
 LLM_TEMPERATURE = 0.1
 LLM_RETRIES = 4
@@ -398,6 +398,7 @@ TASKS_DIR = DATA_DIR / "tasks"
 BATCHES_DIR = DATA_DIR / "batches"
 CLIENT_INBOX_DIR = DATA_DIR / "client_inbox"
 FEEDBACK_DIR = DATA_DIR / "feedback"
+TALENT_OUTPUT_DIR = DATA_DIR / "talent_outputs"
 STATIC_DIR = DATA_DIR / "static"
 SCRIPTS_DIR = DATA_DIR / "scripts"
 RULES_DIR = DATA_DIR / "rules"

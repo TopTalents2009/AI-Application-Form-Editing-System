@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.inline_opinions import extract_comment_items, is_column_wide_opinion, count_project_rows
 from app.runner import split_source_units, _split_inline_numbered
+from app.matcher import split_opinion_blocks, keep_blocks_for_app
 from app.edit_validate import (
     is_question_only_opinion, sanitize_declaring_company_edits, _employer_support_span,
     sanitize_paper_author_edits, sanitize_editorial_board_edits,
@@ -213,6 +214,75 @@ def test_editorial_board_is_stable():
     print("editorial board ok")
 
 
+def test_split_multi_person_summary_by_id():
+    raw = (
+        "40302\n"
+        "突出高水平期刊与影响因子：“申报人累计发表论文14篇”处，需重点突出知名顶刊名称及高影响因子（IF）等量化表现。\n"
+        "强化推荐理由的人企契合度：结合企业的具体技术瓶颈或战略发展方向，深入阐述申报人技术服务于企业解决难题的匹配度。\n"
+        "补充近五年项目成果：补充提供近五年内产出的关键科研/工程项目成果。\n"
+        "30708\n"
+        "强化推荐理由的人企契合度：紧密结合企业技术瓶颈与战略方向，突出申报人技术与企业攻坚方向的契合性。\n"
+        "补齐关键算法佐证材料：针对个人基本情况中提及的“响应曲面优化置信区域算法”，补充包含该技术的项目、论文等直接佐证材料。\n"
+        "补充近五年第一负责人项目：补充近五年内申报人作为第一责任人主持/负责的重大项目。\n"
+        "49547\n"
+        "重写个人基本情况（300字）：彻底放弃简历式成就罗列，采用故事性、价值导向的方式重新撰写。\n"
+        "共性优化要求\n"
+        "人企匹配导向：推荐理由及正文描述需全面贴近申报企业的业务方向与战略需求。\n"
+        "强化产业化落地：充分挖掘工作经历与业绩材料中的转化效益与应用实效。"
+    )
+    blocks = split_opinion_blocks(raw)
+    heads = [blk.split("\n", 1)[0].strip() for blk in blocks]
+    assert "30708" in heads, heads
+    assert "40302" in heads, heads
+    assert any("共性" in h for h in heads), heads
+    kept, notes = keep_blocks_for_app(blocks, "30708")
+    blob = "\n".join(kept)
+    assert "响应曲面优化置信区域算法" in blob
+    assert "第一责任人" in blob
+    assert "累计发表论文14篇" not in blob
+    assert "彻底放弃简历式" not in blob
+    assert "人企匹配导向" in blob
+    assert notes
+    units = split_source_units(raw, app_no="30708")
+    assert len(units) >= 3, units
+    joined = "\n".join(units)
+    assert "响应曲面优化置信区域算法" in joined
+    assert "第一责任人" in joined
+    assert "累计发表论文14篇" not in joined
+    print("multi-person summary ok", len(units), notes)
+
+
+def test_project_paper_opinion_split():
+    from app.attachments import extract_needed_kinds, format_attach_prompt, catalog_from_attach_items
+    from app.runner import expand_qm_paper_project_clauses
+
+    op = "修改意见：请补充这个人才的项目论文材料，并补充这两个模块的的申报书文字内容"
+    labels = [k["label"] for k in extract_needed_kinds([op])]
+    assert "论文全文" in labels, labels
+    assert "项目证明" in labels, labels
+    clauses = [{
+        "cid": "S1", "sourceId": "S1", "section": "项目",
+        "clause": "补充项目模块", "opinion": op,
+    }]
+    out = expand_qm_paper_project_clauses(clauses)
+    secs = {c["section"] for c in out}
+    assert "论文" in secs and "项目" in secs, out
+    prompt = format_attach_prompt({
+        "needed": ["论文全文"],
+        "items": [{"kind": "论文全文", "title": "Demo", "filename": "p001.pdf", "download": "/x"}],
+        "paperRecords": [{"title": "Demo Paper", "journal": "Nature", "year": "2016", "doi": "10.1/x"}],
+        "notes": [],
+    })
+    assert "论文系统题录" in prompt and "Demo Paper" in prompt
+    recs = catalog_from_attach_items([
+        {"kind": "论文全文", "title": "复数躁狂游戏增强知识", "filename": "p001.pdf"},
+        {"kind": "论文全文", "title": "p001.pdf", "filename": "p001.pdf"},
+        {"kind": "论文装订附件", "title": "装订附件 48884.pdf", "filename": "x.pdf"},
+    ])
+    assert recs and recs[0]["title"] == "复数躁狂游戏增强知识", recs
+    print("project+paper opinion split ok", labels)
+
+
 if __name__ == "__main__":
     test_word_point_comment_anchors()
     test_split_wecom_screenshot_ocr()
@@ -223,4 +293,6 @@ if __name__ == "__main__":
     test_locate_conversion_not_tech_field()
     test_keep_corresponding_author_on_same_paper()
     test_editorial_board_is_stable()
+    test_split_multi_person_summary_by_id()
+    test_project_paper_opinion_split()
     print("ALL OK")

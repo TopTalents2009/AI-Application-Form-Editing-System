@@ -82,6 +82,20 @@ def has_source(source_id: str) -> bool:
     return bool(root and sid and (root / sid / "meta.json").is_file())
 
 
+def source_has_session(source_id: str, session_id: str) -> bool:
+    """这台电脑的缓存里有没有该会话。"""
+    cid = str(session_id or "").strip()
+    if not cid:
+        return False
+    if _msg_path(source_id, cid):
+        return True
+    for it in list_sessions(source_id, 0):
+        uid = str((it or {}).get("username") or (it or {}).get("session_id") or "").strip()
+        if uid == cid:
+            return True
+    return False
+
+
 def _read_json(path: Path, default):
     try:
         st = path.stat()

@@ -191,6 +191,55 @@ def extract_book_profile(fname: str, txt: str) -> dict:
 def String_splitlines(txt):
     return str(txt or "").replace("\r\n", "\n").split("\n")
 
+def is_id_heading_line(line: str) -> bool:
+    """单独一行的人才编号，或「30708：」「30708 修改意见」。年份/日期码不算。"""
+    s = str(line or "").strip()
+    if re.fullmatch(r"\d{4,6}", s):
+        if re.fullmatch(r"(19|20)\d{2}", s):
+            return False
+        return is_book_num(s)
+    if re.match(r"^\d{4,6}\s*(个?人才|的?修改意见)[:：]?", s):
+        return True
+    if re.match(r"^\d{4,6}\s*[：:]", s):
+        return True
+    return False
+
+
+def block_heading_num(blk: str) -> str:
+    first = str(blk or "").strip().split("\n", 1)[0].strip()
+    m = re.match(r"^(\d{4,6})(?:\s*(?:个?人才|的?修改意见)?[:：]?)?$", first)
+    if not m:
+        return ""
+    n = m.group(1)
+    if re.fullmatch(r"(19|20)\d{2}", n) or not is_book_num(n):
+        return ""
+    return n
+
+
+def keep_blocks_for_app(blocks: list, app_no: str) -> tuple[list, list]:
+    """多人才意见汇总只留当前申报书编号对应段，以及无编号/共性段。"""
+    no = str(app_no or "").strip()
+    notes: list = []
+    items = list(blocks or [])
+    if not no or not items:
+        return items, notes
+    labeled = [(block_heading_num(blk), blk) for blk in items]
+    if not any(n == no for n, _ in labeled):
+        return items, notes
+    kept, dropped = [], 0
+    for n, blk in labeled:
+        if n and n != no:
+            dropped += 1
+            continue
+        kept.append(blk)
+    if dropped:
+        notes.append(
+            "意见汇总已按申报书编号 " + no + " 筛选：保留 " + str(len(kept))
+            + " 段，去掉 " + str(dropped) + " 段他人意见"
+        )
+    return kept, notes
+
+
 def split_opinion_blocks(text) -> list:
     blocks = []
     cur = []
@@ -202,8 +251,8 @@ def split_opinion_blocks(text) -> list:
     for raw in String_splitlines(text):
         l = raw.strip()
         is_new = (
-            re.match(r"\d{4,6}\s*(个?人才|的?修改意见)[:：]?", l)
-            or re.match(r"\d{4,6}\s*[：:]", l)
+            is_id_heading_line(l)
+            or re.match(r"^(共性|通用要求|整体要求|其他要求)", l)
             or re.match(r"[A-Za-z][A-Za-z .'\-]{3,40}[：:]", l)
             or re.fullmatch(r"[A-Z][A-Z .'\-]{4,40}", l)
             or (re.match(r"[A-Za-z][A-Za-z'\- ]{2,30}(（[^）]{2,40}）)?\s*$", l) and any(c.isupper() for c in l) and not re.search(r"[，。；,.]$", l))
@@ -215,7 +264,7 @@ def split_opinion_blocks(text) -> list:
     push()
     merged = []
     for blk in blocks:
-        if len(blk) < 12 and merged:
+        if len(blk) < 12 and merged and not is_id_heading_line(blk.split("\n", 1)[0]):
             merged[-1] += "\n" + blk
         else:
             merged.append(blk)

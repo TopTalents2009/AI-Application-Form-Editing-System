@@ -46,7 +46,7 @@ KINDS = [
     {"id": "paper", "label": "论文全文", "keys": ("论文全文", "论文pdf", "论文 pdf", "论文PDF", "论文附件", "论文材料", "论文扫描", "代表性论著", "需附全文", "科研成果")},
     {"id": "photo", "label": "证件照", "keys": ("证件照", "一寸照", "白底照")},
     {"id": "sign", "label": "电子签", "keys": ("电子签", "电子签名", "签字扫描", "签名扫描")},
-    {"id": "project", "label": "项目证明", "keys": ("项目证明", "项目材料", "项目扫描", "立项批文", "立项证明", "主持项目证明", "科研项目证明")},
+    {"id": "project", "label": "项目证明", "keys": ("项目证明", "项目材料", "项目论文", "项目模块", "项目扫描", "立项批文", "立项证明", "主持项目证明", "科研项目证明")},
     {"id": "conversion", "label": "成果转化证明", "keys": ("成果转化证明", "成果转化", "转化证明")},
 ]
 KIND_POOL_ID = {
@@ -167,6 +167,11 @@ def _kind_needed(blob: str, kind: dict) -> bool:
         if re.search(r"(主持.{0,6}项目|立项|科研项目).{0,16}(证明|批文|批复|附件材料)", blob):
             if NEED_RE.search(blob) or re.search(r"必须提供|须提供|应提供|请提供|严禁用论文代替", blob):
                 return True
+        if re.search(
+            r"项目论文|补充.{0,24}项目.{0,16}(材料|证明|模块)|项目.{0,6}模块|两个模块|两个栏目",
+            blob,
+        ) and NEED_RE.search(blob):
+            return True
     return False
 
 
@@ -392,10 +397,28 @@ async def scan_wecom_attachments(app_no: str, extra_ids=None, names=None, kinds=
                 continue
             sid = str(hit.get("source_id") or "").strip()
             cid = str(hit.get("session_id") or "").strip()
-            key = (sid, mid or name.lower())
-            if key in seen:
+            mid_key = (sid, mid) if mid else (sid, name.lower())
+            file_key = (cid or sid, name.lower())
+            if mid_key in seen:
                 continue
-            seen.add(key)
+            seen.add(mid_key)
+            copy = {
+                "source_id": sid,
+                "message_id": mid,
+                "session_id": cid,
+                "source_label": str(hit.get("source_name") or ""),
+            } if sid and mid else None
+            existed = next(
+                (
+                    i for i, row in enumerate(acc)
+                    if (str(row.get("session_id") or row.get("source_id") or ""), str(row.get("filename") or "").lower()) == file_key
+                ),
+                -1,
+            )
+            if existed >= 0:
+                if copy:
+                    acc[existed].setdefault("copies", []).append(copy)
+                continue
             if per_kind.get(kid, 0) >= 4:
                 continue
             per_kind[kid] = per_kind.get(kid, 0) + 1
@@ -407,12 +430,7 @@ async def scan_wecom_attachments(app_no: str, extra_ids=None, names=None, kinds=
                 "message_id": mid,
                 "session_id": cid,
                 "session_name": str(hit.get("session_name") or ""),
-                "copies": [{
-                    "source_id": sid,
-                    "message_id": mid,
-                    "session_id": cid,
-                    "source_label": str(hit.get("source_name") or ""),
-                }] if sid and mid else [],
+                "copies": [copy] if copy else [],
             })
     if acc:
         notes.append("聊天记录命中 " + str(len(acc)) + " 个附件")
@@ -619,6 +637,116 @@ def _private_item(*, source: str, url: str, filename: str, path: str = "", copie
     return d
 
 
+def _name_key(source: str, filename: str, kind: str = "") -> str:
+    return "name:" + str(source or "") + ":" + str(kind or "") + ":" + str(filename or "").strip().lower()
+
+
+def _wecom_key(source_id, message_id) -> str:
+    return "wecom:" + str(source_id or "") + ":" + str(message_id or "")
+
+
+def _seed_known_keys(result: dict) -> set:
+    """第二次补检索时还原已收录文件的去重键（含本地路径、聊天 copies、文件名）。"""
+    keys = set()
+    for it in (result.get("items") or []):
+        if not isinstance(it, dict):
+            continue
+        fn = str(it.get("filename") or it.get("title") or "")
+        src = str(it.get("source") or "")
+        kind = str(it.get("kind") or "")
+        if fn:
+            keys.add(_name_key(src, fn, kind))
+            keys.add(_name_key(src, fn, ""))
+        dl = str(it.get("download") or "")
+        if dl:
+            keys.add(dl)
+        lp = str(it.get("localPath") or "")
+        if lp:
+            keys.add(lp)
+            keys.add("local:" + lp)
+    for v in (result.get("private") or {}).values():
+        if not isinstance(v, dict):
+            continue
+        url = str(v.get("url") or "")
+        path = str(v.get("path") or "")
+        fn = str(v.get("filename") or "")
+        src = str(v.get("source") or "")
+        if url:
+            keys.add(url)
+        if path:
+            keys.add(path)
+            keys.add("local:" + path)
+        if fn:
+            keys.add(_name_key(src, fn, ""))
+        copies = v.get("copies") if isinstance(v.get("copies"), list) else []
+        for c in copies:
+            if not isinstance(c, dict):
+                continue
+            keys.add(_wecom_key(c.get("source_id"), c.get("message_id")))
+        if src == "wecom":
+            keys.add(_wecom_key(v.get("source_id"), v.get("message_id")))
+    keys.discard("")
+    return keys
+
+
+def _add_notes(result: dict, extra) -> None:
+    cur = list(result.get("notes") or [])
+    have = set(cur)
+    for n in extra or []:
+        s = str(n or "").strip()
+        if s and s not in have:
+            cur.append(s)
+            have.add(s)
+    result["notes"] = cur
+
+
+def _dedupe_attach_items(items: list) -> list:
+    out, seen = [], set()
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        fn = str(it.get("filename") or it.get("title") or "").strip().lower()
+        k = (str(it.get("source") or ""), str(it.get("kind") or ""), fn)
+        if not fn or k in seen:
+            if not fn:
+                out.append(it)
+            continue
+        seen.add(k)
+        out.append(it)
+    return out
+
+
+def _papers_json_from_app(app_text: str) -> list:
+    text = str(app_text or "").strip()
+    if not text:
+        return []
+    try:
+        from .template_fill import _parse_papers
+        rows = _parse_papers(text)
+    except Exception:
+        return []
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        title = str(r.get("论文题目") or r.get("title") or "").strip()
+        if len(title) < 8:
+            continue
+        item = {"title": title}
+        journal = str(r.get("发表载体") or r.get("journal") or "").strip()
+        if journal:
+            item["journal"] = journal
+        year = str(r.get("发表时间") or r.get("year") or "")
+        m = re.search(r"(20\d{2}|19\d{2})", year)
+        if m:
+            item["year"] = m.group(1)
+        authors = str(r.get("作者") or r.get("authors") or "").strip()
+        if authors:
+            item["authors"] = authors
+        out.append(item)
+    return out[:12]
+
+
 async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict | None = None, app_text: str = "", task_dir: str | Path | None = None) -> dict:
     needed = extract_needed_kinds(texts)
     cfg = load_config()
@@ -638,42 +766,59 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
     }
     labels = [k["label"] for k in needed]
     result["needed"] = labels
+    result.setdefault("items", [])
+    result.setdefault("private", {})
+    result.setdefault("notes", [])
+    result.setdefault("paperRecords", [])
     if not needed:
         result["summary"] = "修改意见未提到缺失附件"
         return result
 
     by_kind = {lab: [] for lab in labels}
-    for it in result.get("items") or []:
-        by_kind.setdefault(it.get("kind") or "", []).append(it)
-    known_urls = {str(v.get("url") or v.get("path") or "") for v in (result.get("private") or {}).values() if v}
+    label_ids = {k["label"]: k["id"] for k in KINDS}
     local_found_ids = set()
+    for it in result.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        lab = str(it.get("kind") or "")
+        by_kind.setdefault(lab, []).append(it)
+        kid = label_ids.get(lab)
+        if kid and str(it.get("source") or "") == "local":
+            local_found_ids.add(kid)
+    known_urls = _seed_known_keys(result)
     extra_ids = _attach_ids(snap, app_no)
     local_files, local_notes = scan_local_attachments(app_no, extra_ids, kinds=needed)
-    result["notes"] = list(result.get("notes") or []) + local_notes
+    _add_notes(result, local_notes)
     for f in local_files:
-        key = "local:" + str(f.get("path") or "")
-        if key in known_urls:
+        path = str(f.get("path") or "")
+        fn = str(f.get("filename") or "file")
+        kind_lab = str(f.get("kind") or "附件")
+        key = "local:" + path
+        nk = _name_key("local", fn, kind_lab)
+        if key in known_urls or path in known_urls or nk in known_urls:
+            if f.get("kind_id"):
+                local_found_ids.add(f["kind_id"])
             continue
-        known_urls.add(key)
+        known_urls.update({key, path, nk})
         fid = _new_id()
         pub = _public_item(
             tid, fid,
-            kind=str(f.get("kind") or "附件"), source="local",
-            filename=str(f.get("filename") or "file"),
-            title=str(f.get("filename") or ""),
+            kind=kind_lab, source="local",
+            filename=fn,
+            title=fn,
             note="本地附件目录",
-            local_path=str(f.get("path") or ""),
+            local_path=path,
         )
         result["items"].append(pub)
         result["private"][fid] = _private_item(
-            source="local", url="", filename=pub["filename"], path=str(f.get("path") or ""),
+            source="local", url="", filename=pub["filename"], path=path,
         )
         by_kind.setdefault(pub["kind"], []).append(pub)
         if f.get("kind_id"):
             local_found_ids.add(f["kind_id"])
 
     pack_files, pack_notes = await _talent_pack_files(snap, app_no)
-    result["notes"] = list(result.get("notes") or []) + pack_notes
+    _add_notes(result, pack_notes)
     pool_files = pack_files + _pool_files(snap)
 
     for kind in needed:
@@ -682,17 +827,20 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
         hits = [f for f in pool_files if _match_kind(f, kind)]
         for f in hits:
             if not f.get("url"):
-                result["notes"].append(kind["label"] + " 库内有文件名「" + str(f.get("filename") or "") + "」但无下载地址")
+                _add_notes(result, [kind["label"] + " 库内有文件名「" + str(f.get("filename") or "") + "」但无下载地址"])
                 continue
-            if str(f.get("url") or "") in known_urls:
+            url = str(f.get("url") or "")
+            fn = str(f.get("filename") or "file")
+            nk = _name_key("pool", fn, kind["label"])
+            if url in known_urls or nk in known_urls:
                 continue
-            known_urls.add(str(f.get("url") or ""))
+            known_urls.update({url, nk})
             fid = _new_id()
             pub = _public_item(
                 tid, fid,
                 kind=kind["label"], source="pool",
-                filename=str(f.get("filename") or "file"),
-                title=str(f.get("title") or f.get("filename") or ""),
+                filename=fn,
+                title=str(f.get("title") or fn),
             )
             result["items"].append(pub)
             result["private"][fid] = _private_item(source="pool", url=f["url"], filename=pub["filename"])
@@ -710,19 +858,31 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
         chat_files, chat_notes = await scan_wecom_attachments(
             app_no, extra_ids, names, kinds=missing_kinds,
         )
-        result["notes"] = list(result.get("notes") or []) + chat_notes
+        _add_notes(result, chat_notes)
         for f in chat_files:
-            key = "wecom:" + str(f.get("source_id") or "") + ":" + str(f.get("message_id") or f.get("filename") or "")
-            if key in known_urls:
+            sid = str(f.get("source_id") or "")
+            mid = str(f.get("message_id") or f.get("filename") or "")
+            fn = str(f.get("filename") or "file")
+            kind_lab = str(f.get("kind") or "附件")
+            key = _wecom_key(sid, mid)
+            nk = _name_key("wecom", fn, kind_lab)
+            copy_hit = False
+            for c in (f.get("copies") or []):
+                if not isinstance(c, dict):
+                    continue
+                if _wecom_key(c.get("source_id"), c.get("message_id")) in known_urls:
+                    copy_hit = True
+                    break
+            if key in known_urls or nk in known_urls or copy_hit:
                 continue
-            known_urls.add(key)
+            known_urls.update({key, nk})
             fid = _new_id()
             sess = str(f.get("session_name") or "")
             pub = _public_item(
                 tid, fid,
-                kind=str(f.get("kind") or "附件"), source="wecom",
-                filename=str(f.get("filename") or "file"),
-                title=str(f.get("filename") or ""),
+                kind=kind_lab, source="wecom",
+                filename=fn,
+                title=fn,
                 note="聊天记录" + ((" · " + sess) if sess else ""),
             )
             result["items"].append(pub)
@@ -732,8 +892,7 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
             by_kind.setdefault(pub["kind"], []).append(pub)
 
     paper_kind = next((k for k in needed if k["id"] == "paper"), None)
-    pool_paper_ok = bool(by_kind.get("论文全文")) or ("paper" in local_found_ids)
-    if paper_kind and not pool_paper_ok and not result.get("papersFetched"):
+    if paper_kind and not result.get("papersFetched"):
         result["papersFetched"] = True
         if not cfg.get("papersConfigured"):
             result["papersError"] = "论文 API 未配置（config.json papers.apiKey）"
@@ -747,9 +906,17 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                     result["notes"].append(result["papersError"])
             else:
                 last_err = ""
+                papers_json = _papers_json_from_app(app_text)
+                person = str(PP.person_name(snap) or "")
+                names = list(((snap or {}).get("keys") or {}).get("names") or [])
                 for aid in ids:
                     try:
-                        data = await P.get_talent(aid)
+                        data, built_note = await P.ensure_talent(
+                            aid,
+                            papers_json=papers_json or None,
+                            name=person,
+                            names=names,
+                        )
                     except P.PapersError as e:
                         if e.code == "NOT_FOUND":
                             last_err = "论文系统没有该人才档案 attach_id=" + aid
@@ -760,7 +927,12 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                         if e.code in ("AUTH", "FORBIDDEN", "NOT_CONFIGURED"):
                             break
                         continue
+                    if built_note:
+                        result["notes"].append(built_note)
                     result["papersAttachId"] = aid
+                    recs = P.public_catalog(data)
+                    if recs:
+                        result["paperRecords"] = recs
                     files = P.public_files(data, cfg.get("papersBaseUrl") or "")
                     att = data.get("attachment") if isinstance(data.get("attachment"), dict) else {}
                     if att and not att.get("ready"):
@@ -769,6 +941,9 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                         last_err = "论文系统有档案但暂无单篇 PDF attach_id=" + aid
                         result["notes"].append(last_err)
                     for f in files:
+                        fn = str(f.get("filename") or "paper.pdf")
+                        if Path(fn).suffix.lower() in (".json", ".yaml", ".yml", ".txt", ".log"):
+                            continue
                         u = str(f.get("url") or "")
                         if u and u in known_urls:
                             continue
@@ -779,10 +954,14 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                         pub = _public_item(
                             tid, fid,
                             kind=kind_label, source="papers",
-                            filename=str(f.get("filename") or "paper.pdf"),
+                            filename=fn,
                             title=str(f.get("title") or ""),
                             note="论文系统 attach_id=" + aid,
                         )
+                        for k in ("year", "journal", "doi"):
+                            v = str(f.get(k) or "").strip()
+                            if v:
+                                pub[k] = v
                         result["items"].append(pub)
                         result["private"][fid] = _private_item(
                             source="papers", url=str(f.get("url") or ""), filename=pub["filename"],
@@ -791,54 +970,103 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                     break
                 if not any(it.get("source") == "papers" for it in result["items"]) and last_err:
                     result["papersError"] = last_err
+    if paper_kind and not result.get("paperRecords"):
+        aid = str(result.get("papersAttachId") or "")
+        if not aid:
+            ids2, _ = await POOL.resolve_attach_ids(snap, app_no)
+            aid = ids2[0] if ids2 else ""
+        if aid:
+            try:
+                result["paperRecords"] = P.public_catalog(await P.get_talent(aid))
+                result["papersAttachId"] = aid
+            except P.PapersError:
+                pass
+        if not result.get("paperRecords"):
+            recs = catalog_from_attach_items(result.get("items") or [])
+            if recs:
+                result["paperRecords"] = recs
 
     project_kind = next((k for k in needed if k["id"] == "project"), None)
     pool_project_ok = bool(by_kind.get("项目证明")) or ("project" in local_found_ids)
     work_root = Path(task_dir) / "work" / "tmp" / "project_proof" if task_dir else Path(".")
-    if project_kind and not pool_project_ok:
-        person = PP.person_name(snap)
-        projects = PP.extract_projects(snap, app_text)
-        company = str(((snap or {}).get("keys") or {}).get("company") or "")
+    opinion_blob = "\n".join(str(x or "") for x in (texts if isinstance(texts, (list, tuple)) else [texts]))
+    want_search = bool(re.search(r"联网检索", opinion_blob))
+    want_generate = bool(re.search(r"系统生成项目证明|生成项目证明|调用生成接口", opinion_blob))
+    skip_search = bool(re.search(r"不必再联网检索|直接生成项目证明", opinion_blob)) and not want_search
+    if project_kind:
+        ident = PP.identity_from_app_text(app_text)
+        prior = PP.prior_work_context(snap, app_text)
+        person = prior.get("person") or PP.person_name(snap) or ident.get("name") or ""
+        projects = prior.get("projects") if prior.get("ok") else PP.extract_projects(snap, app_text)
+        company = str(prior.get("company") or "") if prior.get("ok") else ""
         ids, extra = await POOL.resolve_attach_ids(snap, app_no)
         result["notes"].extend(extra)
-        aid = ids[0] if ids else str(app_no or "")
+        aid = ids[0] if ids else (ident.get("attach_id") or str(app_no or ""))
+        result["notes"].append(
+            "项目证明策略：人才库=" + ("已命中" if pool_project_ok else "未命中")
+            + "；联网检索=" + ("是" if (not skip_search) else "否")
+            + "；生成接口=" + ("是" if prior.get("ok") else "否（无来华前工作单位）")
+            + ("（意见点名生成）" if want_generate else "")
+            + ("（意见点名检索）" if want_search else "")
+        )
+        if prior.get("note"):
+            result["notes"].append(str(prior.get("note")))
+        run_search = not skip_search
         if not result.get("codebuddyFetched"):
             result["codebuddyFetched"] = True
-            cb = await asyncio.to_thread(
-                PP.run_codebuddy_search,
-                person=person, attach_id=aid, projects=projects,
-                work_dir=work_root / "codebuddy",
-            )
-            if cb.get("error"):
-                result["codebuddyError"] = str(cb.get("error") or "")
-                result["notes"].append("项目证明联网检索：" + result["codebuddyError"])
-            n_cb = 0
-            for f in cb.get("items") or []:
-                u = str(f.get("url") or "")
-                if not u or u in known_urls:
-                    continue
-                known_urls.add(u)
-                fid = _new_id()
-                pub = _public_item(
-                    tid, fid,
-                    kind="项目证明", source="codebuddy",
-                    filename=str(f.get("filename") or "project-proof"),
-                    title=str(f.get("title") or f.get("filename") or ""),
-                    note=str(f.get("note") or "CodeBuddy 联网检索"),
+            if not run_search:
+                result["notes"].append("意见要求直接生成项目证明，已跳过联网检索")
+            else:
+                result["notes"].append("开始联网检索项目证明（CodeBuddy）")
+                cb = await asyncio.to_thread(
+                    PP.run_codebuddy_search,
+                    person=person, attach_id=aid, projects=projects,
+                    work_dir=work_root / "codebuddy",
                 )
-                result["items"].append(pub)
-                result["private"][fid] = _private_item(source="codebuddy", url=u, filename=pub["filename"])
-                by_kind.setdefault("项目证明", []).append(pub)
-                n_cb += 1
-            if n_cb:
-                result["notes"].append("CodeBuddy 联网检索命中 " + str(n_cb) + " 个项目证明")
-        if not by_kind.get("项目证明") and not result.get("generateFetched"):
+                if cb.get("error"):
+                    result["codebuddyError"] = str(cb.get("error") or "")
+                    result["notes"].append("项目证明联网检索：" + result["codebuddyError"])
+                n_cb = 0
+                for f in cb.get("items") or []:
+                    u = str(f.get("url") or "")
+                    if not u or u in known_urls:
+                        continue
+                    known_urls.add(u)
+                    fid = _new_id()
+                    pub = _public_item(
+                        tid, fid,
+                        kind="项目证明", source="codebuddy",
+                        filename=str(f.get("filename") or "project-proof"),
+                        title=str(f.get("title") or f.get("filename") or ""),
+                        note=str(f.get("note") or "CodeBuddy 联网检索"),
+                    )
+                    result["items"].append(pub)
+                    result["private"][fid] = _private_item(source="codebuddy", url=u, filename=pub["filename"])
+                    by_kind.setdefault("项目证明", []).append(pub)
+                    n_cb += 1
+                if n_cb:
+                    result["notes"].append("CodeBuddy 联网检索命中 " + str(n_cb) + " 个项目证明")
+                else:
+                    result["notes"].append("CodeBuddy 联网检索未命中公开证明，继续调用生成接口")
+        if not result.get("generateFetched"):
             result["generateFetched"] = True
-            gen = await PP.call_generate_api(
-                person=person, attach_id=aid, company=company, projects=projects,
-                work_dir=work_root / "generate",
-                resume_pdf=PP.find_resume_pdf(task_dir),
-            )
+            if not prior.get("ok") or not company:
+                if not prior.get("note"):
+                    result["notes"].append("未找到来华前工作单位，已跳过项目证明生成")
+                gen = {"ok": False, "error": "", "items": []}
+            else:
+                result["notes"].append("开始调用项目证明生成接口")
+                gen = await PP.call_generate_api(
+                    person=person, attach_id=aid, company=company, projects=projects,
+                    work_dir=work_root / "generate",
+                    resume_pdf=PP.find_resume_pdf(task_dir),
+                    language=str(prior.get("language") or ""),
+                    role=str(prior.get("role") or ""),
+                    start_date=str(prior.get("startDate") or ""),
+                    end_date=str(prior.get("endDate") or ""),
+                    forbidden_names=prior.get("forbidden") or [],
+                    aliases=prior.get("aliases") or [],
+                )
             if gen.get("error"):
                 result["generateError"] = str(gen.get("error") or "")
                 result["notes"].append("项目证明生成：" + result["generateError"])
@@ -863,6 +1091,7 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
             if n_gen:
                 result["notes"].append("生成 API 产出 " + str(n_gen) + " 个项目证明")
 
+    result["items"] = _dedupe_attach_items(result.get("items") or [])
     found_n = len(result["items"])
     miss = [lab for lab in labels if not any(it.get("kind") == lab or (lab == "论文全文" and "论文" in str(it.get("kind") or "")) for it in result["items"])]
     parts = []
@@ -872,6 +1101,38 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
         parts.append("未找到：" + "、".join(miss))
     result["summary"] = "；".join(parts) if parts else "未检索到可下载附件"
     return result
+
+
+def catalog_from_attach_items(items) -> list:
+    """已找到的论文下载项里抽出可写入申报书的题录（跳过文件名/装订件）。"""
+    out, seen = [], set()
+    skip_suf = {".pdf", ".log", ".txt", ".json", ".yaml", ".yml", ".doc", ".docx"}
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        kind = str(it.get("kind") or "")
+        if "论文" not in kind or "装订" in kind:
+            continue
+        title = str(it.get("title") or "").strip()
+        fn = str(it.get("filename") or "").strip()
+        if not title or title == fn:
+            continue
+        low = title.lower()
+        if any(low.endswith(s) for s in skip_suf):
+            continue
+        if title.startswith("装订"):
+            continue
+        key = title.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        rec = {"title": title, "titleZh": "", "year": str(it.get("year") or "").strip(),
+               "journal": str(it.get("journal") or "").strip(), "doi": str(it.get("doi") or "").strip(),
+               "authors": str(it.get("authors") or "").strip(), "paperId": ""}
+        out.append(rec)
+        if len(out) >= 12:
+            break
+    return out
 
 
 def leftover_lines(result: dict) -> list:
@@ -888,8 +1149,12 @@ def leftover_lines(result: dict) -> list:
                 if k != lab and "论文" in str(k):
                     hits.extend(rows)
         if hits:
-            bits = []
+            bits, seen_hit = [], set()
             for it in hits:
+                hk = (str(it.get("source") or ""), str(it.get("filename") or it.get("title") or ""), str(it.get("download") or ""))
+                if hk in seen_hit:
+                    continue
+                seen_hit.add(hk)
                 src = {"pool": "人才库", "papers": "论文系统", "codebuddy": "联网检索", "generate": "生成接口", "local": "本地附件", "wecom": "聊天记录"}.get(it.get("source"), str(it.get("source") or "外部"))
                 bits.append(src + " " + str(it.get("filename") or it.get("title") or "") + " " + str(it.get("download") or ""))
             lines.append("【缺附件·" + lab + "】已检索到，下载：" + " ； ".join(bits))
@@ -903,6 +1168,10 @@ def leftover_lines(result: dict) -> list:
             elif not extra and result.get("notes"):
                 extra = "。" + "；".join(str(x) for x in result.get("notes") if lab in str(x) or (lab == "论文全文" and "论文" in str(x)))
             lines.append("【缺附件·" + lab + "】未检索到可下载文件" + extra)
+    recs = [r for r in (result.get("paperRecords") or []) if isinstance(r, dict) and str(r.get("title") or "").strip()]
+    if recs:
+        titles = [str(r.get("title") or "").strip()[:80] for r in recs]
+        lines.append("【申报书·代表性论文】论文系统题录须写入申报书：" + "；".join(titles[:6]))
     seen = set()
     uniq = []
     for s in lines:
@@ -970,8 +1239,13 @@ def build_task_list(texts=None, *, attach: dict | None = None, leftovers=None, c
             for k, rows2 in items_by.items():
                 if k != lab and "论文" in str(k):
                     hits.extend(rows2)
-        downloads = []
+        downloads, seen_dl = [], set()
         for it in hits:
+            fn = str(it.get("filename") or it.get("title") or "")
+            dk = (str(it.get("source") or ""), fn.lower(), str(it.get("download") or ""))
+            if dk in seen_dl:
+                continue
+            seen_dl.add(dk)
             downloads.append({
                 "filename": it.get("filename") or it.get("title") or "",
                 "title": it.get("title") or it.get("filename") or "",
@@ -994,6 +1268,14 @@ def build_task_list(texts=None, *, attach: dict | None = None, leftovers=None, c
         else:
             status, status_label = "need_upload", "本地、人才库与聊天记录均未找到"
             action += " 本地「附件」目录、人才库与聊天记录均无对应文件，需申报人自行准备。"
+            if kid == "paper":
+                if attach.get("papersFetched"):
+                    err = str(attach.get("papersError") or "").strip()
+                    status_label = "本地、人才库、聊天记录与论文系统均未找到"
+                    action += " 已查询论文系统" + (("：" + err) if err else "（无该人才档案或无可下载 PDF）") + "。"
+                else:
+                    status_label = "本地、人才库与聊天记录均未找到（论文系统未查询）"
+                    action += " 尚未查询论文系统。"
         out.append({
             "id": kid,
             "title": lab,
@@ -1060,7 +1342,34 @@ def format_attach_prompt(result: dict) -> str:
         for it in items:
             lines.append("- " + str(it.get("kind") or "") + " " + str(it.get("title") or it.get("filename") or "") + " → " + str(it.get("download") or ""))
     else:
-        lines.append("库内、联网检索与生成接口均未给出可下载文件。leftovers 写明缺哪类附件，严禁编造已上传。")
+        needed = result.get("needed") or []
+        if "论文全文" in needed:
+            lines.append("本地、人才库与论文系统均未给出可下载论文。leftovers 写明缺论文全文，严禁编造已上传。")
+        else:
+            lines.append("库内、联网检索与生成接口均未给出可下载文件。leftovers 写明缺哪类附件，严禁编造已上传。")
+    recs = result.get("paperRecords") or []
+    if recs:
+        lines.append("## 论文系统题录（须补入申报书「代表性论文」栏，禁止只给附件链接、禁止因缺人才库而 leftovers）")
+        for i, r in enumerate(recs, 1):
+            if not isinstance(r, dict):
+                continue
+            bits = ["题目=" + str(r.get("title") or "")]
+            if r.get("titleZh"):
+                bits.append("中文题=" + str(r.get("titleZh")))
+            if r.get("journal"):
+                bits.append("期刊=" + str(r.get("journal")))
+            if r.get("year"):
+                bits.append("年=" + str(r.get("year")))
+            if r.get("doi"):
+                bits.append("DOI=" + str(r.get("doi")))
+            if r.get("authors"):
+                bits.append("作者=" + str(r.get("authors")))
+            lines.append(str(i) + ". " + "；".join(bits))
+        lines.append(
+            "填表体例：作者排序(排序/总人数)，题目，期刊名称，年，起止页码，引用数，影响因子。"
+            "find 锚定申报书论文表头或「论文」栏原文；replace 按该体例写入上列题录。"
+            "作者排序未知可留空或写待核，引用数/影响因子未知必须留空，严禁编造。"
+        )
     notes = result.get("notes") or []
     if notes:
         lines.append("检索说明：" + "；".join(str(x) for x in notes[:12]))
@@ -1078,6 +1387,7 @@ def save_snapshot(task_dir: str | Path, result: dict) -> None:
         "papersFetched": bool(result.get("papersFetched")),
         "papersError": result.get("papersError") or "",
         "papersAttachId": result.get("papersAttachId") or "",
+        "paperRecords": result.get("paperRecords") or [],
         "codebuddyFetched": bool(result.get("codebuddyFetched")),
         "codebuddyError": result.get("codebuddyError") or "",
         "generateFetched": bool(result.get("generateFetched")),

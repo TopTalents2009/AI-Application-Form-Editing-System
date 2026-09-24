@@ -89,9 +89,329 @@ def extract_projects(snap: dict, app_text: str = "") -> list:
     payload = ((snap or {}).get("talent") or {}).get("payload")
     _walk_projects(payload, add)
     text = str(app_text or "")
-    for m in re.finditer(r"项目名称[：:\s|｜]*([^\n|]{4,200})", text):
-        add(m.group(1))
+    for m in re.finditer(
+        r"项目\d+\s*[：:]\s*(?P<name>[^。\n]{4,80})"
+        r"(?:。[^\n]{0,120}项目来源[：:]\s*(?P<funding>[^。\n]{1,40}))?"
+        r"(?:。[^\n]{0,80}起止时间[：:]\s*(?P<span>[^。\n]{1,40}))?"
+        r"(?:。[^\n]{0,80}担任角色[：:]\s*(?P<role>[^。\n]{1,40}))?",
+        text,
+    ):
+        extra = {}
+        if m.group("funding"):
+            extra["项目来源"] = m.group("funding").strip()
+        if m.group("span"):
+            extra["起止时间"] = m.group("span").strip()
+        if m.group("role"):
+            extra["担任角色"] = m.group("role").strip()
+        add(m.group("name").strip(), extra or None)
+    for m in re.finditer(r"项目名称[：:\s|｜]*([^\n。|]{4,80})", text):
+        add(m.group(1).strip())
     return acc[:12]
+
+
+def identity_from_app_text(app_text: str) -> dict:
+    """测试申报书等未入库文本：抽出姓名、企业、编号。"""
+    text = str(app_text or "")
+
+    def one(pat: str) -> str:
+        m = re.search(pat, text)
+        return (m.group(1) or "").strip() if m else ""
+
+    return {
+        "name": one(r"申报人姓名[：:\s]*([^\n]{2,40})") or one(r"有效证件姓名[：:\s]*([^\n]{2,40})"),
+        "company": one(r"申报企业[：:\s]*([^\n]{2,80})") or one(r"引进企业[：:\s]*([^\n]{2,80})"),
+        "attach_id": one(r"(?:申报书编号|人才编号)[：:\s]*(\d{4,8})"),
+    }
+
+
+_CN_PLACES = ("中国", "内地", "境内", "香港", "澳门", "台湾", "china", "prc", "hong kong", "macao", "taiwan")
+_FUNDING_RE = re.compile(
+    r"基金|能源部|国防部|科技部|自然科学|NSF|NIH|DOE|DoD|NASA|DARPA|Horizon|UKRI|NSFC|"
+    r"欧盟|NSERC|Mitacs|ARC|EPSRC|国家重点研发|省科技厅",
+    re.I,
+)
+_FUNDING_EN = (
+    (re.compile(r"美国能源部|U\.?S\.?\s*Department of Energy|\bDOE\b", re.I), "U.S. Department of Energy"),
+    (re.compile(r"美国国防部|Department of Defense|\bDoD\b", re.I), "U.S. Department of Defense"),
+    (re.compile(r"国家自然科学基金|NSFC", re.I), "NSFC"),
+)
+_KNOWN_EN_ORG = (
+    (re.compile(r"波音|boeing", re.I), "The Boeing Company"),
+    (re.compile(r"微软|microsoft", re.I), "Microsoft"),
+    (re.compile(r"\bgoogle\b|谷歌", re.I), "Google"),
+    (re.compile(r"apple|苹果公司", re.I), "Apple"),
+    (re.compile(r"amazon|亚马逊", re.I), "Amazon"),
+    (re.compile(r"tesla|特斯拉", re.I), "Tesla"),
+    (re.compile(r"\bibm\b", re.I), "IBM"),
+    (re.compile(r"intel|英特尔", re.I), "Intel"),
+)
+_ORG_ALIAS = (
+    (re.compile(r"波音|boeing", re.I), "boeing"),
+)
+_ZH_DOC_TITLES = (
+    "项目证明", "开题报告", "结题报告", "项目验收单", "项目委任书",
+    "项目绩效评估", "项目资金结算单", "全部项目总表", "项目任务书",
+)
+_EN_DOC_TITLES = (
+    "Project Certificate", "Project Proposal", "Project Closure",
+    "Acceptance Certificate", "Appointment Letter", "Performance Evaluation",
+    "Settlement Statement", "All Projects",
+)
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(text or "")))
+
+
+def _split_bilingual(text: str) -> tuple[str, str]:
+    s = str(text or "").strip()
+    if not s:
+        return "", ""
+    if "/" in s:
+        a, b = s.split("/", 1)
+        return a.strip(), b.strip()
+    m = re.match(r"^(.+?)\s*[（(]([^）)]+)[）)]\s*$", s)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    if _has_cjk(s) and re.search(r"[A-Za-z]", s):
+        m = re.match(r"^(.+?)([A-Za-z].+)$", s)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+    return s, ""
+
+
+def _norm_org(text: str) -> str:
+    t = str(text or "").lower()
+    t = re.sub(r"(limited|ltd\.?|inc\.?|corp\.?|co\.|company|llc|科技|有限公司|股份|集团|公司)", "", t, flags=re.I)
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", t)
+
+
+def _org_key(text: str) -> str:
+    raw = str(text or "")
+    for pat, key in _ORG_ALIAS:
+        if pat.search(raw) or pat.search(_norm_org(raw)):
+            return key
+    return _norm_org(raw)
+
+
+def _same_org(a: str, b: str) -> bool:
+    ka, kb = _org_key(a), _org_key(b)
+    if not ka or not kb:
+        return False
+    if ka == kb:
+        return True
+    return (len(ka) >= 4 and ka in kb) or (len(kb) >= 4 and kb in ka)
+
+
+def _is_cn_place(text: str) -> bool:
+    s = str(text or "").strip().lower()
+    return bool(s) and any(p in s for p in _CN_PLACES)
+
+
+def _pretty_en_company(zh: str, en: str) -> str:
+    blob = (zh or "") + " " + (en or "")
+    for pat, name in _KNOWN_EN_ORG:
+        if pat.search(blob):
+            return name
+    latin = en if (en and not _has_cjk(en) and re.search(r"[A-Za-z]{2}", en)) else ""
+    if not latin and zh and not _has_cjk(zh) and re.search(r"[A-Za-z]{2}", zh):
+        latin = zh
+    if latin:
+        if latin.isupper() and 2 <= len(latin) <= 32:
+            return latin.title()
+        return latin
+    return (zh or en or "").strip()
+
+
+def _pick_person_name(raw: str, language: str) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    zh, en = _split_bilingual(s)
+    if language == "en":
+        for part in (en, zh, s):
+            lat = re.sub(r"[\u4e00-\u9fff•·].*", "", part or "").strip(" /")
+            if re.search(r"[A-Za-z]{2}", lat) and not _has_cjk(lat):
+                return lat
+        return en or s
+    for part in (zh, s):
+        if _has_cjk(part):
+            return re.split(r"\s*/\s*", part)[0].strip()
+    return zh or s
+
+
+def declaring_company_names(snap: dict, app_text: str = "") -> list:
+    out, seen = [], set()
+    keys_co = str(((snap or {}).get("keys") or {}).get("company") or "").strip()
+    ident_co = str(identity_from_app_text(app_text).get("company") or "").strip()
+    for name in (keys_co, ident_co):
+        if not name:
+            continue
+        k = name.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(name)
+    return out
+
+
+def _is_forbidden_org(name: str, forbidden: list) -> bool:
+    return any(_same_org(name, f) for f in (forbidden or []) if f)
+
+
+def _project_for_lang(row: dict, language: str) -> dict:
+    out = dict(row or {})
+    zh, en = _split_bilingual(str(out.get("name") or ""))
+    if language == "en":
+        out["name"] = en or (zh if zh and not _has_cjk(zh) else (en or zh or out.get("name") or ""))
+    else:
+        out["name"] = zh or str(out.get("name") or "")
+    out["name"] = str(out.get("name") or "").strip()
+    return out
+
+
+def prior_work_context(snap: dict, app_text: str = "") -> dict:
+    """项目证明签发单位 = 回国/来华前工作单位，不用申报/引进企业。"""
+    payload = ((snap or {}).get("talent") or {}).get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    info = payload.get("申报人基本信息") if isinstance(payload.get("申报人基本信息"), dict) else {}
+    jobs = payload.get("工作经历") if isinstance(payload.get("工作经历"), list) else []
+    forbidden = declaring_company_names(snap, app_text)
+    empty = {
+        "ok": False,
+        "company": "",
+        "company_zh": "",
+        "company_en": "",
+        "language": "",
+        "role": "",
+        "startDate": "",
+        "endDate": "",
+        "person": "",
+        "projects": [],
+        "forbidden": forbidden,
+        "aliases": [],
+        "note": "未找到来华前工作单位（且不可用申报企业签发），已跳过项目证明生成",
+    }
+
+    picked = None
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        flag = str(row.get("是否为回国前最后一段工作经历") or "").strip().lower()
+        if flag in ("是", "y", "yes", "1", "true"):
+            picked = row
+            break
+    if picked is None:
+        for row in jobs:
+            if not isinstance(row, dict):
+                continue
+            org = str(row.get("工作单位") or "").strip()
+            if org and not _is_forbidden_org(org, forbidden):
+                picked = row
+                break
+
+    zh, en, country, role_zh, role_en, start, end = "", "", "", "", "", "", ""
+    if isinstance(picked, dict):
+        zh, en = _split_bilingual(str(picked.get("工作单位") or ""))
+        country = str(picked.get("所在国家") or "").strip()
+        role_zh, role_en = _split_bilingual(str(picked.get("担任职务") or ""))
+        start = str(picked.get("开始时间") or "").strip()
+        end = str(picked.get("结束时间") or "").strip()
+    if not zh:
+        zh = str(info.get("回国前单位中文") or "").strip()
+    if not en:
+        en = str(info.get("回国前单位英文") or "").strip()
+    if not zh and not _is_forbidden_org(str(info.get("现工作单位") or ""), forbidden):
+        zh = str(info.get("现工作单位") or "").strip()
+    if not country:
+        country = str(info.get("回国前所在地") or info.get("国籍地区") or "").strip()
+    if not role_zh:
+        role_zh = str(info.get("回国前职务中文") or "").strip()
+    if not role_en:
+        role_en = str(info.get("回国前职务英文") or "").strip()
+    if end in ("至今", "现在", "今", "Present", "Now"):
+        end = "present"
+    if not zh and not en:
+        return empty
+    if _is_forbidden_org(zh, forbidden) or _is_forbidden_org(en, forbidden):
+        empty = dict(empty)
+        empty["note"] = "来华前工作单位与申报企业相同，已跳过项目证明生成（不可用申报企业签发）"
+        return empty
+
+    overseas = (bool(country) and not _is_cn_place(country)) or (not country and bool(en) and not _has_cjk(en))
+    language = "en" if overseas else "zh"
+    company = _pretty_en_company(zh, en) if language == "en" else (zh or en)
+    person = _pick_person_name(person_name(snap) or identity_from_app_text(app_text).get("name") or "", language)
+    role = (role_en if language == "en" else role_zh) or (role_zh or role_en)
+    projects = []
+    for row in extract_projects(snap, ""):
+        src = str(row.get("项目来源") or row.get("funding") or "")
+        if src and _is_forbidden_org(src, forbidden):
+            continue
+        if src and not (_same_org(src, zh) or _same_org(src, en) or _same_org(src, company) or _FUNDING_RE.search(src)):
+            continue
+        item = _project_for_lang(row, language)
+        src = str(row.get("项目来源") or "")
+        if language == "en":
+            if src and (_same_org(src, zh) or _same_org(src, en) or _same_org(src, company)):
+                item["项目来源"] = company
+            else:
+                for pat, en_name in _FUNDING_EN:
+                    if pat.search(src):
+                        item["项目来源"] = en_name
+                        break
+        projects.append(item)
+    aliases = [x for x in (zh, en) if x and x != company]
+    return {
+        "ok": True,
+        "company": company,
+        "company_zh": zh,
+        "company_en": en,
+        "language": language,
+        "role": role,
+        "startDate": start,
+        "endDate": end or "present",
+        "person": person,
+        "projects": projects[:12],
+        "forbidden": forbidden,
+        "aliases": aliases,
+        "note": "签发单位=" + company + "（来华前工作单位，非申报企业）；语言=" + language,
+    }
+
+
+def unify_html_language(
+    html: str,
+    language: str,
+    issuer: str = "",
+    forbidden_names: list | None = None,
+    aliases: list | None = None,
+) -> str:
+    """生成件只保留一种语言：海外英文、境内中文；申报企业名替换为签发单位。"""
+    s = str(html or "")
+    if not s:
+        return s
+    issuer = str(issuer or "").strip()
+    for name in list(forbidden_names or []) + list(aliases or []):
+        n = str(name or "").strip()
+        if not n or (issuer and n == issuer):
+            continue
+        s = s.replace(n, issuer) if issuer else s.replace(n, "")
+    if language == "en":
+        s = re.sub(r'(<html[^>]*\slang=")[^"]*"', r'\1en"', s, count=1, flags=re.I)
+        for w in _ZH_DOC_TITLES:
+            s = re.sub(r"<div([^>]*)>\s*" + re.escape(w) + r"\s*</div>", "", s, flags=re.I)
+            s = s.replace(" / " + w, "").replace(w + " / ", "").replace("/ " + w, "")
+        s = re.sub(
+            r"<div([^>]*)>\s*[\u4e00-\u9fff]{2,16}\s*</div>",
+            "",
+            s,
+        )
+    elif language == "zh":
+        s = re.sub(r'(<html[^>]*\slang=")[^"]*"', r'\1zh-CN"', s, count=1, flags=re.I)
+        for w in _EN_DOC_TITLES:
+            s = re.sub(r"<div([^>]*)>\s*" + re.escape(w) + r"\s*</div>", "", s, flags=re.I)
+            s = s.replace(" / " + w, "").replace(w + " / ", "")
+    return s
 
 
 def _walk_projects(obj, add, depth=0):
@@ -507,7 +827,17 @@ def find_resume_pdf(task_dir: str | Path | None) -> Path | None:
     return sorted(found, key=lambda p: p.stat().st_size, reverse=True)[0]
 
 
-def _build_autoref_letters(person: str, company: str, projects: list, attach_id: str) -> list:
+def _build_autoref_letters(
+    person: str,
+    company: str,
+    projects: list,
+    attach_id: str,
+    *,
+    role: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    language: str = "",
+) -> list:
     custom = []
     for p in projects or []:
         if not isinstance(p, dict):
@@ -527,29 +857,34 @@ def _build_autoref_letters(person: str, company: str, projects: list, attach_id:
             if val in (None, "", "***"):
                 continue
             text = str(val).strip()
+            if dst in ("endDate", "startDate") and text in ("至今", "现在", "今"):
+                text = "present"
             if dst == "funding" and src == "项目来源" and not text.startswith("("):
                 text = "(" + text + ")"
             row[dst] = text[:240]
         custom.append(row)
+    default_role = "Researcher" if language == "en" else ("研究人员" if language == "zh" else "Researcher")
     letter = {
         "id": "work-" + re.sub(r"\W+", "", attach_id or "1")[:24] or "1",
         "type": "work",
         "companyName": (company or "Unknown Organization").strip() or "Unknown Organization",
         "candidateName": (person or "Unknown").strip() or "Unknown",
-        "role": "Researcher",
-        "startDate": (custom[0].get("startDate") if custom else "") or "2020-01",
-        "endDate": (custom[0].get("endDate") if custom else "") or "present",
+        "role": (role or default_role).strip() or default_role,
+        "startDate": (start_date or (custom[0].get("startDate") if custom else "") or "2020-01"),
+        "endDate": (end_date or (custom[0].get("endDate") if custom else "") or "present"),
     }
+    if language:
+        letter["language"] = language
     if custom:
         letter["customProjects"] = custom
     return [letter]
 
 
-def _build_autoref_body(person: str, company: str, projects: list, attach_id: str) -> dict:
-    return {"letters": _build_autoref_letters(person, company, projects, attach_id)}
+def _build_autoref_body(person: str, company: str, projects: list, attach_id: str, **kwargs) -> dict:
+    return {"letters": _build_autoref_letters(person, company, projects, attach_id, **kwargs)}
 
 
-def _doc_html(doc: dict) -> str:
+def _doc_html(doc: dict, language: str = "") -> str:
     html = str(doc.get("html") or "").strip()
     if html:
         return html
@@ -557,10 +892,15 @@ def _doc_html(doc: dict) -> str:
     content = str(fields.get("content") or "").strip()
     if not content:
         return ""
-    title = str(doc.get("titleZh") or doc.get("titleEn") or doc.get("kind") or "项目证明")
+    if language == "en":
+        title = str(doc.get("titleEn") or doc.get("titleZh") or doc.get("kind") or "Project Certificate")
+        lang = "en"
+    else:
+        title = str(doc.get("titleZh") or doc.get("titleEn") or doc.get("kind") or "项目证明")
+        lang = "zh-CN"
     esc = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return (
-        "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"/><title>"
+        "<!DOCTYPE html><html lang=\"" + lang + "\"><head><meta charset=\"utf-8\"/><title>"
         + title.replace("<", "")
         + "</title></head><body style=\"font-family:serif;line-height:1.6;padding:24px\">"
         + "<h1>" + title.replace("<", "") + "</h1><pre style=\"white-space:pre-wrap\">"
@@ -594,7 +934,15 @@ def _save_word_exports(data: dict, cwd: Path) -> list:
     return out
 
 
-def _save_autoref_documents(data: dict, cwd: Path) -> tuple[list, str]:
+def _save_autoref_documents(
+    data: dict,
+    cwd: Path,
+    *,
+    language: str = "",
+    issuer: str = "",
+    forbidden_names: list | None = None,
+    aliases: list | None = None,
+) -> tuple[list, str]:
     if not isinstance(data, dict):
         return [], "AutoRef 响应不是 JSON 对象"
     if not data.get("ok"):
@@ -607,11 +955,14 @@ def _save_autoref_documents(data: dict, cwd: Path) -> tuple[list, str]:
         kind = str(doc.get("kind") or "")
         if not kind.startswith("project."):
             continue
-        html = _doc_html(doc)
+        html = unify_html_language(_doc_html(doc, language), language, issuer, forbidden_names, aliases)
         if not html:
             continue
         fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else {}
-        title = str(doc.get("titleZh") or doc.get("titleEn") or kind)
+        if language == "en":
+            title = str(doc.get("titleEn") or doc.get("titleZh") or kind)
+        else:
+            title = str(doc.get("titleZh") or doc.get("titleEn") or kind)
         pname = str(fields.get("projectName") or doc.get("projectName") or title or "").strip()
         if kind == "project.all":
             summary = doc
@@ -633,11 +984,14 @@ def _save_autoref_documents(data: dict, cwd: Path) -> tuple[list, str]:
     saved, used = [], set()
     for doc in picked:
         kind = str(doc.get("kind") or "")
-        html = _doc_html(doc)
+        html = unify_html_language(_doc_html(doc, language), language, issuer, forbidden_names, aliases)
         if not html:
             continue
         fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else {}
-        title = str(doc.get("titleZh") or doc.get("titleEn") or kind)
+        if language == "en":
+            title = str(doc.get("titleEn") or doc.get("titleZh") or kind)
+        else:
+            title = str(doc.get("titleZh") or doc.get("titleEn") or kind)
         pname = str(fields.get("projectName") or doc.get("projectName") or "")
         safe = re.sub(r'[<>:"/\\|?*\s]+', "_", (pname or title or kind)).strip("_")[:72]
         fn = kind.replace(".", "-") + (("-" + safe) if safe else "") + ".html"
@@ -713,6 +1067,12 @@ async def call_generate_api(
     projects: list,
     work_dir: str | Path,
     resume_pdf: str | Path | None = None,
+    language: str = "",
+    role: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    forbidden_names: list | None = None,
+    aliases: list | None = None,
 ) -> dict:
     cfg = (load_config().get("projectProof") or {}).get("generate") or {}
     if not cfg.get("configured"):
@@ -744,7 +1104,10 @@ async def call_generate_api(
         pdf = None
 
     if autoref:
-        letters = _build_autoref_letters(person, company, projects, attach_id)
+        letters = _build_autoref_letters(
+            person, company, projects, attach_id,
+            role=role, start_date=start_date, end_date=end_date, language=language,
+        )
         data, err, raw_text = None, "", ""
         used = ""
         if projects:
@@ -769,7 +1132,11 @@ async def call_generate_api(
             (cwd / "generate.json").write_text(raw_text[:200000], encoding="utf-8")
         if not data:
             return {"ok": False, "error": err or ("AutoRef " + used + " 未返回数据"), "items": []}
-        saved, save_err = _save_autoref_documents(data, cwd)
+        saved, save_err = _save_autoref_documents(
+            data, cwd,
+            language=language, issuer=company,
+            forbidden_names=forbidden_names, aliases=aliases,
+        )
         if not saved:
             return {"ok": False, "error": save_err or "AutoRef 未产出项目证明", "items": []}
         return {"ok": True, "error": "", "items": saved}

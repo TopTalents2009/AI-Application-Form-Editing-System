@@ -123,6 +123,96 @@ def test_autoref_contract() -> None:
     print("[OK] ok=false 时中止")
 
 
+def _boeing_snap() -> dict:
+    return {
+        "keys": {"company": "苏州启明智造科技有限公司", "names": ["林启明"], "attachIds": ["51104"]},
+        "talent": {
+            "name": "KEITH DANIEL HUMFELD",
+            "payload": {
+                "申报人基本信息": {
+                    "有效证件姓名": "KEITH DANIEL HUMFELD",
+                    "外籍专家中文姓名": "基思•丹尼尔•汉弗尔德",
+                    "回国前单位中文": "波音公司",
+                    "回国前单位英文": "BOEING",
+                    "现工作单位": "波音公司",
+                    "回国前所在地": "美国",
+                    "回国前职务中文": "首席科学家",
+                    "回国前职务英文": "Chief Scientist",
+                },
+                "工作经历": [{
+                    "工作单位": "波音公司 / BOEING",
+                    "担任职务": "首席科学家 / Chief Scientist",
+                    "开始时间": "2008-06-01",
+                    "结束时间": "至今",
+                    "所在国家": "美国",
+                    "是否为回国前最后一段工作经历": "是",
+                }],
+                "工作成果及业绩": [
+                    {
+                        "项目名称": "中文课题 / MACHINE LEARNING COMPOSITES CONTROL",
+                        "项目来源": "波音公司",
+                        "开始时间": "2020-02-13",
+                        "结束时间": "2021-06-20",
+                        "经费总额": "210",
+                    },
+                    {
+                        "项目名称": "PINN curing / Co-training of PINNs",
+                        "项目来源": "美国能源部",
+                        "开始时间": "2023-04-15",
+                        "结束时间": "2025-05-13",
+                    },
+                    {
+                        "项目名称": "汽车零部件在线视觉检测系统",
+                        "项目来源": "苏州启明智造科技有限公司",
+                    },
+                ],
+            },
+        },
+    }
+
+
+def test_prior_employer_and_html() -> None:
+    app_text = "申报人姓名：林启明\n申报企业：苏州启明智造科技有限公司\n项目1：汽车零部件在线视觉检测系统。项目来源：企业自筹。"
+    ctx = PP.prior_work_context(_boeing_snap(), app_text)
+    assert ctx["ok"], ctx
+    assert ctx["language"] == "en", ctx
+    assert "Boeing" in ctx["company"], ctx["company"]
+    assert "苏州" not in ctx["company"]
+    assert "基思" not in ctx["person"]
+    assert ctx["role"] == "Chief Scientist"
+    names = [str(p.get("name") or "") for p in ctx["projects"]]
+    assert names, names
+    assert all("汽车零部件" not in n for n in names), names
+    assert any("MACHINE LEARNING" in n.upper() for n in names), names
+    letters = PP._build_autoref_letters(
+        ctx["person"], ctx["company"], ctx["projects"], "51104",
+        role=ctx["role"], start_date=ctx["startDate"], end_date=ctx["endDate"], language=ctx["language"],
+    )
+    assert letters[0]["companyName"] == ctx["company"]
+    assert "苏州" not in json.dumps(letters, ensure_ascii=False)
+    mixed = (
+        '<html lang="en"><body>'
+        '<div>苏州启明智造科技有限公司</div>'
+        '<div>Project Certificate</div>'
+        '<div>项目证明</div>'
+        '<div>KEITH served at 苏州启明智造科技有限公司</div>'
+        "</body></html>"
+    )
+    html = PP.unify_html_language(
+        mixed, "en", issuer=ctx["company"],
+        forbidden_names=ctx["forbidden"], aliases=ctx["aliases"],
+    )
+    assert "项目证明" not in html, html
+    assert "苏州启明" not in html, html
+    assert "The Boeing Company" in html
+    skipped = PP.prior_work_context(
+        {"keys": {"company": "Demo Co"}, "talent": {"name": "A", "payload": {}}},
+        "申报企业：Demo Co",
+    )
+    assert not skipped["ok"]
+    print("[OK] 来华前工作单位=Boeing，过滤申报企业项目，HTML 单语言")
+
+
 def test_codebuddy(person: str, projects: list) -> dict:
     work = ROOT / "tasks" / "_project_proof_live_test" / "codebuddy"
     print("[..] CodeBuddy 联网检索（可能 30s~3min）…")
@@ -134,6 +224,50 @@ def test_codebuddy(person: str, projects: list) -> dict:
     for it in (cb.get("items") or [])[:5]:
         print("     -", it.get("title"), (it.get("url") or "")[:100])
     return cb
+
+
+async def test_live_prior_gen() -> int:
+    pool = ROOT / "tasks" / "1a0d17aab99-7292f2" / "work" / "tmp" / "pool.json"
+    snap = json.loads(pool.read_text(encoding="utf-8")) if pool.is_file() else _boeing_snap()
+    app_text = "申报企业：苏州启明智造科技有限公司"
+    ctx = PP.prior_work_context(snap, app_text)
+    print("[CTX]", ctx.get("note"), "projects=", len(ctx.get("projects") or []))
+    if not ctx.get("ok"):
+        print("[FAIL] 未解析到来华前工作单位")
+        return 1
+    work = ROOT / "tasks" / "_51104_prior_employer_gen"
+    gen = await PP.call_generate_api(
+        person=ctx["person"],
+        attach_id="51104",
+        company=ctx["company"],
+        projects=ctx["projects"],
+        work_dir=work,
+        language=ctx["language"],
+        role=ctx["role"],
+        start_date=ctx["startDate"],
+        end_date=ctx["endDate"],
+        forbidden_names=ctx.get("forbidden") or [],
+        aliases=ctx.get("aliases") or [],
+    )
+    print("[GEN] ok=", gen.get("ok"), "n=", len(gen.get("items") or []), "err=", gen.get("error") or "")
+    leak = []
+    for it in gen.get("items") or []:
+        print("     -", it.get("filename"))
+        p = Path(str(it.get("url") or ""))
+        if p.suffix.lower() == ".html" and p.is_file():
+            body = p.read_text(encoding="utf-8", errors="ignore")
+            if "苏州启明" in body:
+                leak.append(p.name + ":苏州启明")
+            if ctx["language"] == "en" and "项目证明" in body:
+                leak.append(p.name + ":项目证明")
+    if leak:
+        print("[FAIL] 混排/申报企业残留:", leak)
+        return 1
+    if not gen.get("ok") or not (gen.get("items") or []):
+        print("[FAIL] 生成接口未产出")
+        return 1
+    print("[OK] 签发单位=", ctx["company"], "语言=", ctx["language"], "无申报企业/中英标题混排")
+    return 0
 
 
 async def test_generate(person: str, projects: list) -> dict:
@@ -207,9 +341,12 @@ async def test_resolve_live(person: str, projects: list, snap: dict) -> dict:
 
 def main() -> int:
     live = "--live" in sys.argv
+    if "--live-gen" in sys.argv:
+        return asyncio.run(test_live_prior_gen())
     test_parse()
     test_prompt_and_filter()
     test_autoref_contract()
+    test_prior_employer_and_html()
     person, projects, snap = test_detect_and_extract()
     asyncio.run(test_resolve_skip_external())
     if not live:

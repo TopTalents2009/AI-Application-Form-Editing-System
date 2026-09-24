@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py89">
+<link rel="stylesheet" href="/public/style.css?v=py97">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -179,7 +179,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 
 <section class="card wecom-home" id="wecomHome">
   <h2>会话记录</h2>
-  <p class="wecom-lead">同一会话在多台电脑上只显示一条，群聊和单聊都算。可在左侧点 ★ 加入「关注会话」供值班扫描。浏览消息时可勾选申报书与修改意见后上传；也可「AI 解读」或「拆解任务」。任务停在待确认，确认后才会写入。</p>
+  <p class="wecom-lead">同一会话在多台电脑上只显示一条，群聊和单聊都算。可在左侧点 ★ 加入「关注会话」供值班扫描。浏览消息时可勾选申报书与修改意见后上传；也可「AI 解读」「拆解任务」或「文件汇总」。任务停在待确认，确认后才会写入。</p>
   <div class="msg" id="wecomMsg"></div>
   <div class="wecom-status" id="wecomStatus">检测解析服务…</div>
   <div class="wecom-status" id="wecomWatchStatus" style="margin-top:6px"></div>
@@ -224,6 +224,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
           <button type="button" class="mini" id="wecomAiLogBtn">解读记录</button>
           <button type="button" class="mini" id="wecomSplitBtn">拆解任务</button>
           <button type="button" class="mini" id="wecomIntentPageBtn">分析意图</button>
+          <button type="button" class="mini" id="wecomFileBtn">文件汇总</button>
           <button type="button" class="mini" id="wecomReload">刷新</button>
         </div>
       </div>
@@ -234,20 +235,34 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         <button type="button" class="ghost mini" id="wecomNext">更晚</button>
       </div>
     </div>
-    <aside class="wecom-ai" id="wecomAiPanel" hidden>
-      <div class="wecom-ai-hd">
-        <div class="grow">
-          <div class="wecom-ai-title">AI 解读看板</div>
-          <div class="wecom-ai-sub" id="wecomAiSub">Gemini 读取当前日期窗内的会话</div>
-          <div class="wecom-ai-tabs">
-            <button type="button" class="wecom-ai-tab on" id="wecomAiTabRead" data-tab="read">本次解读</button>
-            <button type="button" class="wecom-ai-tab" id="wecomAiTabLog" data-tab="log">解读记录</button>
+    <aside class="wecom-rail" id="wecomRail" hidden>
+      <div class="wecom-rail-resizer" id="wecomRailResizer" title="拖动调整宽度"></div>
+      <div class="wecom-rail-hd">
+        <div class="wecom-rail-tabs">
+          <button type="button" class="wecom-rail-tab on" id="wecomRailTabAi" data-rail="ai">AI 解读</button>
+          <button type="button" class="wecom-rail-tab" id="wecomRailTabFiles" data-rail="files">文件汇总</button>
+        </div>
+        <button type="button" class="ghost mini" id="wecomRailClose" title="收起">收起</button>
+      </div>
+      <div class="wecom-rail-pane" id="wecomRailAi">
+        <div class="wecom-ai-hd">
+          <div class="grow">
+            <div class="wecom-ai-sub" id="wecomAiSub">Gemini 读取当前日期窗内的会话</div>
+            <div class="wecom-ai-tabs">
+              <button type="button" class="wecom-ai-tab on" id="wecomAiTabRead" data-tab="read">本次解读</button>
+              <button type="button" class="wecom-ai-tab" id="wecomAiTabLog" data-tab="log">解读记录</button>
+            </div>
           </div>
         </div>
-        <button type="button" class="ghost mini" id="wecomAiClose" title="收起">收起</button>
+        <div class="wecom-ai-body" id="wecomAiBody">
+          <div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>
+          <div class="wecom-ai-card"><h5>版本绑定</h5><div class="wecom-ai-bind-tabs"><button type="button" class="wecom-ai-bind-tab on">时间窗</button><button type="button" class="wecom-ai-bind-tab">编号匹配</button><button type="button" class="wecom-ai-bind-tab">语义上下文</button><button type="button" class="wecom-ai-bind-tab">并排</button></div><p>本次记录无结构化绑定</p></div>
+        </div>
       </div>
-      <div class="wecom-ai-body" id="wecomAiBody">
-        <div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>
+      <div class="wecom-rail-pane" id="wecomRailFiles" hidden>
+        <div id="wecomFileBox" class="wecom-files wecom-files-page">
+          <div class="wecom-empty">请先在左侧选择会话，然后点「文件汇总」。</div>
+        </div>
       </div>
     </aside>
   </div>
@@ -331,7 +346,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </div>
 
 <script src="/public/session.js?v=py55"></script>
-<script src="/public/wecom-board.js?v=py40"></script>
-<script src="/public/app.js?v=py71"></script>
+<script src="/public/wecom-board.js?v=py54"></script>
+<script src="/public/app.js?v=py74"></script>
 </body>
 </html>
