@@ -9,6 +9,7 @@ SESSION_DAYS = 7
 USER_RE = re.compile(r"^[A-Za-z0-9_]{3,32}$")
 NAME_RE = re.compile(r"^[\u4e00-\u9fa5A-Za-z0-9·•\s]{2,32}$")
 DEPT_RE = re.compile(r"^.{1,64}$")
+ROLES = ("user", "leader", "admin")
 ITER = 180000
 
 
@@ -85,6 +86,14 @@ def _now():
     return datetime.now()
 
 
+def _require_department(name: str) -> str:
+    from . import depts as DE
+    try:
+        return DE.require_known(name)
+    except DE.DeptError as e:
+        raise AuthError(e.message, e.status)
+
+
 def validate_register(body: dict) -> tuple[str, str, str, str]:
     username = str((body or {}).get("username") or "").strip()
     real_name = str((body or {}).get("realName") or (body or {}).get("real_name") or "").strip()
@@ -95,8 +104,7 @@ def validate_register(body: dict) -> tuple[str, str, str, str]:
         raise AuthError("用户名为 3–32 位字母、数字或下划线")
     if not NAME_RE.fullmatch(real_name):
         raise AuthError("请填写真实姓名（2–32 字）")
-    if not department or len(department) > 64:
-        raise AuthError("请填写部门（不超过 64 字）")
+    department = _require_department(department)
     if len(password) < 6 or len(password) > 64:
         raise AuthError("密码长度 6–64 位")
     if password != confirm:
@@ -126,12 +134,11 @@ def create_user(body: dict, actor: dict | None = None) -> dict:
         raise AuthError("用户名为 3–32 位字母、数字或下划线")
     if not NAME_RE.fullmatch(real_name):
         raise AuthError("请填写真实姓名（2–32 字）")
-    if not department or len(department) > 64:
-        raise AuthError("请填写部门（不超过 64 字）")
+    department = _require_department(department)
     if len(password) < 6 or len(password) > 64:
         raise AuthError("密码长度 6–64 位")
     role = str((body or {}).get("role") or "user")
-    if role not in ("user", "admin"):
+    if role not in ROLES:
         raise AuthError("角色无效")
     status = str((body or {}).get("status") or "active")
     if status not in ("active", "disabled"):
@@ -233,6 +240,11 @@ def portal_login(*, real_name: str, department: str, ticket: str, portal_id: str
         raise AuthError("协同中心未提供有效真实姓名")
     if not department or len(department) > 64:
         raise AuthError("协同中心未提供部门")
+    from . import depts as DE
+    try:
+        department = DE.ensure(department)
+    except DE.DeptError as e:
+        raise AuthError(e.message, e.status)
     if len(ticket) < 8:
         raise AuthError("协同中心会话无效，请从侧栏重新打开", 401)
     conn = db.connect()
@@ -408,14 +420,12 @@ def update_user(uid: int, body: dict, actor: dict) -> dict:
                 fields.append("real_name=%s")
                 args.append(nm)
             if "department" in body:
-                dep = str(body.get("department") or "").strip()
-                if not dep or len(dep) > 64:
-                    raise AuthError("部门不合法")
+                dep = _require_department(str(body.get("department") or "").strip())
                 fields.append("department=%s")
                 args.append(dep)
             if "role" in body:
                 role = str(body.get("role") or "")
-                if role not in ("user", "admin"):
+                if role not in ROLES:
                     raise AuthError("角色无效")
                 if row["role"] == "admin" and role != "admin" and _admin_count(cur) <= 1:
                     raise AuthError("不能取消最后一名管理员")

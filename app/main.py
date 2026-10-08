@@ -46,6 +46,7 @@ PUBLIC_PATHS = (
     "/login", "/register", "/portal",
     "/api/auth/login", "/api/auth/register",
     "/api/auth/portal-config", "/api/auth/portal-login",
+    "/api/departments",
     "/client-extract",
 )
 
@@ -179,19 +180,26 @@ async def api_project_proof_probe(request: Request):
     headers = generate_headers(cfg)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=8.0), trust_env=False) as client:
+            # 探测只确认服务与密钥；空名单会被 /documents 拒绝，这恰好说明走的是经历名单接口、不读简历
             r = await client.post(url, headers=headers, json={"letters": []})
     except httpx.HTTPError as e:
         return {"ok": False, "service_ok": False, "auth_ok": False, "error": "无法连接：" + str(e)[:160]}
     if r.status_code == 401:
         return {"ok": False, "service_ok": True, "auth_ok": False, "status": 401, "error": "服务可达，但 API Key 无效"}
+    detail = ""
+    try:
+        body = r.json()
+        if isinstance(body, dict):
+            detail = str(body.get("error") or body.get("detail") or body.get("message") or "")[:200]
+    except Exception:
+        detail = (r.text or "")[:200]
     if r.status_code >= 400:
-        detail = ""
-        try:
-            body = r.json()
-            if isinstance(body, dict):
-                detail = str(body.get("error") or body.get("detail") or "")[:160]
-        except Exception:
-            detail = (r.text or "")[:160]
+        blob = (detail + " " + (r.text or "")).lower()
+        if "letter" in blob or "经历名单" in detail:
+            return {
+                "ok": True, "service_ok": True, "auth_ok": True, "status": r.status_code,
+                "note": "接口可达，/documents 只接受已确定的经历名单（letters），不读简历、不读会话",
+            }
         return {"ok": False, "service_ok": True, "auth_ok": True, "status": r.status_code, "error": detail or ("HTTP " + str(r.status_code))}
     return {"ok": True, "service_ok": True, "auth_ok": True, "status": r.status_code}
 
@@ -233,3 +241,9 @@ def _startup():
         print("[wecom-watch] 值班已启动：聊天记录同步后增量扫描", flush=True)
     except Exception as e:
         print("[wecom-watch] 启动失败：" + str(e)[:200], flush=True)
+    try:
+        from .due_broadcast import start_due_broadcast
+        start_due_broadcast(asyncio.get_running_loop())
+        print("[due-broadcast] 交付播报调度已启动", flush=True)
+    except Exception as e:
+        print("[due-broadcast] 启动失败：" + str(e)[:200], flush=True)

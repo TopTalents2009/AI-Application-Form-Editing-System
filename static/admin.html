@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py97">
+<link rel="stylesheet" href="/public/style.css?v=py99">
 <style>
 :root{ --nav-w:216px; }
 *{box-sizing:border-box}
@@ -13,7 +13,7 @@
 
 /* ===== 顶栏 ===== */
 .topbar{
-  display:flex;align-items:center;gap:16px;padding:14px 28px;color:#fff;
+  display:flex;align-items:center;gap:16px;padding:14px 16px;color:#fff;
   background:linear-gradient(120deg,#14264f,#1f3b73 55%,#2450a4);
   box-shadow:0 2px 12px rgba(16,32,64,.18);
 }
@@ -38,12 +38,17 @@
 .topbar a.tbtn:hover,.topbar button.tbtn:hover{background:rgba(255,255,255,.22)}
 
 /* ===== 主体：内容 + 右侧菜单 ===== */
-.admin-body{flex:1;display:flex;gap:22px;align-items:flex-start;
-  width:100%;max-width:1400px;margin:0 auto;padding:24px 28px 44px;}
+.admin-body{flex:1;display:flex;gap:16px;align-items:flex-start;
+  width:100%;max-width:none;margin:0;padding:16px 12px 32px;}
 .content{flex:1;min-width:0}
 .content-sec{margin-bottom:34px;scroll-margin-top:20px}
 .sec-title{display:flex;align-items:center;gap:10px;margin:0 0 4px;font-size:20px;font-weight:700;color:var(--ink)}
 .sec-desc{margin:0 0 20px;font-size:13px;color:var(--sub)}
+.leader-row{display:grid;grid-template-columns:1.1fr 1fr 1.2fr auto;gap:8px;align-items:end;margin-bottom:8px}
+.leader-row input{width:100%;height:38px;border:1px solid #e2e8f2;border-radius:8px;padding:0 10px;font:inherit}
+.alert-kind{font-size:11px;color:#8a93a6;margin-top:2px}
+.alert-body{font-size:12px;color:#5b6577;line-height:1.5;white-space:pre-wrap;max-width:none}
+#alertLogBody td{vertical-align:top}
 
 /* ===== 右侧菜单 ===== */
 .sidenav{
@@ -179,6 +184,7 @@ table.tbl td.ops{overflow:visible;white-space:nowrap}
 .inp input,.inp select{height:42px}
 .inp textarea{padding:10px 12px;min-height:72px;resize:vertical;line-height:1.5}
 .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:#3c465a;padding-top:8px}
+.due-preview{white-space:pre-wrap;font-size:12px;line-height:1.55;background:#f6f7fb;border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:240px;overflow:auto;color:#3a4152;margin:0}
 .cfg-tag{
   font-size:11px;padding:2px 9px;border-radius:6px;background:#e9f0fc;color:var(--brand);font-weight:700;
   max-width:min(320px, 100%);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -207,7 +213,7 @@ table.tbl tr.task-files td{background:#f7f9fd;padding:0;white-space:normal;overf
 
 /* ===== 人员信息 ===== */
 .me-tag{color:var(--brand);font-size:11px;font-weight:700;margin-left:4px}
-.role-sel,.status-sel{padding:4px 6px;font-size:12.5px;border-radius:7px;border:1px solid #d7deea;background:#fff;font-family:inherit}
+.role-sel,.status-sel,.dept-sel{padding:4px 6px;font-size:12.5px;border-radius:7px;border:1px solid #d7deea;background:#fff;font-family:inherit}
 .reset-pw{width:120px;padding:5px 8px;font-size:12.5px;border:1px solid #d7deea;border-radius:7px;font-family:inherit}
 td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visible}
 .msg{font-size:13px;margin:0 0 12px;min-height:16px}
@@ -239,10 +245,14 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 
 /* ===== 各群记录看板 ===== */
 .wecom-status{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-bottom:14px;font-size:13px}
-.wecom-board{display:grid;grid-template-columns:280px 1fr;gap:0;align-items:start;border:1px solid #e6ebf4;border-radius:14px;overflow:hidden;background:#fff}
-.wecom-board.has-rail{grid-template-columns:280px minmax(0,1fr) minmax(280px,340px)}
-.wecom-rail{border-left:1px solid #e6ebf4;background:#f7f9fc;display:flex;flex-direction:column;min-width:0;max-height:560px}
+.wecom-board{display:grid;grid-template-columns:280px 1fr;gap:0;align-items:start;border:1px solid #e6ebf4;border-radius:14px;overflow:hidden;background:#fff;--wecom-rail-w:420px}
+.wecom-board.has-rail{grid-template-columns:280px minmax(0,1fr) var(--wecom-rail-w)}
+.wecom-rail{position:relative;border-left:1px solid #e6ebf4;background:#f7f9fc;display:flex;flex-direction:column;min-width:0;width:100%;height:640px;max-height:640px;overflow:hidden;align-self:start;box-sizing:border-box}
 .wecom-rail[hidden]{display:none !important}
+.wecom-rail-resizer{position:absolute;left:0;top:0;bottom:0;width:8px;margin-left:-4px;cursor:col-resize;z-index:3;touch-action:none}
+.wecom-rail-resizer:hover,.wecom-board.is-resizing-rail .wecom-rail-resizer{background:rgba(36,80,164,.18)}
+.wecom-board.is-resizing-rail{cursor:col-resize;user-select:none}
+.wecom-board.is-resizing-rail .wecom-rail,.wecom-board.is-resizing-rail .wecom-chat{pointer-events:none}
 .wecom-rail-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid #e6ebf4;background:#fff}
 .wecom-rail-tabs{display:flex;gap:6px;flex-wrap:wrap}
 .wecom-rail-tab{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer;color:#5b6577;font-family:inherit}
@@ -274,6 +284,11 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 .wecom-ai-tag.bad{background:#fdecee;color:var(--bad)}
 .wecom-ai-case{font-size:12.5px;padding:8px 0;border-bottom:1px dashed #e6ebf4}
 .wecom-ai-case:last-child{border-bottom:none}
+.wecom-ai-files-sec{margin-top:8px;padding-top:6px;border-top:1px dashed #e6ebf4}
+.wecom-ai-files-sec b{display:block;font-size:12.5px;color:#1d5cc0;margin-bottom:4px}
+.wecom-ai-file{font-size:12.5px;padding:5px 0;border-bottom:1px dashed #eef1f6}
+.wecom-ai-file .nm{font-weight:600;overflow-wrap:anywhere;word-break:break-word}
+.wecom-ai-file .why{color:#8a93a6;font-size:11.5px;margin-top:2px;line-height:1.45}
 .wecom-side{border-right:1px solid #e6ebf4;display:flex;flex-direction:column;min-width:0;height:640px;max-height:640px;overflow:hidden;background:#f7f9fc}
 .wecom-side-hd,.wecom-chat-hd{padding:12px 14px;border-bottom:1px solid #e6ebf4;background:#fff}
 .wecom-side-hd input[type="search"],.wecom-chat-hd input[type="text"],.wecom-chat-hd input[type="date"]{
@@ -416,7 +431,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
 
 /* ===== 响应式 ===== */
 @media (max-width:860px){
-  .admin-body{flex-direction:column-reverse;padding:16px 16px 36px}
+  .admin-body{flex-direction:column-reverse;padding:12px 10px 28px}
   .sidenav{position:static;width:100%;display:flex;flex-wrap:wrap;gap:6px;padding:8px}
   .sidenav .nav-cap,.sidenav .nav-foot{display:none}
   .nav-item{width:auto;margin:0}
@@ -506,9 +521,9 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
           <div class="user-create">
             <div class="f-row inp"><label>用户名</label><input id="newUserName" placeholder="如 zhangsan" maxlength="32" autocomplete="off"></div>
             <div class="f-row inp"><label>真实姓名</label><input id="newRealName" placeholder="2–32 字" maxlength="32" autocomplete="off"></div>
-            <div class="f-row inp"><label>部门</label><input id="newDept" placeholder="不超过 64 字" maxlength="64" autocomplete="off"></div>
+            <div class="f-row inp"><label>部门</label><select id="newDept"><option value="">请选择部门</option></select></div>
             <div class="f-row inp"><label>初始密码</label><input id="newPassword" type="password" placeholder="6–64 位" maxlength="64" autocomplete="new-password"></div>
-            <div class="f-row inp"><label>角色</label><select id="newRole"><option value="user">普通用户</option><option value="admin">管理员</option></select></div>
+            <div class="f-row inp"><label>角色</label><select id="newRole"><option value="user">普通用户</option><option value="leader">组长</option><option value="admin">管理员</option></select></div>
             <button type="button" class="btn-save" id="userCreate" style="letter-spacing:1px;padding:10px 16px">添加账号</button>
           </div>
           <div class="msg" id="msg"></div>
@@ -518,6 +533,23 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
                 <tr><th>ID</th><th>用户名</th><th>真实姓名</th><th>部门</th><th>角色</th><th>状态</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr>
               </thead>
               <tbody id="tbody"><tr><td colspan="9">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="acard">
+          <h3>部门</h3>
+          <p class="sec-desc" style="margin:0 0 12px">添加后可在账号与注册页下拉选择。仍有人占用的部门不能删除。</p>
+          <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;max-width:480px;margin-bottom:12px">
+            <div class="f-row inp" style="flex:1;min-width:200px;margin:0"><label>新部门</label><input id="deptNewName" maxlength="64" placeholder="1–64 字" autocomplete="off"></div>
+            <button type="button" class="btn-save" id="deptCreate" style="letter-spacing:1px;padding:10px 16px">添加</button>
+            <span class="msg" id="deptMsg" style="margin:0"></span>
+          </div>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th>部门</th><th style="width:88px">人数</th><th style="width:88px">操作</th></tr>
+              </thead>
+              <tbody id="deptBody"><tr><td colspan="3">加载中…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -735,6 +767,98 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         </div>
       </section>
 
+      <!-- 告警通知 -->
+      <section class="content-sec" id="sec-alert">
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>告警通知</h2>
+        <p class="sec-desc">任务失败、新用户反馈、值班待审、群内重要问题会推到企业微信告警群并 @ 组长。Webhook 相当于密钥，留空保存表示不修改。</p>
+        <div class="acard">
+          <h3>推送配置 <span id="alertStatusDot" style="margin-left:auto;font-size:12px;font-weight:600;color:#98a2b6">● 加载中</span></h3>
+          <div class="cfg-grid">
+            <div class="f-row"><label>开启推送</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="alertEnabled"> 有重要事件时发到告警群</div></div>
+            <div class="f-row"><label>最低级别</label><div class="inp"><select id="alertMinLevel">
+              <option value="P0">仅 P0（任务失败 / 群内重要问题）</option>
+              <option value="P1">P0 + P1（失败 / 反馈 / 待审 / 重要问题）</option>
+              <option value="P2">全部（含提醒）</option>
+            </select></div></div>
+            <div class="f-row span2"><label>Webhook（留空 = 不修改）</label><div class="inp"><input type="password" id="alertWebhook" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…" autocomplete="off"><div style="font-size:11px;color:#8a93a6;margin-top:4px" id="alertWebhookHint">群「… → 消息推送」里复制地址</div></div></div>
+            <div class="f-row"><label>去重（分钟）</label><div class="inp"><input type="number" id="alertDedupe" min="0" max="1440" placeholder="15"><div style="font-size:11px;color:#8a93a6;margin-top:4px">同类告警在此时间内不重复发</div></div></div>
+            <div class="f-row"><label>公开访问前缀</label><div class="inp"><input id="alertPublicBase" placeholder="如 https://你的门户域名，可空"><div style="font-size:11px;color:#8a93a6;margin-top:4px">消息里的任务链接前缀；留空只写 /t/任务id</div></div></div>
+            <div class="f-row span2"><label>@ 组长（按部门匹配，部门填 * 为默认）</label>
+              <div>
+                <div id="alertLeaders"></div>
+                <button type="button" class="mini" id="alertLeaderAdd">添加一行</button>
+                <div style="font-size:11px;color:#8a93a6;margin-top:6px">userid 是企微账号，不是显示名。匹配不到部门时用 * 那一行。</div>
+              </div>
+            </div>
+          </div>
+          <div class="cfg-save-row" style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button type="button" class="btn-save" id="alertSaveBtn">保存告警配置</button>
+            <button type="button" class="mini" id="alertTestBtn">试发一条</button>
+            <span class="msg" id="alertMsg" style="margin:0"></span>
+          </div>
+        </div>
+        <div class="acard">
+          <h3>规则3 · 重要问题自动通知组长</h3>
+          <p class="sec-desc" style="margin:0 0 12px">值班扫描关注群新消息时，命中下列关键词即发 P0 到告警群。会从该群会话里找出昵称含「组长」的发送者，提取手机号后用企微手机号 @（如「申报一组组长-小唐18198156910」）。昵称无手机号时，再回落后台「@ 组长」里部门为 * 的默认 userid。「？」只匹配整句问号或连续问号，避免普通问句刷屏。</p>
+          <div class="cfg-grid">
+            <div class="f-row"><label>开启规则</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="issueWatchEnabled" checked> 群内催问 / 质疑时通知组长</div></div>
+            <div class="f-row span2"><label>关键词（一行一条）</label>
+              <div class="inp">
+                <textarea id="issueWatchKeywords" rows="12" style="width:100%;min-height:180px;font:12px/1.5 Consolas,monospace;padding:8px 10px;border:1px solid #d7deea;border-radius:8px;resize:vertical" placeholder="低级错误"></textarea>
+                <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+                  <button type="button" class="mini" id="issueWatchReset">恢复默认词表</button>
+                  <span style="font-size:11px;color:#8a93a6">斜杠表示同一句的两种说法，如「今天能交/给我吗」</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="acard">
+          <h3>交付日期定时播报 <span id="dueBcDot" style="margin-left:auto;font-size:12px;font-weight:600;color:#98a2b6">● 加载中</span></h3>
+          <p class="sec-desc" style="margin:0 0 12px">走上面同一条告警群 Webhook。按「创建时间 + SLA 工作日」估算预计交付，到点发到告警群。</p>
+          <div class="cfg-grid">
+            <div class="f-row"><label>开启定时</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="dueBcEnabled"> 每天按时刻自动播报</div></div>
+            <div class="f-row"><label>播报时刻</label><div class="inp"><input id="dueBcTimes" placeholder="09:30,18:00"><div style="font-size:11px;color:#8a93a6;margin-top:4px">多个时刻用逗号分隔，24 小时制</div></div></div>
+            <div class="f-row"><label>SLA（工作日）</label><div class="inp"><input type="number" id="dueBcSla" min="0" max="30" placeholder="1"><div style="font-size:11px;color:#8a93a6;margin-top:4px">预计交付 = 任务创建 + 该天数</div></div></div>
+            <div class="f-row"><label>只看最近（天）</label><div class="inp"><input type="number" id="dueBcRecent" min="0" max="365" placeholder="14"><div style="font-size:11px;color:#8a93a6;margin-top:4px">0 表示不限制；建议 14，避免把很久以前的任务都列出来</div></div></div>
+            <div class="f-row"><label>列表上限</label><div class="inp"><input type="number" id="dueBcMax" min="5" max="40" placeholder="20"></div></div>
+            <div class="f-row"><label>周末</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="dueBcSkipWeekend" checked> 周六日不播报</div></div>
+            <div class="f-row"><label>范围</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="dueBcWecomOnly"> 只播企业微信建的任务</div></div>
+            <div class="f-row"><label>空列表</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="dueBcSendEmpty"> 没有待交付也发一条</div></div>
+            <div class="f-row span2"><label>当前预览</label>
+              <div>
+                <pre class="due-preview" id="dueBcPreview">加载中…</pre>
+                <div style="font-size:11px;color:#8a93a6;margin-top:6px" id="dueBcHint"></div>
+              </div>
+            </div>
+          </div>
+          <div class="cfg-save-row" style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button type="button" class="btn-save" id="dueBcSaveBtn">保存播报配置</button>
+            <button type="button" class="mini" id="dueBcRunBtn">立即播报</button>
+            <button type="button" class="mini" id="dueBcTestBtn">试发一条</button>
+            <span class="msg" id="dueBcMsg" style="margin:0"></span>
+          </div>
+        </div>
+        <div class="acard">
+          <h3>发送日志
+            <span style="flex:1"></span>
+            <button type="button" class="mini alert-log-filter active" data-st="">全部</button>
+            <button type="button" class="mini alert-log-filter" data-st="ok">成功</button>
+            <button type="button" class="mini alert-log-filter" data-st="fail">失败</button>
+            <button type="button" class="mini" id="alertLogRefresh">刷新</button>
+            <button type="button" class="mini" id="alertLogClear">清空日志</button>
+          </h3>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th style="width:150px">时间</th><th style="width:56px">级别</th><th>内容</th><th style="width:88px">结果</th><th>说明</th></tr>
+              </thead>
+              <tbody id="alertLogBody"><tr><td colspan="5">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- 模型配置 -->
       <section class="content-sec" id="sec-config">
         <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>模型配置</h2>
@@ -791,6 +915,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       <button type="button" class="nav-item" data-sec="wecom"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>会话记录</button>
       <button type="button" class="nav-item" data-sec="files"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8"/></svg>文件汇总</button>
       <button type="button" class="nav-item" data-sec="openapi"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>开放 API<span class="nav-count" id="apiReqBadge" hidden></span></button>
+      <button type="button" class="nav-item" data-sec="alert"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>告警通知</button>
       <button type="button" class="nav-item" data-sec="config"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型配置</button>
       <button type="button" class="nav-item" data-sec="system"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>系统信息</button>
       <div class="nav-foot">本地单机服务<br>原件只读 · 严禁编造数据</div>
@@ -841,7 +966,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   </div>
 
 <script src="/public/session.js?v=py54"></script>
-<script src="/public/wecom-board.js?v=py54"></script>
+<script src="/public/wecom-board.js?v=py61"></script>
 <script>
 (function () {
   var me = null;
@@ -851,6 +976,14 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     failed: ['st-failed', '失败'], matching: ['st-running', '配对中']
   };
   function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function roleLabel(r) {
+    return r === 'admin' ? '管理员' : (r === 'leader' ? '组长' : '普通用户');
+  }
+  function roleOptions(cur) {
+    return [['user', '普通用户'], ['leader', '组长'], ['admin', '管理员']].map(function (v) {
+      return '<option value="' + v[0] + '"' + (cur === v[0] ? ' selected' : '') + '>' + v[1] + '</option>';
+    }).join('');
+  }
   function taskOrigin(t) {
     if (!t) return '人工提交';
     var name = String(t.wecomSession || '').trim();
@@ -910,6 +1043,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       if (window.loadWecomWatchPanel) window.loadWecomWatchPanel();
     } },
     { key: 'openapi', sec: document.getElementById('sec-openapi'), load: function () { loadOpenApi(true); } },
+    { key: 'alert', sec: document.getElementById('sec-alert'), load: function () { loadAlertPanel(true); } },
     { key: 'system', sec: document.getElementById('sec-system'), load: function () { loadSystem(); } }
   ];
   function arInView(el) {
@@ -1042,6 +1176,10 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   }
   window.addEventListener('scroll', spyNav, { passive: true });
   spyNav();
+  if (location.hash) {
+    var hsec = document.getElementById(location.hash.replace(/^#/, ''));
+    if (hsec) setTimeout(function () { hsec.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80);
+  }
 
   /* ===== 登录校验 ===== */
   fetch('/api/auth/me').then(function (r) {
@@ -1052,7 +1190,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     if (me.role !== 'admin') {
       document.body.innerHTML = '<div style="max-width:420px;margin:80px auto;text-align:center;font-family:inherit">' +
         '<div style="font-size:44px;font-weight:700">权限受限</div><h2 style="margin:12px 0">需要管理员权限</h2>' +
-        '<p style="color:#5b6577;font-size:14px">当前账号：' + esc(me.realName || me.username || '') + '（' + esc(me.role === 'admin' ? '管理员' : '普通用户') + '）</p>' +
+        '<p style="color:#5b6577;font-size:14px">当前账号：' + esc(me.realName || me.username || '') + '（' + esc(roleLabel(me.role)) + '）</p>' +
         '<a href="/" style="color:#2450a4;font-weight:700">← 返回系统</a></div>';
       return;
     }
@@ -1066,6 +1204,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     if (window.loadWecomBoard) window.loadWecomBoard();
     loadOpenApi();
     loadSystem();
+    loadAlertPanel();
     loadConfig();
     initAutoRefresh();
   setInterval(function () {
@@ -1244,8 +1383,51 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   /* ===== 人员信息 ===== */
   var userCount = 0;
   var totals = { tasks: '—', batches: '—' };
+  var deptCache = [];
+  function deptOptions(cur) {
+    var names = deptCache.map(function (d) { return d.name; });
+    if (cur && names.indexOf(cur) < 0) names.unshift(cur);
+    var html = '<option value="">请选择部门</option>';
+    names.forEach(function (n) {
+      html += '<option value="' + escAttr(n) + '"' + (cur === n ? ' selected' : '') + '>' + esc(n) + '</option>';
+    });
+    return html;
+  }
+  function fillNewDeptSelect() {
+    var sel = document.getElementById('newDept');
+    if (!sel) return;
+    var cur = sel.value;
+    sel.innerHTML = deptOptions(cur);
+    if (cur) sel.value = cur;
+  }
+  function sayDept(ok, t) {
+    var el = document.getElementById('deptMsg');
+    if (!el) return;
+    el.className = 'msg ' + (ok ? 'ok' : 'bad');
+    el.textContent = t;
+    setTimeout(function () { if (el.textContent === t) el.textContent = ''; }, 4000);
+  }
+  function renderDeptTable() {
+    var body = document.getElementById('deptBody');
+    if (!body) return;
+    if (!deptCache.length) {
+      body.innerHTML = '<tr><td colspan="3" style="color:#8a93a6">暂无部门，请先添加</td></tr>';
+      return;
+    }
+    body.innerHTML = deptCache.map(function (d) {
+      return '<tr><td>' + esc(d.name) + '</td><td>' + (d.userCount || 0) + '</td><td class="ops">' +
+        '<button type="button" class="mini" data-dept-del="' + d.id + '">删除</button></td></tr>';
+    }).join('');
+  }
   function loadUsers() {
-    fetch('/api/admin/users').then(function (r) { return r.json(); }).then(function (j) {
+    Promise.all([
+      fetch('/api/admin/users', { cache: 'no-store' }).then(function (r) { return r.json(); }),
+      fetch('/api/admin/departments', { cache: 'no-store' }).then(function (r) { return r.json(); })
+    ]).then(function (pair) {
+      var j = pair[0], dj = pair[1];
+      if (dj && dj.ok) deptCache = dj.items || [];
+      fillNewDeptSelect();
+      renderDeptTable();
       if (!j.ok) { say(false, j.detail || '加载失败'); return; }
       userCount = (j.users || []).length;
       renderUsers(j.users || []);
@@ -1261,11 +1443,8 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         '<td>' + u.id + '</td>' +
         '<td class="td-clip" title="' + esc(u.username) + '">' + esc(u.username) + '</td>' +
         '<td class="td-name" title="' + esc(u.realName) + '">' + esc(u.realName) + '</td>' +
-        '<td class="td-name" title="' + esc(u.department) + '">' + esc(u.department) + '</td>' +
-        '<td><select class="role-sel" data-id="' + u.id + '">' +
-          '<option value="user"' + (u.role === 'user' ? ' selected' : '') + '>普通用户</option>' +
-          '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>管理员</option>' +
-        '</select></td>' +
+        '<td><select class="dept-sel" data-id="' + u.id + '">' + deptOptions(u.department) + '</select></td>' +
+        '<td><select class="role-sel" data-id="' + u.id + '">' + roleOptions(u.role) + '</select></td>' +
         '<td><select class="status-sel" data-id="' + u.id + '">' +
           '<option value="active"' + (u.status === 'active' ? ' selected' : '') + '>启用</option>' +
           '<option value="disabled"' + (u.status === 'disabled' ? ' selected' : '') + '>停用</option>' +
@@ -1318,9 +1497,10 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   });
   document.getElementById('tbody').addEventListener('change', function (e) {
     var sel = e.target;
-    if (!sel.classList.contains('role-sel') && !sel.classList.contains('status-sel')) return;
+    if (!sel.classList.contains('role-sel') && !sel.classList.contains('status-sel') && !sel.classList.contains('dept-sel')) return;
     var id = sel.getAttribute('data-id');
-    var body = sel.classList.contains('role-sel') ? { role: sel.value } : { status: sel.value };
+    var body = sel.classList.contains('role-sel') ? { role: sel.value }
+      : (sel.classList.contains('dept-sel') ? { department: sel.value } : { status: sel.value });
     fetch('/api/admin/users/' + id, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
@@ -1355,6 +1535,41 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       });
     }
   });
+  var deptCreateBtn = document.getElementById('deptCreate');
+  if (deptCreateBtn) {
+    deptCreateBtn.addEventListener('click', function () {
+      var inp = document.getElementById('deptNewName');
+      var name = ((inp && inp.value) || '').trim();
+      if (!name) { sayDept(false, '请填写部门名称'); return; }
+      deptCreateBtn.disabled = true;
+      fetch('/api/admin/departments', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        if (res.ok && res.data.ok) {
+          sayDept(true, '已添加');
+          if (inp) inp.value = '';
+          loadUsers();
+        } else sayDept(false, (res.data && res.data.detail) || '添加失败');
+      }).catch(function (e) {
+        sayDept(false, e.message || '添加失败');
+      }).finally(function () { deptCreateBtn.disabled = false; });
+    });
+  }
+  var deptBody = document.getElementById('deptBody');
+  if (deptBody) {
+    deptBody.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-dept-del]') : null;
+      if (!btn) return;
+      if (!confirm('确定删除该部门？')) return;
+      fetch('/api/admin/departments/' + btn.getAttribute('data-dept-del'), { method: 'DELETE' })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+        .then(function (res) {
+          if (res.ok && res.data.ok) { sayDept(true, '已删除'); loadUsers(); }
+          else sayDept(false, (res.data && res.data.detail) || '删除失败');
+        });
+    });
+  }
 
   /* ===== 开放 API ===== */
   var apiKeysCache = [];
@@ -1831,6 +2046,330 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       kv('账号总数', userCount + ' 人') +
       kv('任务存储', totals.tasks + ' 个任务') +
       kv('批次存储', totals.batches + ' 个批次');
+  }
+
+  var alertLogFilter = '';
+  function alertKindLabel(k) {
+    return ({ task_failed: '任务失败', feedback: '用户反馈', watch_pending: '值班待审', group_issue: '群内重要问题', test: '试发' }[k] || k || '');
+  }
+  function alertFormDirty() {
+    var w = document.getElementById('alertWebhook');
+    if (w && (w.value || '').trim()) return true;
+    var sec = document.getElementById('sec-alert');
+    var a = document.activeElement;
+    return !!(sec && a && sec.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName || ''));
+  }
+  function renderAlertLeaders(rows) {
+    var box = document.getElementById('alertLeaders');
+    if (!box) return;
+    var list = (rows && rows.length) ? rows : [{ department: '*', name: '', userid: '' }];
+    box.innerHTML = list.map(function (row) {
+      return '<div class="leader-row">' +
+        '<div class="f-row" style="margin:0"><label>部门</label><div class="inp"><input data-k="department" value="' + escAttr(row.department || '') + '" placeholder="如 申报部 或 *"></div></div>' +
+        '<div class="f-row" style="margin:0"><label>姓名</label><div class="inp"><input data-k="name" value="' + escAttr(row.name || '') + '" placeholder="显示用"></div></div>' +
+        '<div class="f-row" style="margin:0"><label>userid</label><div class="inp"><input data-k="userid" value="' + escAttr(row.userid || '') + '" placeholder="企微账号"></div></div>' +
+        '<button type="button" class="mini alert-leader-del">删除</button>' +
+        '</div>';
+    }).join('');
+  }
+  var ISSUE_WATCH_DEFAULTS = ['低级错误','怎么回事','什么时候','？','到底','尽快','急','人呢？','今天能交/给我吗','涉嫌造假','重复','效率差'];
+  function fillIssueWatch(d) {
+    d = d || {};
+    var en = document.getElementById('issueWatchEnabled');
+    var ta = document.getElementById('issueWatchKeywords');
+    if (en) en.checked = d.enabled !== false;
+    if (ta) {
+      var kws = (d.keywords && d.keywords.length) ? d.keywords : (d.defaults || ISSUE_WATCH_DEFAULTS);
+      ta.value = kws.join('\n');
+    }
+  }
+  function collectIssueWatch() {
+    return {
+      enabled: !!(document.getElementById('issueWatchEnabled') || {}).checked,
+      level: 'P0',
+      keywords: ((document.getElementById('issueWatchKeywords') || {}).value || '').trim()
+    };
+  }
+  function collectAlertLeaders() {
+    var box = document.getElementById('alertLeaders');
+    var out = [];
+    if (!box) return out;
+    box.querySelectorAll('.leader-row').forEach(function (row) {
+      out.push({
+        department: ((row.querySelector('[data-k="department"]') || {}).value || '').trim(),
+        name: ((row.querySelector('[data-k="name"]') || {}).value || '').trim(),
+        userid: ((row.querySelector('[data-k="userid"]') || {}).value || '').trim()
+      });
+    });
+    return out;
+  }
+  function setDueBcDot(d, parent) {
+    var el = document.getElementById('dueBcDot');
+    if (!el) return;
+    var hookOk = !!(d && d.webhookReady) || !!(parent && (parent.hasWebhook || parent.configured));
+    if (!hookOk) { el.style.color = 'var(--bad)'; el.textContent = '● 未配置 Webhook'; return; }
+    if (!d || !d.enabled) { el.style.color = '#d97706'; el.textContent = '● 已关闭（Webhook 可用）'; return; }
+    el.style.color = 'var(--ok)'; el.textContent = '● 定时开启 · ' + ((d.times || []).join('、') || '—');
+  }
+  function fillDueBroadcast(d, quiet, parent) {
+    d = d || {};
+    if (parent && (parent.hasWebhook || parent.configured)) d.webhookReady = true;
+    setDueBcDot(d, parent);
+    var en = document.getElementById('dueBcEnabled');
+    var tm = document.getElementById('dueBcTimes');
+    var sla = document.getElementById('dueBcSla');
+    var rec = document.getElementById('dueBcRecent');
+    var mx = document.getElementById('dueBcMax');
+    var wk = document.getElementById('dueBcSkipWeekend');
+    var wo = document.getElementById('dueBcWecomOnly');
+    var em = document.getElementById('dueBcSendEmpty');
+    var pre = document.getElementById('dueBcPreview');
+    var hint = document.getElementById('dueBcHint');
+    if (!quiet) {
+      if (en) en.checked = !!d.enabled;
+      if (tm) tm.value = (d.times || []).join(',');
+      if (sla) sla.value = d.slaWorkdays == null ? 1 : d.slaWorkdays;
+      if (rec) rec.value = d.recentDays == null ? 14 : d.recentDays;
+      if (mx) mx.value = d.maxLines == null ? 20 : d.maxLines;
+      if (wk) wk.checked = d.skipWeekend !== false;
+      if (wo) wo.checked = !!d.wecomOnly;
+      if (em) em.checked = !!d.sendIfEmpty;
+    }
+    if (pre) pre.textContent = d.preview || '（暂无预览）';
+    if (hint) {
+      var bits = [];
+      if (d.lastRunAt) bits.push('上次 ' + d.lastRunAt);
+      if (d.lastNote) bits.push(d.lastNote);
+      if (d.lastError) bits.push('错误：' + d.lastError);
+      bits.push('待交付 ' + (d.pending || 0) + ' 份');
+      hint.textContent = bits.join(' · ');
+    }
+  }
+  function collectDueBroadcast() {
+    return {
+      enabled: !!(document.getElementById('dueBcEnabled') || {}).checked,
+      times: ((document.getElementById('dueBcTimes') || {}).value || '').trim(),
+      slaWorkdays: Number((document.getElementById('dueBcSla') || {}).value || 1),
+      recentDays: Number((document.getElementById('dueBcRecent') || {}).value || 14),
+      maxLines: Number((document.getElementById('dueBcMax') || {}).value || 20),
+      skipWeekend: !!(document.getElementById('dueBcSkipWeekend') || {}).checked,
+      wecomOnly: !!(document.getElementById('dueBcWecomOnly') || {}).checked,
+      sendIfEmpty: !!(document.getElementById('dueBcSendEmpty') || {}).checked
+    };
+  }
+  function setAlertDot(j) {
+    var el = document.getElementById('alertStatusDot');
+    if (!el) return;
+    if (!j || !j.configured) { el.style.color = 'var(--bad)'; el.textContent = '● 未配置 Webhook'; return; }
+    if (!j.enabled) { el.style.color = '#d97706'; el.textContent = '● 已配置但关闭'; return; }
+    el.style.color = 'var(--ok)'; el.textContent = '● 推送开启';
+  }
+  function renderAlertLogs(logs) {
+    var body = document.getElementById('alertLogBody');
+    if (!body) return;
+    if (!logs || !logs.length) {
+      body.innerHTML = '<tr><td colspan="5" style="color:#8a93a6">尚无发送记录</td></tr>';
+      return;
+    }
+    body.innerHTML = logs.map(function (row) {
+      var ok = !!row.ok;
+      var tags = [];
+      if (row.mentionedMobile && row.mentionedMobile.length) {
+        tags = tags.concat(row.mentionedMobile.map(function (m) { return '@' + m; }));
+      }
+      if (row.mentioned && row.mentioned.length) {
+        tags = tags.concat(row.mentioned.map(function (m) { return '@' + m; }));
+      }
+      var extra = ok ? (tags.length ? tags.join(' ') : '—') : esc(row.error || '失败');
+      var bodyTxt = esc(row.body || '');
+      return '<tr>' +
+        '<td>' + esc(row.at || '') + '</td>' +
+        '<td><strong>' + esc(row.level || '') + '</strong><div class="alert-kind">' + esc(alertKindLabel(row.kind)) + '</div></td>' +
+        '<td><div>' + esc(row.title || '') + '</div>' + (bodyTxt ? '<div class="alert-body">' + bodyTxt + '</div>' : '') + '</td>' +
+        '<td>' + (ok ? '<span class="dot-ok">成功</span>' : '<span class="dot-bad">失败</span>') + '</td>' +
+        '<td>' + extra + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+  function loadAlertPanel(quiet) {
+    fetch('/api/admin/alert', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) throw new Error((j && j.detail) || '无法读取告警配置');
+      setAlertDot(j);
+      if (!quiet || !alertFormDirty()) {
+        var en = document.getElementById('alertEnabled');
+        var lv = document.getElementById('alertMinLevel');
+        var du = document.getElementById('alertDedupe');
+        var pb = document.getElementById('alertPublicBase');
+        var hint = document.getElementById('alertWebhookHint');
+        var hook = document.getElementById('alertWebhook');
+        if (en) en.checked = !!j.enabled;
+        if (lv) lv.value = j.minLevel || 'P1';
+        if (du) du.value = j.dedupeMinutes == null ? 15 : j.dedupeMinutes;
+        if (pb) pb.value = j.publicBaseUrl || '';
+        if (hint) hint.textContent = j.configured
+          ? ('当前密钥尾号 ' + (j.webhookHint || '已配置') + ' · 留空保存不修改')
+          : '群「… → 消息推送」里复制地址';
+        if (hook) hook.placeholder = j.configured ? '已配置，留空不修改' : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…';
+        renderAlertLeaders(j.leaders);
+      }
+      if (!quiet || !alertFormDirty()) fillIssueWatch(j.issueWatch);
+      fillDueBroadcast(j.dueBroadcast, quiet, j);
+      var logs = j.logs || [];
+      if (alertLogFilter === 'ok') logs = logs.filter(function (x) { return x.ok; });
+      if (alertLogFilter === 'fail') logs = logs.filter(function (x) { return !x.ok; });
+      renderAlertLogs(logs);
+    }).catch(function (e) {
+      setAlertDot({ configured: false });
+      var body = document.getElementById('alertLogBody');
+      if (body && !quiet) body.innerHTML = '<tr><td colspan="5" class="dot-bad">' + esc(e.message || '加载失败') + '</td></tr>';
+    });
+  }
+  var alertSaveBtn = document.getElementById('alertSaveBtn');
+  if (alertSaveBtn) {
+    alertSaveBtn.addEventListener('click', function () {
+      var msg = document.getElementById('alertMsg');
+      var payload = {
+        enabled: !!(document.getElementById('alertEnabled') || {}).checked,
+        minLevel: (document.getElementById('alertMinLevel') || {}).value || 'P1',
+        dedupeMinutes: Number((document.getElementById('alertDedupe') || {}).value || 15),
+        publicBaseUrl: ((document.getElementById('alertPublicBase') || {}).value || '').trim(),
+        leaders: collectAlertLeaders(),
+        issueWatch: collectIssueWatch()
+      };
+      var hook = ((document.getElementById('alertWebhook') || {}).value || '').trim();
+      if (hook) payload.webhook = hook;
+      alertSaveBtn.disabled = true;
+      postConfig({ alert: payload }).then(function (res) {
+        if (msg) {
+          msg.className = 'msg ' + (res.ok ? 'ok' : 'bad');
+          msg.textContent = res.ok ? '已保存' : ((res.data && res.data.detail) || '保存失败');
+        }
+        if (res.ok) {
+          var w = document.getElementById('alertWebhook');
+          if (w) w.value = '';
+          loadAlertPanel();
+        }
+      }).catch(function (e) {
+        if (msg) { msg.className = 'msg bad'; msg.textContent = e.message || '保存失败'; }
+      }).finally(function () { alertSaveBtn.disabled = false; });
+    });
+  }
+  var alertTestBtn = document.getElementById('alertTestBtn');
+  if (alertTestBtn) {
+    alertTestBtn.addEventListener('click', function () {
+      var msg = document.getElementById('alertMsg');
+      alertTestBtn.disabled = true;
+      fetch('/api/admin/alert/test', { method: 'POST' })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+        .then(function (res) {
+          if (msg) {
+            msg.className = 'msg ' + (res.ok ? 'ok' : 'bad');
+            msg.textContent = res.ok ? '已发到告警群' : ((res.data && res.data.detail) || '发送失败');
+          }
+          loadAlertPanel(true);
+        })
+        .catch(function (e) {
+          if (msg) { msg.className = 'msg bad'; msg.textContent = e.message || '发送失败'; }
+        })
+        .finally(function () { alertTestBtn.disabled = false; });
+    });
+  }
+  var issueWatchReset = document.getElementById('issueWatchReset');
+  if (issueWatchReset) {
+    issueWatchReset.addEventListener('click', function () {
+      var ta = document.getElementById('issueWatchKeywords');
+      var en = document.getElementById('issueWatchEnabled');
+      if (ta) ta.value = ISSUE_WATCH_DEFAULTS.join('\n');
+      if (en) en.checked = true;
+    });
+  }
+  var dueBcSaveBtn = document.getElementById('dueBcSaveBtn');
+  if (dueBcSaveBtn) {
+    dueBcSaveBtn.addEventListener('click', function () {
+      var msg = document.getElementById('dueBcMsg');
+      dueBcSaveBtn.disabled = true;
+      postConfig({ alert: { dueBroadcast: collectDueBroadcast() } }).then(function (res) {
+        if (msg) {
+          msg.className = 'msg ' + (res.ok ? 'ok' : 'bad');
+          msg.textContent = res.ok ? '已保存' : ((res.data && res.data.detail) || '保存失败');
+        }
+        if (res.ok) loadAlertPanel();
+      }).catch(function (e) {
+        if (msg) { msg.className = 'msg bad'; msg.textContent = e.message || '保存失败'; }
+      }).finally(function () { dueBcSaveBtn.disabled = false; });
+    });
+  }
+  function dueBcPost(url, btn, okText) {
+    var msg = document.getElementById('dueBcMsg');
+    if (btn) btn.disabled = true;
+    fetch(url, { method: 'POST' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
+      .then(function (res) {
+        if (msg) {
+          msg.className = 'msg ' + (res.ok ? 'ok' : 'bad');
+          msg.textContent = res.ok
+            ? (okText + (res.data && res.data.skipped === 'empty' ? '（列表为空未发送）' : ''))
+            : ((res.data && res.data.detail) || '发送失败');
+        }
+        loadAlertPanel(true);
+      })
+      .catch(function (e) {
+        if (msg) { msg.className = 'msg bad'; msg.textContent = e.message || '发送失败'; }
+      })
+      .finally(function () { if (btn) btn.disabled = false; });
+  }
+  var dueBcTestBtn = document.getElementById('dueBcTestBtn');
+  if (dueBcTestBtn) dueBcTestBtn.addEventListener('click', function () {
+    dueBcPost('/api/admin/due-broadcast/test', dueBcTestBtn, '已试发到告警群');
+  });
+  var dueBcRunBtn = document.getElementById('dueBcRunBtn');
+  if (dueBcRunBtn) dueBcRunBtn.addEventListener('click', function () {
+    if (!confirm('按当前规则立即发一条正式播报到告警群？')) return;
+    dueBcPost('/api/admin/due-broadcast/run', dueBcRunBtn, '已播报到告警群');
+  });
+  var alertLeaderBox = document.getElementById('alertLeaders');
+  if (alertLeaderBox) {
+    alertLeaderBox.addEventListener('click', function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest('.alert-leader-del') : null;
+      if (!btn) return;
+      var row = btn.closest('.leader-row');
+      if (row) row.remove();
+      if (!alertLeaderBox.querySelector('.leader-row')) renderAlertLeaders([]);
+    });
+  }
+  var alertLeaderAdd = document.getElementById('alertLeaderAdd');
+  if (alertLeaderAdd) {
+    alertLeaderAdd.addEventListener('click', function () {
+      var box = document.getElementById('alertLeaders');
+      if (!box) return;
+      var wrap = document.createElement('div');
+      wrap.innerHTML = '<div class="leader-row">' +
+        '<div class="f-row" style="margin:0"><label>部门</label><div class="inp"><input data-k="department" placeholder="如 申报部 或 *"></div></div>' +
+        '<div class="f-row" style="margin:0"><label>姓名</label><div class="inp"><input data-k="name" placeholder="显示用"></div></div>' +
+        '<div class="f-row" style="margin:0"><label>userid</label><div class="inp"><input data-k="userid" placeholder="企微账号"></div></div>' +
+        '<button type="button" class="mini alert-leader-del">删除</button>' +
+        '</div>';
+      box.appendChild(wrap.firstChild);
+    });
+  }
+  document.querySelectorAll('.alert-log-filter').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      alertLogFilter = btn.getAttribute('data-st') || '';
+      document.querySelectorAll('.alert-log-filter').forEach(function (b) { b.classList.toggle('active', b === btn); });
+      loadAlertPanel(true);
+    });
+  });
+  var alertLogRefresh = document.getElementById('alertLogRefresh');
+  if (alertLogRefresh) alertLogRefresh.addEventListener('click', function () { loadAlertPanel(true); });
+  var alertLogClear = document.getElementById('alertLogClear');
+  if (alertLogClear) {
+    alertLogClear.addEventListener('click', function () {
+      if (!confirm('清空本地发送日志？不影响已发出的群消息。')) return;
+      fetch('/api/admin/alert/logs', { method: 'DELETE' })
+        .then(function (r) { return r.json(); })
+        .then(function () { loadAlertPanel(true); })
+        .catch(function () {});
+    });
   }
 
   /* ===== 用户反馈 ===== */
@@ -2484,13 +3023,11 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       '<div class="acard">' +
         '<h3>项目证明 API ' +
           '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (g.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (g.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">意见点名缺项目证明时，人才库命中后仍会联网检索，随后调用生成接口。意见写「不必再联网检索」时跳过检索、仍生成。密钥留空表示不修改，界面不回显。</p>' +
+        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">调用 <code>/api/external/documents</code>，只传已确定的经历名单（letters / projects），不读简历、不读会话。人才库命中来华前单位及主持/参与项目后才会生成。密钥留空表示不修改。</p>' +
         '<div class="cfg-grid">' +
           '<div class="f-row span2"><label>生成接口 Base URL</label><div class="inp"><input data-f="ppGen" data-k="baseUrl" value="' + esc(g.baseUrl || '') + '" placeholder="http://192.168.2.62:3602"></div></div>' +
           '<div class="f-row span2"><label>生成接口 API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="ppGen" data-k="apiKey" value="" placeholder="' + (g.hasKey ? '••••••••（已配置）' : '填入密钥') + '"></div></div>' +
-          '<div class="f-row"><label>有项目时的路径</label><div class="inp"><input data-f="ppGen" data-k="path" value="' + esc(g.path || '') + '" placeholder="/api/external/documents"></div></div>' +
-          '<div class="f-row"><label>只有简历时的路径</label><div class="inp"><input data-f="ppGen" data-k="generatePath" value="' + esc(g.generatePath || '') + '" placeholder="/api/external/generate"></div></div>' +
-          '<div class="f-row"><label>先列项目的路径</label><div class="inp"><input data-f="ppGen" data-k="projectsPath" value="' + esc(g.projectsPath || '') + '" placeholder="/api/external/projects"></div></div>' +
+          '<div class="f-row"><label>documents 路径</label><div class="inp"><input data-f="ppGen" data-k="path" value="' + esc(g.path || '') + '" placeholder="/api/external/documents"></div></div>' +
           '<div class="f-row"><label>生成超时（秒）</label><div class="inp"><input data-f="ppGen" data-k="timeoutSec" value="' + esc(g.timeoutSec || 300) + '" placeholder="300"></div></div>' +
           '<div class="f-row span2"><label>CodeBuddy 命令</label><div class="inp"><input data-f="ppCb" data-k="cmd" value="' + esc(cb.cmd || '') + '" placeholder="codebuddy.cmd"></div></div>' +
           '<div class="f-row"><label>检索超时（秒）</label><div class="inp"><input data-f="ppCb" data-k="timeoutSec" value="' + esc(cb.timeoutSec || 180) + '" placeholder="180"></div></div>' +
@@ -2511,7 +3048,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       if (msg) msg.textContent = '检测中…';
       fetch('/api/project-proof/probe', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (j) {
         if (!msg) return;
-        if (j.ok) msg.textContent = '✓ 服务可达，密钥已被接受';
+        if (j.ok) msg.textContent = '✓ ' + (j.note || '服务可达，密钥已被接受');
         else msg.textContent = '✗ ' + (j.error || '检测失败');
         msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
       }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });

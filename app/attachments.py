@@ -1054,6 +1054,9 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                 if not prior.get("note"):
                     result["notes"].append("未找到来华前工作单位，已跳过项目证明生成")
                 gen = {"ok": False, "error": "", "items": []}
+            elif not projects:
+                result["notes"].append("来华前工作单位下没有可签发的主持/参与项目，已跳过项目证明生成")
+                gen = {"ok": False, "error": "", "items": []}
             else:
                 result["notes"].append("开始调用项目证明生成接口")
                 gen = await PP.call_generate_api(

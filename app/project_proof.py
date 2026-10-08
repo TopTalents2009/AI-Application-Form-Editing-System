@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, os, re, shutil, subprocess
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 import httpx
 from .config import FILL_MARK, load_config, httpx_trust_env
 from . import papers as P
@@ -398,9 +398,12 @@ def unify_html_language(
         s = s.replace(n, issuer) if issuer else s.replace(n, "")
     if language == "en":
         s = re.sub(r'(<html[^>]*\slang=")[^"]*"', r'\1en"', s, count=1, flags=re.I)
+        if issuer:
+            s = re.sub(r"<img\b[^>]*>", lambda m: _latin_logo_img(issuer) if _img_has_cjk(m.group(0)) else m.group(0), s, flags=re.I)
         for w in _ZH_DOC_TITLES:
             s = re.sub(r"<div([^>]*)>\s*" + re.escape(w) + r"\s*</div>", "", s, flags=re.I)
             s = s.replace(" / " + w, "").replace(w + " / ", "").replace("/ " + w, "")
+            s = s.replace(w, "")
         s = re.sub(
             r"<div([^>]*)>\s*[\u4e00-\u9fff]{2,16}\s*</div>",
             "",
@@ -411,7 +414,234 @@ def unify_html_language(
         for w in _EN_DOC_TITLES:
             s = re.sub(r"<div([^>]*)>\s*" + re.escape(w) + r"\s*</div>", "", s, flags=re.I)
             s = s.replace(" / " + w, "").replace(w + " / ", "")
+            s = s.replace(w, "")
     return s
+
+
+def _img_has_cjk(tag: str) -> bool:
+    return _has_cjk(tag) or bool(re.search(r"%E[4-9A-Fa-f]%[0-9A-Fa-f]{2}", tag or ""))
+
+
+def _latin_logo_img(issuer: str) -> str:
+    label = re.sub(r"[^A-Za-z0-9]+", " ", issuer or "ORG").strip()
+    parts = [w[0] for w in label.split() if w]
+    text = ("".join(parts)[:4] or re.sub(r"[^A-Za-z0-9]", "", issuer or "ORG")[:3] or "ORG").upper()
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">'
+        '<rect width="256" height="256" rx="28" fill="#1f3b5b"/>'
+        '<text x="128" y="150" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
+        'font-size="72" font-weight="700" fill="#ffffff">' + _html_esc(text) + "</text></svg>"
+    )
+    return (
+        '<img src="data:image/svg+xml;charset=utf-8,' + quote(svg)
+        + '" alt="' + _html_esc(issuer) + ' logo" style="height:64px;max-width:180px;object-fit:contain"/>'
+    )
+
+
+def _html_esc(text: str) -> str:
+    return str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _html_br(text: str) -> str:
+    t = _html_esc(text).replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.replace("\n\n", "<br/><br/>").replace("\n", "<br/>")
+
+
+def _field(row: dict, *keys) -> str:
+    for k in keys:
+        v = (row or {}).get(k)
+        if v not in (None, "", "***"):
+            t = str(v).strip()
+            if t:
+                return t
+    return ""
+
+
+def _certificate_role(row: dict, fallback: str, language: str) -> str:
+    role = _field(row, "担任角色", "role")
+    rank = _field(row, "完成人排序", "participants")
+    lead = bool(re.search(r"主持|负责人|首席|PI\b|principal|lead", role, re.I))
+    m = re.match(r"(\d+)\s*/\s*(\d+)", rank)
+    if m and int(m.group(1)) == 1:
+        lead = True
+    if lead:
+        return "Principal Investigator" if language == "en" else "项目负责人（主持）"
+    if re.search(r"参与|参加|participant|member", role, re.I):
+        return "Project Participant" if language == "en" else "项目参与人"
+    if role:
+        zh, en = _split_bilingual(role)
+        picked = (en or role) if language == "en" else (zh or role)
+        return picked if (language != "en" or not _has_cjk(picked)) else (en or fallback or picked)
+    fb = str(fallback or "").strip()
+    if fb:
+        zh, en = _split_bilingual(fb)
+        return (en or fb) if language == "en" else (zh or fb)
+    return "Project Investigator" if language == "en" else "项目负责人"
+
+
+def _match_project(pname: str, projects: list) -> dict | None:
+    want = str(pname or "").strip().lower()
+    if not want:
+        return None
+    for p in projects or []:
+        if not isinstance(p, dict):
+            continue
+        name = str(p.get("name") or "").strip()
+        if not name:
+            continue
+        if name.lower() == want or want in name.lower() or name.lower() in want:
+            return p
+        zh, en = _split_bilingual(name)
+        for part in (zh, en):
+            if part and (part.lower() == want or want in part.lower() or part.lower() in want):
+                return p
+    return None
+
+
+def _project_certificate_text(
+    *,
+    person: str,
+    company: str,
+    project: dict,
+    language: str,
+    default_role: str = "",
+) -> str:
+    person = str(person or "").strip() or ("the candidate" if language == "en" else "申报人")
+    company = str(company or "").strip() or ("the issuing organization" if language == "en" else "签发单位")
+    name = _field(project, "name") or ("Research Project" if language == "en" else "科研项目")
+    start = _field(project, "startDate", "开始时间") or "—"
+    end = _field(project, "endDate", "结束时间") or "—"
+    if end in ("至今", "现在", "今"):
+        end = "present" if language == "en" else "至今"
+    funding = _field(project, "funding", "项目来源").strip("()（）")
+    role = _certificate_role(project, default_role, language)
+    rank = _field(project, "participants", "完成人排序")
+    if language == "en":
+        lines = [
+            "This certificate is issued by " + company + " to confirm that " + person
+            + " hosted or participated in the following research project at this organization.",
+            "Project title: " + name,
+            "Period: " + start + " to " + end,
+        ]
+        if funding:
+            lines.append("Funding source: " + funding)
+        lines.append("Role: " + role + ((" (" + rank + ")") if rank else ""))
+        lines.append(
+            person + " completed the duties associated with this project in good standing. "
+            "This letter is issued for talent-program application purposes."
+        )
+        return "\n\n".join(lines)
+    lines = [
+        "兹证明 " + person + " 在本单位主持或参与如下科研项目。",
+        "项目名称：" + name,
+        "起止时间：" + start + " 至 " + end,
+    ]
+    if funding:
+        lines.append("项目来源：" + funding)
+    lines.append("担任角色：" + role + (("（" + rank + "）") if rank else ""))
+    lines.append("特此证明，以供申报使用。")
+    lines.append("签发单位：" + company)
+    return "\n\n".join(lines)
+
+
+def _projects_index_text(
+    *,
+    person: str,
+    company: str,
+    projects: list,
+    language: str,
+    default_role: str = "",
+) -> str:
+    rows = [p for p in (projects or []) if isinstance(p, dict) and str(p.get("name") or "").strip()]
+    if language == "en":
+        head = (
+            "This certificate is issued by " + (company or "the issuing organization")
+            + " to confirm that " + (person or "the candidate")
+            + " hosted or participated in the following research projects at this organization."
+        )
+        if not rows:
+            return head + "\n\nNo named projects were listed."
+        bits = [head, "Projects:"]
+        for i, p in enumerate(rows, 1):
+            role = _certificate_role(p, default_role, "en")
+            span = _field(p, "startDate", "开始时间") + " – " + _field(p, "endDate", "结束时间")
+            bits.append(str(i) + ". " + str(p.get("name") or "") + " (" + role + ("; " + span.strip(" –") if span.strip(" –") else "") + ")")
+        bits.append("This letter is issued for talent-program application purposes.")
+        return "\n\n".join(bits)
+    head = (
+        "兹证明 " + (person or "申报人") + " 在本单位主持或参与如下科研项目。"
+    )
+    if not rows:
+        return head + "\n\n未列出具体项目名称。\n\n签发单位：" + (company or "")
+    bits = [head, "项目清单："]
+    for i, p in enumerate(rows, 1):
+        role = _certificate_role(p, default_role, "zh")
+        bits.append(str(i) + ". " + str(p.get("name") or "") + "（" + role + "）")
+    bits.append("特此证明，以供申报使用。")
+    bits.append("签发单位：" + (company or ""))
+    return "\n\n".join(bits)
+
+
+_BODY_DIV_RE = re.compile(
+    r"(<div[^>]*min-height:\s*120mm[^>]*>)(.*?)(</div>)",
+    re.I | re.S,
+)
+_PRE_RE = re.compile(r"(<pre[^>]*>)(.*?)(</pre>)", re.I | re.S)
+
+
+def _rewrite_html_body(html: str, text: str) -> str:
+    s = str(html or "")
+    inner = _html_br(text)
+    if not s:
+        return "<div>" + inner + "</div>"
+    if _BODY_DIV_RE.search(s):
+        return _BODY_DIV_RE.sub(lambda m: m.group(1) + inner + m.group(3), s, count=1)
+    if _PRE_RE.search(s):
+        return _PRE_RE.sub(lambda m: m.group(1) + inner + m.group(3), s, count=1)
+    return s
+
+
+def _render_project_html(
+    doc: dict,
+    *,
+    language: str = "",
+    issuer: str = "",
+    forbidden_names: list | None = None,
+    aliases: list | None = None,
+    person: str = "",
+    projects: list | None = None,
+    default_role: str = "",
+) -> str:
+    html = _doc_html(doc, language)
+    if person and issuer:
+        kind = str((doc or {}).get("kind") or "")
+        fields = (doc or {}).get("fields") if isinstance((doc or {}).get("fields"), dict) else {}
+        pname = str(fields.get("projectName") or (doc or {}).get("projectName") or "").strip()
+        if kind == "project.all":
+            body = _projects_index_text(
+                person=person, company=issuer, projects=projects or [],
+                language=language, default_role=default_role,
+            )
+        else:
+            row = dict(_match_project(pname, projects) or {})
+            if pname and not row.get("name"):
+                row["name"] = pname
+            if not row.get("name"):
+                row["name"] = "Research Project" if language == "en" else "科研项目"
+            body = _project_certificate_text(
+                person=person, company=issuer, project=row,
+                language=language, default_role=default_role,
+            )
+        html = _rewrite_html_body(html, body)
+    html = unify_html_language(html, language, issuer, forbidden_names, aliases)
+    html = html.replace(
+        "(the employer prior to the candidate coming to China, not the host company of the application).",
+        "",
+    )
+    html = html.replace("（人才回国/来华前工作单位，非申报依托单位）", "")
+    html = html.replace("Funding / source:", "Funding source:")
+    return html
 
 
 def _walk_projects(obj, add, depth=0):
@@ -863,19 +1093,30 @@ def _build_autoref_letters(
                 text = "(" + text + ")"
             row[dst] = text[:240]
         custom.append(row)
-    default_role = "Researcher" if language == "en" else ("研究人员" if language == "zh" else "Researcher")
+    cert_role = _certificate_role(custom[0] if custom else {}, role, language or "en")
+    proj_start = custom[0].get("startDate") if custom else ""
+    proj_end = custom[0].get("endDate") if custom else ""
     letter = {
         "id": "work-" + re.sub(r"\W+", "", attach_id or "1")[:24] or "1",
         "type": "work",
         "companyName": (company or "Unknown Organization").strip() or "Unknown Organization",
         "candidateName": (person or "Unknown").strip() or "Unknown",
-        "role": (role or default_role).strip() or default_role,
-        "startDate": (start_date or (custom[0].get("startDate") if custom else "") or "2020-01"),
-        "endDate": (end_date or (custom[0].get("endDate") if custom else "") or "present"),
+        "role": cert_role,
+        "startDate": (proj_start or start_date or "2020-01"),
+        "endDate": (proj_end or end_date or "present"),
+        "letterContent": _project_certificate_text(
+            person=person, company=company,
+            project=custom[0] if custom else {"name": "Research Project"},
+            language=language or "en", default_role=role,
+        ) if len(custom) <= 1 else _projects_index_text(
+            person=person, company=company, projects=custom,
+            language=language or "en", default_role=role,
+        ),
     }
     if language:
         letter["language"] = language
     if custom:
+        letter["projects"] = custom
         letter["customProjects"] = custom
     return [letter]
 
@@ -942,6 +1183,9 @@ def _save_autoref_documents(
     issuer: str = "",
     forbidden_names: list | None = None,
     aliases: list | None = None,
+    person: str = "",
+    projects: list | None = None,
+    default_role: str = "",
 ) -> tuple[list, str]:
     if not isinstance(data, dict):
         return [], "AutoRef 响应不是 JSON 对象"
@@ -955,7 +1199,11 @@ def _save_autoref_documents(
         kind = str(doc.get("kind") or "")
         if not kind.startswith("project."):
             continue
-        html = unify_html_language(_doc_html(doc, language), language, issuer, forbidden_names, aliases)
+        html = _render_project_html(
+            doc, language=language, issuer=issuer,
+            forbidden_names=forbidden_names, aliases=aliases,
+            person=person, projects=projects, default_role=default_role,
+        )
         if not html:
             continue
         fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else {}
@@ -984,7 +1232,11 @@ def _save_autoref_documents(
     saved, used = [], set()
     for doc in picked:
         kind = str(doc.get("kind") or "")
-        html = unify_html_language(_doc_html(doc, language), language, issuer, forbidden_names, aliases)
+        html = _render_project_html(
+            doc, language=language, issuer=issuer,
+            forbidden_names=forbidden_names, aliases=aliases,
+            person=person, projects=projects, default_role=default_role,
+        )
         if not html:
             continue
         fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else {}
@@ -1074,6 +1326,7 @@ async def call_generate_api(
     forbidden_names: list | None = None,
     aliases: list | None = None,
 ) -> dict:
+    _ = resume_pdf  # 申报书 PDF 含依托单位，不再作为 AutoRef 简历上传
     cfg = (load_config().get("projectProof") or {}).get("generate") or {}
     if not cfg.get("configured"):
         return {"ok": False, "error": "项目证明生成 API 未配置（请填写 config.json 的 projectProof.generate）", "items": []}
@@ -1099,35 +1352,19 @@ async def call_generate_api(
     autoref = _is_autoref_generate(cfg, path)
     cwd = Path(work_dir)
     cwd.mkdir(parents=True, exist_ok=True)
-    pdf = Path(resume_pdf) if resume_pdf else None
-    if pdf and (not pdf.is_file() or pdf.suffix.lower() != ".pdf"):
-        pdf = None
 
     if autoref:
+        if not projects:
+            return {"ok": False, "error": "来华前工作单位下没有可签发的主持/参与项目，已跳过生成", "items": []}
         letters = _build_autoref_letters(
             person, company, projects, attach_id,
             role=role, start_date=start_date, end_date=end_date, language=language,
         )
-        data, err, raw_text = None, "", ""
-        used = ""
-        if projects:
-            used = "documents"
-            data, err, raw_text = await _autoref_post(P.abs_url(base, cfg.get("path") or "/api/external/documents"), headers, {"letters": letters}, timeout)
-        elif pdf:
-            used = "generate"
-            data, err, raw_text = await _autoref_post(P.abs_url(base, cfg.get("generatePath") or "/api/external/generate"), headers, _resume_payload(pdf), timeout)
-        else:
-            used = "projects"
-            data, err, raw_text = await _autoref_post(P.abs_url(base, cfg.get("projectsPath") or "/api/external/projects"), headers, {"letters": letters}, timeout)
-            if data and not (data.get("documents") or []):
-                more_letters = data.get("letters") if isinstance(data.get("letters"), list) and data.get("letters") else letters
-                data2, err2, raw2 = await _autoref_post(P.abs_url(base, cfg.get("path") or "/api/external/documents"), headers, {"letters": more_letters}, timeout)
-                if data2:
-                    data, err, raw_text = data2, err2, raw2
-                    used = "projects+documents"
-                elif err2:
-                    err = err2
-                    raw_text = raw2
+        used = "documents"
+        data, err, raw_text = await _autoref_post(
+            P.abs_url(base, cfg.get("path") or "/api/external/documents"),
+            headers, {"letters": letters}, timeout,
+        )
         if raw_text:
             (cwd / "generate.json").write_text(raw_text[:200000], encoding="utf-8")
         if not data:
@@ -1136,6 +1373,7 @@ async def call_generate_api(
             data, cwd,
             language=language, issuer=company,
             forbidden_names=forbidden_names, aliases=aliases,
+            person=person, projects=projects, default_role=role,
         )
         if not saved:
             return {"ok": False, "error": save_err or "AutoRef 未产出项目证明", "items": []}

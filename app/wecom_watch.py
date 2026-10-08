@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from .config import DATA_DIR, atomic_replace, load_config, resolve_watch_llm
 from . import wecom_client as W
-from .wecom_cases import annotate_existing, cluster_messages, _msg_kind
+from .wecom_cases import annotate_existing, cluster_messages, _has_file, _msg_kind
 from .wecom_locate import parse_time
 from .wecom_split_llm import assist_split_with_gemini
 from .wecom_watch_llm import detect_opinions, rule_opinion_ids
@@ -34,6 +34,19 @@ def _watch_cfg() -> dict:
 
 def _now() -> str:
     return datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+
+async def _context_kind_of(messages: list, session_id: str):
+    """识别到文件后，用前后聊天（规则 + 模型）确认是申报书、修改意见还是其它材料。"""
+    from .wecom_file_class import classify_session_files, make_cluster_kind_of
+    if not any(isinstance(m, dict) and _has_file(m) for m in (messages or [])):
+        return _msg_kind, ""
+    try:
+        got = await classify_session_files(messages, session_id=session_id, keep_entries=True)
+        note = str(got.get("geminiNote") or "")
+        return make_cluster_kind_of(got.get("entries") or []), note
+    except Exception as e:
+        return _msg_kind, "文件分类失败：" + str(e)[:160]
 
 
 def _load_state() -> dict:
@@ -322,6 +335,8 @@ async def _scan_groups(cfg: dict, *, force: bool = False, trigger: str = "auto")
             "hasOpinion": bool(st.get("hasOpinion")),
             "caseCount": int(st.get("caseCount") or 0),
             "readyCount": int(st.get("readyCount") or 0),
+            "fileClassNote": str(st.get("fileClassNote") or ""),
+            "issueHits": int(st.get("issueHits") or 0),
             "createdCount": len(one.get("created") or []),
             "pendingCount": len(one.get("pending") or []),
             "pending": _pending_refs(one.get("pending") or []),
@@ -692,6 +707,11 @@ def _add_pending(state: dict, item: dict, case: dict | None = None, opinion_hint
         item["case"] = _case_snapshot(case)
     bag.insert(0, item)
     state["pending"] = bag[:30]
+    try:
+        from . import alert as AL
+        AL.watch_pending(item)
+    except Exception:
+        pass
 
 
 def _drop_pending(state: dict, case_id: str) -> list:
@@ -847,11 +867,13 @@ async def _rebuild_pending_case(item: dict) -> dict | None:
         if dt and (dt < start or dt > end):
             continue
         messages.append(m)
+    kind_of, _note = await _context_kind_of(messages, sid)
     cases = cluster_messages(
         messages,
         session_id=sid,
         session_name=str(item.get("sessionName") or ""),
         window_hours=window_hours,
+        kind_of=kind_of,
     )
     hit = next((c for c in cases if str(c.get("id") or "") == cid), None)
     if not hit:
@@ -887,7 +909,15 @@ async def _scan_group(
         full=True,
     )
     messages = data.get("items") or []
-    stats = {"messageCount": len(messages), "freshCount": 0, "hasOpinion": False, "caseCount": 0, "readyCount": 0}
+    stats = {
+        "messageCount": len(messages),
+        "freshCount": 0,
+        "hasOpinion": False,
+        "caseCount": 0,
+        "readyCount": 0,
+        "fileClassNote": "",
+        "issueHits": 0,
+    }
 
     def _ret(created, pending, skipped, *, status: str = "done", note: str = ""):
         return {
@@ -913,10 +943,24 @@ async def _scan_group(
     if not fresh:
         return _ret([], [], [], status="idle", note="无新消息")
 
-    rule_hits = rule_opinion_ids(fresh)
+    try:
+        from . import alert as AL
+        stats["issueHits"] = int(AL.notify_group_issues(
+            fresh,
+            session_id=session_id,
+            session_name=session_name,
+            leader_messages=messages,
+        ) or 0)
+    except Exception:
+        stats["issueHits"] = 0
+
+    kind_of, class_note = await _context_kind_of(messages, session_id)
+    stats["fileClassNote"] = class_note
+
+    rule_hits = rule_opinion_ids(fresh, kind_of=kind_of)
     maybe_text = []
     for m in fresh:
-        if _msg_kind(m) in ("opinion", "text"):
+        if kind_of(m) in ("opinion", "text"):
             maybe_text.append(m)
             continue
         text = str(m.get("text") or m.get("snippet") or "").strip()
@@ -926,7 +970,7 @@ async def _scan_group(
         _advance_cursor(row, messages)
         return _ret([], [], [], status="skip", note="新消息中无可疑意见")
 
-    detected = await detect_opinions(messages)
+    detected = await detect_opinions(messages, kind_of=kind_of)
     stats["hasOpinion"] = bool(detected.get("hasOpinion"))
     if detected.get("error") and not detected.get("hasOpinion"):
         _push_event(state, session_name + "：" + detected["error"], kind="error")
@@ -940,6 +984,7 @@ async def _scan_group(
         session_id=session_id,
         session_name=session_name,
         window_hours=window_hours,
+        kind_of=kind_of,
     )
     cases, gemini_note = await assist_split_with_gemini(
         messages,
@@ -947,6 +992,7 @@ async def _scan_group(
         session_id=session_id,
         session_name=session_name,
         window_hours=window_hours,
+        kind_of=kind_of,
     )
     annotate_existing(cases, runner)
     stats["caseCount"] = len(cases or [])

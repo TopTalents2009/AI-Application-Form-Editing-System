@@ -190,6 +190,7 @@ def load_config() -> dict:
     project_proof = _project_proof_block(c)
     portal = _portal_block(c)
     wecom = _wecom_chat_block(c)
+    alert = _alert_block(c)
     return {
         "baseUrl": base.rstrip("/"),
         "apiKey": key,
@@ -227,7 +228,109 @@ def load_config() -> dict:
         "wecomChatApiKey": wecom.get("apiKey") or "",
         "wecomChatGroups": wecom.get("groups") or [],
         "wecomChatConfigured": bool(wecom.get("configured")),
+        "alert": alert,
         "scanPdf": scan_pdf_settings(),
+    }
+
+
+def _alert_block(c: dict) -> dict:
+    """企业微信群消息推送（原群机器人 Webhook）。"""
+    raw = c.get("alert") if isinstance(c.get("alert"), dict) else {}
+    hook = _usable_secret(raw.get("webhook") or raw.get("webhookUrl"))
+    if hook and not hook.startswith("http"):
+        hook = ""
+    min_lv = str(raw.get("minLevel") or "P1").strip().upper()
+    if min_lv not in ("P0", "P1", "P2"):
+        min_lv = "P1"
+    leaders = []
+    for row in raw.get("leaders") or []:
+        if not isinstance(row, dict):
+            continue
+        uid = str(row.get("userid") or row.get("mentioned") or "").strip()
+        if not uid:
+            continue
+        leaders.append({
+            "department": str(row.get("department") or "").strip() or "*",
+            "name": str(row.get("name") or "").strip(),
+            "userid": uid,
+        })
+    enabled = raw.get("enabled")
+    if enabled is None:
+        enabled = bool(hook)
+    else:
+        enabled = _as_bool(enabled, bool(hook))
+    return {
+        "enabled": bool(enabled) and bool(hook),
+        "webhook": hook,
+        "minLevel": min_lv,
+        "dedupeMinutes": max(0, min(_as_int(raw.get("dedupeMinutes"), 15), 1440)),
+        "publicBaseUrl": str(raw.get("publicBaseUrl") or "").strip().rstrip("/"),
+        "leaders": leaders,
+        "configured": bool(hook),
+        "dueBroadcast": _due_broadcast_block(raw),
+        "issueWatch": _issue_watch_block(raw),
+    }
+
+
+def parse_due_times(val) -> list:
+    """09:30 / 9:30,18:00 → ['09:30','18:00']。"""
+    if isinstance(val, list):
+        parts = val
+    else:
+        parts = re.split(r"[,;，\s]+", str(val or ""))
+    out = []
+    for p in parts:
+        s = str(p or "").strip()
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", s)
+        if not m:
+            continue
+        h, mi = int(m.group(1)), int(m.group(2))
+        if 0 <= h <= 23 and 0 <= mi <= 59:
+            slot = f"{h:02d}:{mi:02d}"
+            if slot not in out:
+                out.append(slot)
+    return out
+
+
+def _due_broadcast_block(raw_alert: dict) -> dict:
+    raw = raw_alert.get("dueBroadcast") if isinstance(raw_alert.get("dueBroadcast"), dict) else {}
+    times = parse_due_times(raw.get("times") if raw.get("times") is not None else raw.get("time"))
+    if not times:
+        times = ["09:30"]
+    return {
+        "enabled": _as_bool(raw.get("enabled"), False),
+        "times": times,
+        "slaWorkdays": max(0, min(_as_int(raw.get("slaWorkdays"), 1), 30)),
+        "skipWeekend": _as_bool(raw.get("skipWeekend"), True),
+        "recentDays": max(0, min(_as_int(raw.get("recentDays"), 14), 365)),
+        "maxLines": max(5, min(_as_int(raw.get("maxLines"), 20), 40)),
+        "sendIfEmpty": _as_bool(raw.get("sendIfEmpty"), False),
+        "wecomOnly": _as_bool(raw.get("wecomOnly"), False),
+    }
+
+
+def _issue_watch_block(raw_alert: dict) -> dict:
+    from .issue_watch import DEFAULT_ISSUE_KEYWORDS, parse_issue_keywords
+    raw = raw_alert.get("issueWatch") if isinstance(raw_alert.get("issueWatch"), dict) else {}
+    if "keywords" not in raw:
+        keywords = list(DEFAULT_ISSUE_KEYWORDS)
+    else:
+        keywords = parse_issue_keywords(raw.get("keywords"))
+        if not keywords:
+            keywords = list(DEFAULT_ISSUE_KEYWORDS)
+    lv = str(raw.get("level") or "P0").strip().upper()
+    if lv not in ("P0", "P1", "P2"):
+        lv = "P0"
+    enabled = raw.get("enabled")
+    if enabled is None:
+        enabled = True
+    else:
+        enabled = _as_bool(enabled, True)
+    return {
+        "enabled": bool(enabled),
+        "level": lv,
+        "keywords": keywords,
+        "defaults": list(DEFAULT_ISSUE_KEYWORDS),
     }
 
 
@@ -844,6 +947,76 @@ def _merge_papers(raw: dict, papers: dict):
         raw["papers"] = blob
 
 
+def _merge_alert(raw: dict, incoming: dict):
+    blob = raw.get("alert") if isinstance(raw.get("alert"), dict) else {}
+    if "enabled" in incoming:
+        blob["enabled"] = _as_bool(incoming.get("enabled"), False)
+    hook = _usable_secret(incoming.get("webhook")) if "webhook" in incoming else ""
+    if hook:
+        blob["webhook"] = hook
+    if incoming.get("minLevel") is not None:
+        lv = str(incoming.get("minLevel") or "P1").strip().upper()
+        if lv in ("P0", "P1", "P2"):
+            blob["minLevel"] = lv
+    if incoming.get("dedupeMinutes") not in (None, ""):
+        blob["dedupeMinutes"] = max(0, min(_as_int(incoming.get("dedupeMinutes"), 15), 1440))
+    if "publicBaseUrl" in incoming:
+        blob["publicBaseUrl"] = str(incoming.get("publicBaseUrl") or "").strip().rstrip("/")
+    if "leaders" in incoming and isinstance(incoming.get("leaders"), list):
+        leaders = []
+        for row in incoming.get("leaders") or []:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("userid") or row.get("mentioned") or "").strip()
+            if not uid:
+                continue
+            leaders.append({
+                "department": str(row.get("department") or "").strip() or "*",
+                "name": str(row.get("name") or "").strip(),
+                "userid": uid,
+            })
+        blob["leaders"] = leaders
+    if isinstance(incoming.get("dueBroadcast"), dict):
+        cur = blob.get("dueBroadcast") if isinstance(blob.get("dueBroadcast"), dict) else {}
+        db = incoming.get("dueBroadcast") or {}
+        if "enabled" in db:
+            cur["enabled"] = _as_bool(db.get("enabled"), False)
+        if db.get("times") is not None or db.get("time") is not None:
+            times = parse_due_times(db.get("times") if db.get("times") is not None else db.get("time"))
+            if times:
+                cur["times"] = times
+        if db.get("slaWorkdays") not in (None, ""):
+            cur["slaWorkdays"] = max(0, min(_as_int(db.get("slaWorkdays"), 1), 30))
+        if "skipWeekend" in db:
+            cur["skipWeekend"] = _as_bool(db.get("skipWeekend"), True)
+        if db.get("recentDays") not in (None, ""):
+            cur["recentDays"] = max(0, min(_as_int(db.get("recentDays"), 14), 365))
+        if db.get("maxLines") not in (None, ""):
+            cur["maxLines"] = max(5, min(_as_int(db.get("maxLines"), 20), 40))
+        if "sendIfEmpty" in db:
+            cur["sendIfEmpty"] = _as_bool(db.get("sendIfEmpty"), False)
+        if "wecomOnly" in db:
+            cur["wecomOnly"] = _as_bool(db.get("wecomOnly"), False)
+        blob["dueBroadcast"] = cur
+    if isinstance(incoming.get("issueWatch"), dict):
+        cur = blob.get("issueWatch") if isinstance(blob.get("issueWatch"), dict) else {}
+        iw = incoming.get("issueWatch") or {}
+        if "enabled" in iw:
+            cur["enabled"] = _as_bool(iw.get("enabled"), True)
+        if iw.get("level") is not None:
+            lv = str(iw.get("level") or "P0").strip().upper()
+            if lv in ("P0", "P1", "P2"):
+                cur["level"] = lv
+        if "keywords" in iw:
+            from .issue_watch import parse_issue_keywords
+            parsed = parse_issue_keywords(iw.get("keywords"))
+            if parsed:
+                cur["keywords"] = parsed
+        blob["issueWatch"] = cur
+    if blob:
+        raw["alert"] = blob
+
+
 def _merge_wecom_chat(raw: dict, wecom: dict):
     """企业微信聊天记录解析服务。密钥留空不改。"""
     blob = raw.get("wecomChat") if isinstance(raw.get("wecomChat"), dict) else {}
@@ -1008,6 +1181,9 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
     wecom = payload.get("wecomChat") if isinstance(payload.get("wecomChat"), dict) else None
     if wecom:
         _merge_wecom_chat(raw, wecom)
+    alert = payload.get("alert") if isinstance(payload.get("alert"), dict) else None
+    if alert is not None:
+        _merge_alert(raw, alert)
     classify = str(payload.get("classifyModel") or payload.get("model") or "").strip()
     if classify:
         raw["model"] = classify
@@ -1019,7 +1195,7 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
 
 
 # 恢复默认只回滚 LLM 接入参数；数据库 / 人才库 / 论文 / 收件箱等运行时配置保留当前值
-_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox", "projectProof", "portal", "wecomChat")
+_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox", "projectProof", "portal", "wecomChat", "alert")
 
 
 def restore_default_config() -> dict:
@@ -1121,6 +1297,16 @@ def editor_config() -> dict:
             "groups": list(cfg.get("wecomChatGroups") or []),
             "configured": bool(cfg.get("wecomChatConfigured")),
             "watch": _pack_watch_for_editor(((cfg.get("wecomChat") or {}).get("watch")) or {}, gemini),
+        },
+        "alert": {
+            "enabled": bool((cfg.get("alert") or {}).get("enabled")),
+            "hasWebhook": bool((cfg.get("alert") or {}).get("configured")),
+            "minLevel": str((cfg.get("alert") or {}).get("minLevel") or "P1"),
+            "dedupeMinutes": int((cfg.get("alert") or {}).get("dedupeMinutes") or 15),
+            "publicBaseUrl": str((cfg.get("alert") or {}).get("publicBaseUrl") or ""),
+            "leaders": list((cfg.get("alert") or {}).get("leaders") or []),
+            "dueBroadcast": dict((cfg.get("alert") or {}).get("dueBroadcast") or {}, webhookReady=bool((cfg.get("alert") or {}).get("configured"))),
+            "issueWatch": dict((cfg.get("alert") or {}).get("issueWatch") or {}),
         },
         "classifyModel": (cfg.get("model") if model_family(cfg.get("model") or "") == "gemini" else "") or gemini["id"],
         "hasDefault": DEFAULT_CONFIG_PATH.exists(),

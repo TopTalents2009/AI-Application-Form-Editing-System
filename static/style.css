@@ -742,6 +742,11 @@ a.mini.primary { background: #2450a4; color: #fff; border-color: #2450a4; }
 .wecom-ai-tag.warn{background:#fff6e5;color:var(--warn)}
 .wecom-ai-tag.bad{background:#fdecee;color:var(--bad)}
 .wecom-ai-case{font-size:12.5px;padding:8px 0;border-bottom:1px dashed #e6ebf4}
+.wecom-ai-files-sec{margin-top:8px;padding-top:6px;border-top:1px dashed #e6ebf4}
+.wecom-ai-files-sec b{display:block;font-size:12.5px;color:#1d5cc0;margin-bottom:4px}
+.wecom-ai-file{font-size:12.5px;padding:5px 0;border-bottom:1px dashed #eef1f6}
+.wecom-ai-file .nm{font-weight:600;overflow-wrap:anywhere;word-break:break-word}
+.wecom-ai-file .why{color:#8a93a6;font-size:11.5px;margin-top:2px;line-height:1.45}
 .wecom-ai-case:last-child{border-bottom:none}
 .wecom-side{border-right:1px solid #e6ebf4;display:flex;flex-direction:column;min-width:0;height:640px;max-height:640px;overflow:hidden;background:#f7f9fc}
 .wecom-side-hd,.wecom-chat-hd{padding:12px 14px;border-bottom:1px solid #e6ebf4;background:#fff}
@@ -890,7 +895,7 @@ a.mini.primary { background: #2450a4; color: #fff; border-color: #2450a4; }
 .wecom-files-sec-hd{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f4f7fd;color:#2450a4}
 .wecom-files-sec-hd b{font-size:12.5px}
 .wecom-files-sec-hd em{font-style:normal;font-size:12px;font-weight:600;color:#8a93a6}
-.wecom-files-row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:6px 8px;align-items:center;margin:0;padding:9px 10px;border-bottom:1px solid #f0f3f8;cursor:pointer}
+.wecom-files-row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:2px 8px;align-items:center;margin:0;padding:9px 10px;border-bottom:1px solid #f0f3f8;cursor:pointer}
 .wecom-ai-bind-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .wecom-ai-bind-tab{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:3px 10px;font-size:11.5px;cursor:pointer;color:#5b6577;font-family:inherit}
 .wecom-ai-bind-tab.on{background:#1d5cc0;border-color:#1d5cc0;color:#fff}
@@ -912,8 +917,11 @@ a.mini.primary { background: #2450a4; color: #fff; border-color: #2450a4; }
 .wecom-files-row input{margin:0;accent-color:#2450a4}
 .wecom-files-row .tag{justify-self:start;white-space:nowrap;font-size:11px;font-weight:700;color:#2450a4;background:#eef4ff;border-radius:999px;padding:2px 8px}
 .wecom-files-row .nm{grid-column:2;grid-row:1;font-weight:600;min-width:0;overflow:hidden;overflow-wrap:anywhere;word-break:break-word;white-space:normal;line-height:1.35}
-.wecom-files-acts{display:flex;gap:6px;justify-self:end;align-self:center;flex-wrap:nowrap;grid-column:3;grid-row:1}
-.wecom-files-row > input{grid-column:1;grid-row:1;align-self:center}
+.wecom-files-who{grid-column:2;grid-row:2;font-size:11.5px;color:#8a93a6;line-height:1.45;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wecom-files-who em{font-style:normal;font-weight:600;color:#a0a8b8;margin-right:4px}
+.wecom-files-who em + em{margin-left:10px}
+.wecom-files-acts{display:flex;gap:6px;justify-self:end;align-self:center;flex-wrap:nowrap;grid-column:3;grid-row:1 / span 2}
+.wecom-files-row > input{grid-column:1;grid-row:1 / span 2;align-self:center}
 .wecom-files-dl,.wecom-files-loc{height:auto;min-height:28px;line-height:1.2;padding:4px 10px;white-space:nowrap;flex:0 0 auto}
 .wecom-files-pager{margin:10px 0 0;padding:6px 8px;gap:6px;background:#f7f9fc;flex-wrap:wrap}
 .wecom-files-pager .page-sub{margin-top:0;line-height:1.2}

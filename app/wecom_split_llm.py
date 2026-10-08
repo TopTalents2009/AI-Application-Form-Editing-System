@@ -43,7 +43,15 @@ rule 是规则初判：app=申报书，opinion=意见文档，text=意见文本�
 """
 
 
-def _catalog(messages: list, *, max_files: int = 80, max_texts: int = 80) -> list:
+def _resolved_kind(m: dict, kind_of=None) -> str:
+    if callable(kind_of):
+        k = kind_of(m)
+        if k in ("app", "opinion", "text", "ignore", "other"):
+            return k
+    return _msg_kind(m)
+
+
+def _catalog(messages: list, *, max_files: int = 80, max_texts: int = 80, kind_of=None) -> list:
     files, texts = [], []
     cap_f = max(20, int(max_files or 80))
     cap_t = max(20, int(max_texts or 80))
@@ -68,16 +76,28 @@ def _catalog(messages: list, *, max_files: int = 80, max_texts: int = 80) -> lis
             "text": text[:280],
             "time": str(m.get("time_text") or m.get("time") or ""),
             "sender": str(m.get("sender") or ""),
-            "rule": _msg_kind(m),
+            "rule": _resolved_kind(m, kind_of),
         })
     return out
 
 
-def _allow_app(m: dict) -> bool:
+def _allow_app(m: dict, kind_of=None) -> bool:
+    if callable(kind_of):
+        k = _resolved_kind(m, kind_of)
+        if k == "app":
+            return True
+        if k in ("ignore", "opinion", "text"):
+            return False
     return classify_file(*_names_of(m), message_id=(m or {}).get("message_id")) == "app"
 
 
-def _allow_opinion(m: dict) -> bool:
+def _allow_opinion(m: dict, kind_of=None) -> bool:
+    if callable(kind_of) and _has_file(m):
+        k = _resolved_kind(m, kind_of)
+        if k == "opinion":
+            return True
+        if k in ("app", "ignore"):
+            return False
     if not _has_file(m):
         text = str(m.get("text") or m.get("snippet") or "").strip()
         return bool(text and len(text) >= 8 and not _CHATTER.match(text))
@@ -112,9 +132,11 @@ async def assist_split_with_gemini(
     window_hours: int = 48,
     max_files: int = 80,
     max_texts: int = 80,
+    kind_of=None,
 ) -> tuple[list, str]:
     """规则拆解之后调用 Gemini 纠偏。失败则原样返回 cases。"""
-    cat = _catalog(messages, max_files=max_files, max_texts=max_texts)
+    base_kind = kind_of if callable(kind_of) else _msg_kind
+    cat = _catalog(messages, max_files=max_files, max_texts=max_texts, kind_of=base_kind)
     if not cat:
         return cases, ""
     try:
@@ -147,7 +169,7 @@ async def assist_split_with_gemini(
     for raw in data.get("apps") or []:
         nid = _as_int(raw.get("id") if isinstance(raw, dict) else raw)
         row = by_id.get(nid) if nid is not None else None
-        if not row or not _allow_app(row["m"]):
+        if not row or not _allow_app(row["m"], base_kind):
             continue
         overrides[id(row["m"])] = "app"
     for raw in data.get("ignore") or []:
@@ -162,7 +184,7 @@ async def assist_split_with_gemini(
         if not isinstance(link, dict):
             continue
         src = by_id.get(_as_int(link.get("from")))
-        if not src or not _allow_opinion(src["m"]):
+        if not src or not _allow_opinion(src["m"], base_kind):
             continue
         overrides[id(src["m"])] = "opinion" if _has_file(src["m"]) else "text"
 
@@ -172,7 +194,7 @@ async def assist_split_with_gemini(
             session_id=session_id,
             session_name=session_name,
             window_hours=window_hours,
-            kind_of=lambda m: overrides.get(id(m)) or _msg_kind(m),
+            kind_of=lambda m: overrides.get(id(m)) or base_kind(m),
         )
 
     by_app = {}
@@ -186,7 +208,7 @@ async def assist_split_with_gemini(
             continue
         src = by_id.get(_as_int(link.get("from")))
         dst = by_id.get(_as_int(link.get("to")))
-        if not src or not dst or not _allow_opinion(src["m"]):
+        if not src or not dst or not _allow_opinion(src["m"], base_kind):
             continue
         case = by_app.get(str(dst["m"].get("message_id") or ""))
         if not case:

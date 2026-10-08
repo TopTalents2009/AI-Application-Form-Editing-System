@@ -623,7 +623,8 @@ async def list_merged_messages(
                         break
     merged = merge_messages(nonempty, cid)
     have = [r for r in replicas if int(r.get("msg_count") or 0) > 0]
-    if full and not want_around:
+    if full:
+        around_idx = find_message_index(merged, around_id, around_time) if want_around else -1
         return {
             "items": merged,
             "count": len(merged),
@@ -637,6 +638,8 @@ async def list_merged_messages(
             "hasEarlier": False,
             "hasNewer": False,
             "fromEnd": 0,
+            "aroundHit": around_idx >= 0,
+            "aroundIndex": around_idx if around_idx >= 0 else 0,
         }
     if want_around:
         sliced = slice_around(merged, limit=lim, around_id=around_id, around_time=around_time)

@@ -60,6 +60,37 @@ def api_user_delete(uid: int, request: Request):
         raise HTTPException(e.status, e.message)
 
 
+@router.get("/api/admin/departments")
+def api_depts(request: Request):
+    _admin(request)
+    from .. import depts
+    try:
+        return {"ok": True, "items": depts.list_departments(with_count=True)}
+    except Exception as e:
+        raise HTTPException(503, "数据库不可用：" + str(e)[:160])
+
+
+@router.post("/api/admin/departments")
+def api_dept_create(body: dict, request: Request):
+    _admin(request)
+    from .. import depts
+    try:
+        return {"ok": True, "item": depts.create((body or {}).get("name") or "")}
+    except depts.DeptError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.delete("/api/admin/departments/{did}")
+def api_dept_delete(did: int, request: Request):
+    _admin(request)
+    from .. import depts
+    try:
+        depts.delete(did)
+        return {"ok": True}
+    except depts.DeptError as e:
+        raise HTTPException(e.status, e.message)
+
+
 @router.get("/api/admin/apikeys")
 def api_keys_list(request: Request):
     _admin(request)
@@ -158,6 +189,74 @@ def api_requests_review(rid: int, body: dict, request: Request):
         raise HTTPException(e.status, e.message)
     except Exception as e:
         raise HTTPException(503, "数据库不可用：" + str(e)[:160])
+
+
+@router.get("/api/admin/alert")
+def api_alert_status(request: Request):
+    _admin(request)
+    from .. import alert as AL
+    return AL.public_status()
+
+
+@router.post("/api/admin/alert/test")
+def api_alert_test(request: Request):
+    _admin(request)
+    from .. import alert as AL
+    from .. import wecom_notify as N
+    if not N.configured():
+        raise HTTPException(400, "未配置 alert.webhook")
+    got = AL.test_send()
+    if not got.get("ok"):
+        raise HTTPException(400, got.get("error") or got.get("skipped") or "发送失败")
+    return {"ok": True, "item": got}
+
+
+@router.get("/api/admin/due-broadcast")
+def api_due_broadcast_status(request: Request):
+    _admin(request)
+    from .. import due_broadcast as DB
+    return DB.public_status()
+
+
+@router.post("/api/admin/due-broadcast/test")
+def api_due_broadcast_test(request: Request):
+    _admin(request)
+    from .. import due_broadcast as DB
+    from .. import wecom_notify as N
+    if not N.configured():
+        raise HTTPException(400, "未配置 alert.webhook")
+    got = DB.send_now(test=True, reason="test")
+    if not got.get("ok"):
+        raise HTTPException(400, got.get("error") or "发送失败")
+    return {"ok": True, **got}
+
+
+@router.post("/api/admin/due-broadcast/run")
+def api_due_broadcast_run(request: Request):
+    _admin(request)
+    from .. import due_broadcast as DB
+    from .. import wecom_notify as N
+    if not N.configured():
+        raise HTTPException(400, "未配置 alert.webhook")
+    got = DB.send_now(test=False, reason="manual")
+    if not got.get("ok"):
+        raise HTTPException(400, got.get("error") or "发送失败")
+    return {"ok": True, **got}
+
+
+@router.get("/api/admin/alert/logs")
+def api_alert_logs(request: Request, st: str = ""):
+    _admin(request)
+    from .. import alert as AL
+    return {"ok": True, "items": AL.list_logs(st)}
+
+
+@router.delete("/api/admin/alert/logs")
+def api_alert_logs_clear(request: Request):
+    _admin(request)
+    from .. import alert as AL
+    AL.clear_logs()
+    return {"ok": True}
 
 
 @router.get("/api/admin/api-docs")

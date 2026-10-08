@@ -91,6 +91,13 @@ def test_autoref_contract() -> None:
     assert isinstance(letters, list) and letters[0]["type"] == "work"
     assert letters[0]["candidateName"] == "Ada Lovelace"
     assert letters[0]["customProjects"][0]["name"] == "Demo Grant"
+    assert letters[0]["projects"][0]["name"] == "Demo Grant"
+    content = str(letters[0].get("letterContent") or "")
+    assert "Demo Grant" in content
+    assert "hosted or participated" in content.lower()
+    assert "employer prior" not in content.lower()
+    assert "Funding / source" not in content
+    assert "Human Resources" not in content
     body = PP._build_autoref_body("Ada Lovelace", "DTU", [{"name": "Demo Grant"}], "abc123")
     assert "letters" in body and isinstance(body["letters"], list)
     print("[OK] documents 请求体为 {letters: [...]}（已有经历、不传简历）")
@@ -190,6 +197,20 @@ def test_prior_employer_and_html() -> None:
     )
     assert letters[0]["companyName"] == ctx["company"]
     assert "苏州" not in json.dumps(letters, ensure_ascii=False)
+    letter_body = str(letters[0].get("letterContent") or "")
+    assert "hosted or participated" in letter_body.lower()
+    assert "employer prior" not in letter_body.lower()
+    assert "host company of the application" not in letter_body.lower()
+    assert "Funding / source" not in letter_body
+    if "Funding" in letter_body:
+        assert "Funding source:" in letter_body, letter_body
+    zh_body = PP._project_certificate_text(
+        person="林启明", company="某某大学",
+        project={"name": "示范项目", "funding": "国家自然科学基金"}, language="zh",
+    )
+    assert "主持或参与" in zh_body
+    assert "来华前" not in zh_body
+    assert "非申报" not in zh_body
     mixed = (
         '<html lang="en"><body>'
         '<div>苏州启明智造科技有限公司</div>'
@@ -210,7 +231,51 @@ def test_prior_employer_and_html() -> None:
         "申报企业：Demo Co",
     )
     assert not skipped["ok"]
-    print("[OK] 来华前工作单位=Boeing，过滤申报企业项目，HTML 单语言")
+
+    tmp = ROOT / "tasks" / "_project_proof_live_test" / "parse"
+    tmp.mkdir(parents=True, exist_ok=True)
+    employ = (
+        '<html lang="en"><body>'
+        '<div>苏州启明智造科技有限公司</div>'
+        '<div>Project Certificate</div>'
+        '<div style="font-size:12px">项目证明</div>'
+        '<div style="font-size:14px;line-height:1.7;min-height:120mm">'
+        "KEITH DANIEL HUMFELD served as Researcher at 苏州启明智造科技有限公司 "
+        "from 2020-02-13 to 2021-06-20.<br/><br/>"
+        "During this period, KEITH DANIEL HUMFELD fulfilled the responsibilities of the role "
+        "with professionalism and reliability, and completed the assigned duties in good standing."
+        "</div></body></html>"
+    )
+    sample = {
+        "ok": True,
+        "documents": [{
+            "kind": "project.certificate",
+            "titleEn": "Project Certificate",
+            "titleZh": "项目证明",
+            "html": employ,
+            "fields": {"projectName": "MACHINE LEARNING COMPOSITES CONTROL"},
+        }],
+    }
+    saved, err = PP._save_autoref_documents(
+        sample, tmp,
+        language="en", issuer=ctx["company"],
+        forbidden_names=ctx["forbidden"], aliases=ctx["aliases"],
+        person=ctx["person"], projects=ctx["projects"], default_role=ctx["role"],
+    )
+    assert not err and saved, err
+    out = (tmp / saved[0]["filename"]).read_text(encoding="utf-8")
+    assert "苏州启明" not in out, out
+    assert "苏州" not in out, out
+    assert "项目证明" not in out, out
+    assert "fulfilled the responsibilities of the role" not in out, out
+    assert "served as Researcher" not in out, out
+    assert "hosted or participated" in out.lower(), out
+    assert "employer prior" not in out.lower(), out
+    assert "host company of the application" not in out.lower(), out
+    assert "Funding / source" not in out, out
+    assert "MACHINE LEARNING" in out.upper(), out
+    assert "The Boeing Company" in out
+    print("[OK] 来华前工作单位=Boeing，过滤申报企业项目，任职信改写为项目主持/参与证明")
 
 
 def test_codebuddy(person: str, projects: list) -> dict:
@@ -260,6 +325,14 @@ async def test_live_prior_gen() -> int:
                 leak.append(p.name + ":苏州启明")
             if ctx["language"] == "en" and "项目证明" in body:
                 leak.append(p.name + ":项目证明")
+            if "fulfilled the responsibilities of the role" in body:
+                leak.append(p.name + ":任职信模板")
+            if "hosted or participated" not in body.lower() and "主持或参与" not in body:
+                leak.append(p.name + ":非项目主持/参与证明")
+            if "employer prior to the candidate" in body.lower() or "非申报依托单位" in body:
+                leak.append(p.name + ":内部说明写进正文")
+            if "Funding / source" in body:
+                leak.append(p.name + ":Funding斜杠")
     if leak:
         print("[FAIL] 混排/申报企业残留:", leak)
         return 1

@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.matcher import extract_book_nums
 from app.wecom_ai_bind import (
     DEFAULT_BIND_PROMPTS,
     PROMPT_NAME_ID,
@@ -17,7 +18,10 @@ from app.wecom_ai_bind import (
     _SEMANTIC_PROMPT,
     _SEMANTIC_PROMPT_TEXTS,
     _SEMANTIC_STRICT_PROMPT,
+    _bind_result_for_prompt,
+    _pick_attach_id,
     bind_opinions_time_window,
+    bind_orphan_opinions,
     build_talent_versions,
     collect_valid_message_ids,
     extract_catalog,
@@ -157,6 +161,59 @@ def test_extract_catalog_valid_ids():
     assert len(cat.get("opinions") or []) == 1
 
 
+def test_stamp_not_book_num():
+    fname = "9Adam David Allevato ENG_申报书_20260317_152458(2).docx"
+    assert "202603" not in extract_book_nums(fname)
+    assert "152458" not in extract_book_nums(fname)
+    assert _pick_attach_id([], "", fname) == "未识别编号"
+    assert extract_book_nums("113255_广东拓斯达科技股份有限公司.pdf") == ["113255"]
+    assert _pick_attach_id(["113255"], "", "113255_广东拓斯达科技股份有限公司.pdf") == "113255"
+    assert _pick_attach_id([], "", "「郑建雄：[文件]52063_东莞金太阳研磨股份有限公司.pdf") == "52063"
+
+
+def test_split_unknown_by_company_and_same_id():
+    apps = [
+        {"attachId": "未识别编号", "filename": "广东佰仕通数字能源有限公司.docx", "messageId": "1", "time": "2026-04-13 09:55"},
+        {"attachId": "未识别编号", "filename": "东莞金太阳研磨股份有限公司.docx", "messageId": "2", "time": "2026-05-08 18:59"},
+        {"attachId": "147735", "filename": "147735_广东拓斯达科技股份有限公司.pdf", "messageId": "3", "time": "2026-09-20 15:41", "company": "广东拓斯达科技股份有限公司"},
+        {"attachId": "147735", "filename": "147735_东莞市豪顺精密科技有限公司.pdf", "messageId": "4", "time": "2026-09-21 09:44", "company": "东莞市豪顺精密科技有限公司"},
+    ]
+    talents = build_talent_versions(apps)
+    labels = {t["label"] for t in talents}
+    assert "广东佰仕通数字能源有限公司" in labels
+    assert "东莞金太阳研磨股份有限公司" in labels
+    assert "147735 广东拓斯达科技股份有限公司" in labels
+    assert "147735 东莞市豪顺精密科技有限公司" in labels
+
+
+def test_orphan_opinion_cluster():
+    talents = [{
+        "attachId": "24849", "label": "24849", "company": "", "person": "",
+        "versions": [{"chatVersion": "chat-1", "messageId": "a", "time": "2026-04-27 18:00", "filename": "24849.xls", "opinions": []}],
+    }, {
+        "attachId": "22881", "label": "22881", "company": "", "person": "",
+        "versions": [{"chatVersion": "chat-1", "messageId": "b", "time": "2026-04-27 18:00", "filename": "22881.xls", "opinions": []}],
+    }]
+    ops = [{"messageId": "op", "time": "2026-04-27 18:14", "kind": "text", "filename": "群聊修改意见.txt", "text": "请改一版", "nums": []}]
+    leftover = bind_orphan_opinions(talents, ops, window_hours=48)
+    assert leftover == []
+    assert talents[0]["versions"][0]["opinions"][0]["messageId"] == "op"
+    assert talents[1]["versions"][0]["opinions"][0]["messageId"] == "op"
+
+
+def test_name_id_then_orphan():
+    apps = [
+        {"attachId": "24849", "filename": "24849申报书修改稿0427.xls", "messageId": "10", "time": "2026-04-27 18:00"},
+    ]
+    talents = build_talent_versions(apps)
+    opinions = [
+        {"messageId": "20", "time": "2026-04-27 18:14", "kind": "text", "filename": "群聊修改意见.txt", "text": "请按意见改", "nums": []},
+    ]
+    got = _bind_result_for_prompt("name_id", talents, opinions, window_hours=48)
+    assert got["talents"][0]["versions"][0]["opinions"][0]["messageId"] == "20"
+    assert got["unboundOpinions"] == []
+
+
 if __name__ == "__main__":
     test_prompt_ids()
     test_semantic_prompt_texts_exist()
@@ -166,4 +223,8 @@ if __name__ == "__main__":
     test_time_window_unbounded_last_version()
     test_mock_list_by_attach()
     test_extract_catalog_valid_ids()
+    test_stamp_not_book_num()
+    test_split_unknown_by_company_and_same_id()
+    test_orphan_opinion_cluster()
+    test_name_id_then_orphan()
     print("ALL OK")

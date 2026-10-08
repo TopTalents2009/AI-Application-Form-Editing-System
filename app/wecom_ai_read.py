@@ -1,5 +1,6 @@
 """AI 解读：通读关注群聊天记录，规则拆解 + Gemini 配对申报书与修改意见。"""
 from __future__ import annotations
+import asyncio
 import json
 from datetime import datetime, timedelta
 
@@ -7,6 +8,7 @@ from .config import LLM_TIMEOUT_CLASSIFY, resolve_gemini
 from . import wecom_client as W
 from .llm import LlmError, chat, extract_json_lenient
 from .wecom_cases import annotate_existing, cluster_messages, split_scan_stats
+from .wecom_file_class import classify_session_files
 from .wecom_groups import list_watch_groups
 from .wecom_split_llm import assist_split_with_gemini
 
@@ -175,6 +177,7 @@ async def _analyze_one_group(
     cluster_hours = int(window_hours or 48)
     if cluster_hours <= 0:
         cluster_hours = 48
+    file_task = asyncio.create_task(classify_session_files(messages, session_id=sid))
     cases = cluster_messages(
         messages,
         session_id=sid,
@@ -207,6 +210,13 @@ async def _analyze_one_group(
             bind_prompts=bind_prompts,
             user=user,
         )
+    try:
+        file_class = await file_task
+    except Exception as e:
+        file_class = {
+            "items": [], "counts": {}, "fileCount": 0,
+            "geminiNote": "文件分类失败：" + str(e)[:160], "usedGemini": False,
+        }
     return {
         "session_id": sid,
         "session_name": name,
@@ -219,6 +229,7 @@ async def _analyze_one_group(
         "geminiNote": gemini_note or "",
         "hasOpinion": _cases_have_opinion(cases),
         "bindPrompts": bind_out,
+        "fileTypes": file_class,
     }
 
 
@@ -277,6 +288,7 @@ async def ai_read_watched(
             errors.append(name + "：" + str(e)[:120])
             continue
         slim_cases = [_slim_case(c, name) for c in one.get("cases") or []]
+        ft = one.get("fileTypes") or {}
         groups_out.append({
             "session_id": one["session_id"],
             "session_name": one["session_name"],
@@ -286,6 +298,12 @@ async def ai_read_watched(
             "hasOpinion": one["hasOpinion"],
             "geminiNote": one["geminiNote"],
             "cases": slim_cases[:12],
+            "fileTypes": {
+                "items": (ft.get("items") or [])[:20],
+                "counts": ft.get("counts") or {},
+                "fileCount": ft.get("fileCount") or 0,
+                "geminiNote": ft.get("geminiNote") or "",
+            },
         })
         all_cases.extend(one.get("cases") or [])
         if bind:
@@ -308,6 +326,17 @@ async def ai_read_watched(
     except ValueError:
         model = ""
     ready_total = sum(1 for c in all_cases if c.get("ready") and not c.get("existing"))
+    file_items = []
+    file_counts = {}
+    for g in groups_out:
+        ft = g.get("fileTypes") or {}
+        for it in ft.get("items") or []:
+            if len(file_items) < 80:
+                row = dict(it)
+                row["session_name"] = g.get("session_name") or ""
+                file_items.append(row)
+        for lab, n in (ft.get("counts") or {}).items():
+            file_counts[lab] = file_counts.get(lab, 0) + int(n or 0)
     return {
         "ok": True,
         "scope": "watch",
@@ -322,6 +351,12 @@ async def ai_read_watched(
         "hasOpinion": _cases_have_opinion(all_cases),
         "summary": summary,
         "bindPrompts": bind_out if bind else {},
+        "fileTypes": {
+            "items": file_items,
+            "counts": file_counts,
+            "fileCount": sum(int((g.get("fileTypes") or {}).get("fileCount") or 0) for g in groups_out),
+            "geminiNote": "",
+        },
         "errors": errors[:8],
         "model": model,
         "engine": "split-gemini",
@@ -403,6 +438,7 @@ async def ai_read_chat(
         "hasOpinion": one["hasOpinion"],
         "summary": summary,
         "bindPrompts": one.get("bindPrompts") or {},
+        "fileTypes": one.get("fileTypes") or {},
         "model": model,
         "engine": "split-gemini",
     }

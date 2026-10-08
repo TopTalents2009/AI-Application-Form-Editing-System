@@ -125,6 +125,10 @@ async def main() -> int:
                     leak.append(p.name + ":苏州启明")
                 if prior.get("language") == "en" and "项目证明" in body:
                     leak.append(p.name + ":项目证明")
+                if "fulfilled the responsibilities of the role" in body:
+                    leak.append(p.name + ":任职信模板")
+                if "hosted or participated" not in body.lower() and "主持或参与" not in body:
+                    leak.append(p.name + ":非项目主持/参与证明")
         report["generate"] = {
             "ok": bool(gen.get("ok")) and not leak,
             "error": (gen.get("error") or "") + (("；混排/申报企业残留: " + ";".join(leak)) if leak else ""),

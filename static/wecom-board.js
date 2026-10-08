@@ -506,6 +506,7 @@
         if (g.messageCount) bits.push('消息 ' + g.messageCount);
         if (g.freshCount) bits.push('新 ' + g.freshCount);
         if (g.hasOpinion) bits.push('有意见');
+        if (g.issueHits) bits.push('重要问题 ' + g.issueHits);
         if (g.createdCount) bits.push('提交 ' + g.createdCount);
         if (g.pendingCount) bits.push('待审 ' + g.pendingCount);
         if (g.skippedCount) bits.push('跳过 ' + g.skippedCount);
@@ -514,6 +515,7 @@
           wwGroupStatusTag(g.status) + '</div>' +
           (bits.length ? '<div class="grp-bits">' + esc(bits.join(' · ')) + '</div>' : '') +
           (g.note ? '<div class="grp-note">' + esc(g.note) + '</div>' : '') +
+          (g.fileClassNote ? '<div class="grp-note">' + esc(g.fileClassNote) + '</div>' : '') +
           '</div>';
       }).join('') + '</div>'
       : '<div class="wecom-empty" style="padding:12px">本轮未扫描到各会话明细</div>';
@@ -1020,13 +1022,9 @@
     wecomState.searchMode = false;
     var start = opts.skipDates ? '' : ((document.getElementById('wecomStart') || {}).value || '');
     var end = opts.skipDates ? '' : ((document.getElementById('wecomEnd') || {}).value || '');
-    var url = '/api/wecom/groups/' + encodeURIComponent(sid) + '/messages?limit=' + wecomState.limit;
-    if (aroundId || aroundTime) {
-      if (aroundId) url += '&around_id=' + encodeURIComponent(aroundId);
-      if (aroundTime) url += '&around_time=' + encodeURIComponent(aroundTime);
-    } else {
-      url += '&tail=1&from_end=' + (wecomState.fromEnd || 0);
-    }
+    var url = '/api/wecom/groups/' + encodeURIComponent(sid) + '/messages?full=1';
+    if (aroundId) url += '&around_id=' + encodeURIComponent(aroundId);
+    if (aroundTime) url += '&around_time=' + encodeURIComponent(aroundTime);
     if (wecomSourceParam()) url += '&source_id=' + encodeURIComponent(wecomSourceParam());
     if (start) url += '&start_date=' + encodeURIComponent(start);
     if (end) url += '&end_date=' + encodeURIComponent(end);
@@ -1050,9 +1048,8 @@
       if (title && wecomState.sessionName) title.textContent = wecomState.sessionName;
       var items = d.items || [];
       var names = wecomReplicaNames();
-      var pageNote = wecomState.fromEnd ? ('已跳过最新 ' + wecomState.fromEnd + ' 条') : '最新';
-      if (d.aroundHit) pageNote = '已定位原文';
-      if (sub) sub.textContent = '本页 ' + items.length + ' 条（重复已合并）· ' + pageNote +
+      if (sub) sub.textContent = '共 ' + items.length + ' 条（重复已合并 · 全部显示）' +
+        (d.aroundHit ? ' · 已定位原文' : '') +
         (d.readMode === 'local' ? ' · 本地直读' : '') +
         (start || end ? ' · 已按日期筛选' : '') + ' · ' + names;
       var key = wecomMsgKey(items);
@@ -1080,14 +1077,7 @@
         wecomRailOpen('files');
         if (locateMid) wecomFileHighlightRow(locateMid);
       }
-      if (pager) {
-        pager.hidden = !wecomState.hasEarlier && wecomState.fromEnd <= 0;
-        document.getElementById('wecomPageInfo').textContent = wecomState.fromEnd
-          ? ('更早 ' + wecomState.fromEnd + ' 条之前 · 本页 ' + items.length)
-          : ('最新 ' + items.length + ' 条');
-        document.getElementById('wecomPrev').disabled = !wecomState.hasEarlier;
-        document.getElementById('wecomNext').disabled = wecomState.fromEnd <= 0;
-      }
+      if (pager) pager.hidden = true;
     }).catch(function (e) {
       if (!wecomMsgAlive(reqId, sid)) return;
       if (!quiet) wecomFail(stream, e.message || '加载失败');
@@ -1551,7 +1541,10 @@
     var stream = document.getElementById('wecomStream');
     var sid = wecomState.sessionId;
     var keys = items.map(wecomIntentKey);
-    wecomIntentHydrateGen++;
+    var gen = ++wecomIntentHydrateGen;
+    var CHUNK = 40;
+    var off = 0;
+    var okN = 0;
     if (btn) { btn.disabled = true; btn.textContent = '分析中…'; }
     if (stream) {
       stream.querySelectorAll('.wecom-intent-after').forEach(function (el) {
@@ -1559,29 +1552,54 @@
         el.textContent = '正在分析…';
       });
     }
-    fetch('/api/wecom/intent-page', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sid, keys: keys, messages: items.map(wecomIntentPayload) })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (x) {
-        var d = x.j || {};
-        if (!x.ok) { say(false, d.detail || '意图分析失败'); return; }
-        var rows = d.items || [];
-        wecomState.intentCache = wecomState.intentCache || {};
-        keys.forEach(function (key, i) {
-          var row = rows[i] || { readLabel: '已读', error: '这条没有返回意图' };
-          row.readLabel = row.readLabel || '已读';
-          wecomState.intentCache[key] = row;
+    function done(ok, msg) {
+      if (btn) { btn.disabled = false; btn.textContent = '分析意图'; }
+      say(ok, msg);
+    }
+    function nextChunk() {
+      if (gen !== wecomIntentHydrateGen || sid !== wecomState.sessionId) {
+        done(false, '已切换会话，分析中止');
+        return;
+      }
+      if (off >= items.length) {
+        var box = document.getElementById('wecomStream');
+        if (box) wecomIntentRestore(box, wecomState.pageItems || []);
+        done(true, '已分析 ' + okN + ' / ' + keys.length + ' 条');
+        return;
+      }
+      var end = Math.min(off + CHUNK, items.length);
+      if (btn) btn.textContent = '分析中 ' + end + '/' + items.length + '…';
+      var slice = items.slice(off, end);
+      var sliceKeys = keys.slice(off, end);
+      fetch('/api/wecom/intent-page', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sid,
+          keys: sliceKeys,
+          messages: slice.map(wecomIntentPayload)
+        })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (x) {
+          var d = x.j || {};
+          if (!x.ok) { done(false, d.detail || '意图分析失败'); return; }
+          var rows = d.items || [];
+          wecomState.intentCache = wecomState.intentCache || {};
+          sliceKeys.forEach(function (key, i) {
+            var row = rows[i] || { readLabel: '已读', intentLabel: '其他', error: '这条没有返回意图' };
+            row.readLabel = row.readLabel || '已读';
+            wecomState.intentCache[key] = row;
+          });
+          okN += sliceKeys.length;
+          var box = document.getElementById('wecomStream');
+          if (box) wecomIntentRestore(box, wecomState.pageItems || []);
+          off = end;
+          nextChunk();
+        }).catch(function (e) {
+          done(false, e.message || '意图分析失败');
         });
-        var same = sid === wecomState.sessionId && keys.join('\n') === (wecomState.pageItems || []).map(wecomIntentKey).join('\n');
-        if (same && stream) wecomIntentRestore(stream, wecomState.pageItems || []);
-        say(true, '已分析本页 ' + keys.length + ' 条');
-      }).catch(function (e) {
-        say(false, e.message || '意图分析失败');
-      }).finally(function () {
-        if (btn) { btn.disabled = false; btn.textContent = '分析意图'; }
-      });
+    }
+    nextChunk();
   }
   function wecomFileBox() {
     return document.getElementById('wecomFileBox');
@@ -1596,7 +1614,7 @@
       return;
     }
     if (!box) return;
-    box.innerHTML = '<div class="wecom-empty">正在汇总本会话文件…</div>';
+    box.innerHTML = '<div class="wecom-empty">正在按聊天上下文分类本会话文件…<br><span style="font-size:12px;color:#8a93a6">会读取文件前后消息；首次可能稍慢</span></div>';
     var dates = wecomSplitDates();
     fetch('/api/wecom/file-summary', {
       method: 'POST',
@@ -1642,6 +1660,8 @@
           filename: f.filename || '',
           sender: f.sender || '',
           time: f.time || '',
+          reason: f.reason || '',
+          source: f.source || '',
           messageId: f.messageId || '',
           copies: f.copies || [],
           sessionId: f.sessionId || d.session_id || '',
@@ -1683,7 +1703,7 @@
     return wecomFileAllRows().filter(function (f) {
       if (cat && f.label !== cat) return false;
       if (!q) return true;
-      var blob = (f.label + ' ' + f.filename).toLowerCase();
+      var blob = (f.label + ' ' + f.filename + ' ' + (f.sender || '') + ' ' + (f.time || '') + ' ' + (f.reason || '')).toLowerCase();
       return blob.indexOf(q) >= 0;
     });
   }
@@ -1735,12 +1755,13 @@
     } else {
       html += '<div class="wecom-files-bar">' +
         '<div class="wecom-files-find">' +
-          '<label class="wecom-files-search"><span>搜索</span><input id="wecomFileQ" value="' + escAttr(wecomFileQuery) + '" placeholder="文件名" autocomplete="off"></label>' +
+          '<label class="wecom-files-search"><span>搜索</span><input id="wecomFileQ" value="' + escAttr(wecomFileQuery) + '" placeholder="文件名 / 发出人" autocomplete="off"></label>' +
           '<label class="wecom-files-cat"><span>类别</span><select id="wecomFileCat">' + catOpts + '</select></label>' +
         '</div>' +
         '<div class="wecom-files-meta">' +
           (session ? '<span class="wecom-files-sess" title="' + escAttr(session) + '">' + esc(session) + '</span>' : '') +
           '<span class="count-pill">' + esc(countText) + '</span>' +
+          (d.classifyNote ? '<span class="wecom-files-sess" title="' + escAttr(d.classifyNote) + '">' + esc(d.classifyNote) + '</span>' : '') +
           (picked ? '<span class="wecom-files-picked">已选 ' + picked + '</span>' : '') +
         '</div></div>';
       if (!n) {
@@ -1762,8 +1783,17 @@
           }
           var key = wecomFileKey(f);
           var on = wecomFileChecked[key] ? ' checked' : '';
+          var who = String(f.sender || '').trim() || '未知';
+          var when = String(f.time || '').trim() || '未知';
+          var why = String(f.reason || '').trim();
+          var srcMap = {context: '聊天', gemini: '模型', filename: '文件名'};
+          var srcLab = srcMap[f.source] || '';
           html += '<label class="wecom-files-row"><input type="checkbox" data-file="1" data-key="' + escAttr(key) + '" data-name="' + escAttr(f.filename) + '" data-mid="' + escAttr(f.messageId) + '"' + on + '>' +
             '<span class="nm" title="' + escAttr(f.filename) + '">' + esc(f.filename || '未命名') + '</span>' +
+            '<span class="wecom-files-who" title="' + escAttr('发出人 ' + who + ' 发出时间 ' + when + (why ? '　' + why : '')) + '">' +
+            '<em>发出人</em>' + esc(who) + '<em>发出时间</em>' + esc(when) +
+            (srcLab ? '<em>依据</em>' + esc(srcLab) : '') +
+            (why ? '<em>分类</em>' + esc(why) : '') + '</span>' +
             '<span class="wecom-files-acts">' +
             '<button type="button" class="mini wecom-files-loc" data-locate="' + escAttr(JSON.stringify(wecomFileLocatePayload(f))) + '">定位</button>' +
             '<button type="button" class="mini wecom-files-dl" data-name="' + escAttr(f.filename || 'file') + '" data-copies="' + encodeURIComponent(JSON.stringify(wecomExpandCopies(f.copies || [], f.messageId, f.sessionId || wecomState.sessionId))) + '" data-wecom-dl="' + escAttr(f.messageId || '') + '">下载</button></span></label>';
@@ -2749,6 +2779,54 @@
     html += '</div>';
     return html;
   }
+  function wecomAiFileTypesBlock(d) {
+    var ft = d.fileTypes || {};
+    var items = ft.items || [];
+    if (!items.length && !(ft.fileCount)) {
+      var groups = d.groups || [];
+      groups.forEach(function (g) {
+        var one = (g.fileTypes || {}).items || [];
+        one.forEach(function (it) {
+          var row = Object.assign({}, it);
+          row.session_name = row.session_name || g.session_name || '';
+          items.push(row);
+        });
+      });
+    }
+    if (!items.length) return '';
+    var counts = ft.counts || {};
+    if (!Object.keys(counts).length) {
+      items.forEach(function (it) {
+        var lab = it.label || '其他';
+        counts[lab] = (counts[lab] || 0) + 1;
+      });
+    }
+    var order = ['申报书', '修改意见', '护照', '身份证明', '学历证明', '工作证明', '意向协议', '股权证明', '论文全文', '证件照', '电子签', '项目证明', '成果转化证明', '其他'];
+    var pills = order.filter(function (k) { return counts[k]; }).map(function (k) {
+      return '<span class="wecom-ai-tag">' + esc(k) + ' ' + esc(counts[k]) + '</span>';
+    }).join('');
+    var byLab = {};
+    items.forEach(function (it) {
+      var lab = it.label || '其他';
+      (byLab[lab] = byLab[lab] || []).push(it);
+    });
+    var html = '<div class="wecom-ai-card"><h5>文件分类（按聊天上下文）</h5>';
+    if (ft.geminiNote) html += '<p class="wecom-ai-sub">' + esc(ft.geminiNote) + '</p>';
+    html += '<div class="wecom-ai-stat" style="margin:8px 0">' + pills + '</div>';
+    order.forEach(function (lab) {
+      var rows = byLab[lab] || [];
+      if (!rows.length) return;
+      html += '<div class="wecom-ai-files-sec"><b>' + esc(lab) + '</b>';
+      rows.slice(0, 12).forEach(function (it) {
+        html += '<div class="wecom-ai-file"><span class="nm">' + esc(it.filename || '未命名') + '</span>' +
+          '<div class="why">' + esc((it.sender ? it.sender + ' · ' : '') + (it.time || '') + (it.reason ? ' · ' + it.reason : '')) + '</div></div>';
+      });
+      if (rows.length > 12) html += '<div class="why">另有 ' + (rows.length - 12) + ' 个</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
   function wecomAiRender(d) {
     var body = document.getElementById('wecomAiBody');
     var sub = document.getElementById('wecomAiSub');
@@ -2846,11 +2924,12 @@
     }
     var stale = wecomState.aiStale ? '<div class="wecom-ai-stale" id="wecomAiStale">已切换会话，请重新解读</div>' : '<div class="wecom-ai-stale" id="wecomAiStale" hidden>已切换会话，请重新解读</div>';
     var bindBlock = wecomAiBindBlock(d);
+    var fileBlock = wecomAiFileTypesBlock(d);
     var acts = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
       '<button type="button" class="mini primary" id="wecomAiSplitGo">拆解任务</button>' +
       '<button type="button" class="mini" id="wecomAiRefresh">重新解读</button>' +
       '<button type="button" class="mini" id="wecomAiGoLog">解读记录</button></div>';
-    body.innerHTML = stats + stale + bindBlock + sumBlock + opBlock + riskBlock + caseBlock + acts;
+    body.innerHTML = stats + stale + bindBlock + fileBlock + sumBlock + opBlock + riskBlock + caseBlock + acts;
     body.querySelectorAll('.wecom-ai-bind-tab').forEach(function (btn) {
       btn.addEventListener('click', function () {
         wecomState.bindPromptView = btn.getAttribute('data-bind') || 'time_window';
@@ -2955,7 +3034,7 @@
     var sub = document.getElementById('wecomAiSub');
     var btn = document.getElementById('wecomAiBtn');
     var name = wecomState.sessionName || wecomState.sessionId;
-    if (body) body.innerHTML = '<div class="wecom-empty">正在读取当前会话全部聊天记录…<br><span style="font-size:12px;color:#8a93a6">' + esc(name) + ' · 通读会话 → 列出申报书版本与对应修改意见</span></div>';
+    if (body) body.innerHTML = '<div class="wecom-empty">正在读取当前会话全部聊天记录…<br><span style="font-size:12px;color:#8a93a6">' + esc(name) + ' · 通读会话 → 按前后聊天区分文件类型 → 配对申报书与修改意见</span></div>';
     if (sub) sub.textContent = '分析中 · ' + name;
     wecomAiLoading = true;
     if (btn) btn.disabled = true;

@@ -25,20 +25,51 @@ DEFAULT_BIND_PROMPTS = [
     PROMPT_SEMANTIC_STRICT,
 ]
 _UNKNOWN_ATTACH = "未识别编号"
+_COMPANY_RE = re.compile(r"([\u4e00-\u9fa5A-Za-z0-9·]+(?:有限责任公司|股份有限公司|有限公司|股份公司))")
+_LEAD_NUM = re.compile(r"^(?:\d\s+)?(\d{4,6})(?:[^\d]|$)")
+_WECOM_PREFIX = re.compile(r"^「[^\[」]*[:：\[]*(?:文件\])?")
 
 
 def _msg_time(m: dict) -> str:
     return str(m.get("time_text") or m.get("time") or "").strip()
 
 
+def _company_of(filename: str) -> str:
+    m = _COMPANY_RE.search(str(filename or ""))
+    return (m.group(1) or "").strip() if m else ""
+
+
+def _person_of(app: dict) -> str:
+    fname = str(app.get("filename") or "")
+    for raw in list(app.get("names") or []) + [fname]:
+        s = _WECOM_PREFIX.sub("", str(raw or "")).strip()
+        s = re.sub(r"\.[A-Za-z0-9]{1,8}$", "", s)
+        s = re.sub(r"[_（(]?(?:美国|英文简历|申报书).*$", "", s)
+        full, toks = M.accept_person_name(s)
+        if full and toks:
+            return str(full)
+        lat = re.search(r"\b([A-Z][A-Za-z'.\-]+(?:\s+[A-Z][A-Za-z'.\-]+){1,4})\b", s)
+        if lat:
+            label, _ = M.accept_person_name(lat.group(1))
+            if label:
+                return label
+    return ""
+
+
 def _pick_attach_id(nums: list, text: str = "", filename: str = "") -> str:
+    fname = str(filename or "")
+    lead = _LEAD_NUM.match(_WECOM_PREFIX.sub("", fname).lstrip())
+    if lead:
+        s = lead.group(1)
+        if M.is_book_num(s):
+            return s
     for n in nums or []:
         s = str(n or "").strip()
-        if re.fullmatch(r"\d{4,6}", s):
+        if re.fullmatch(r"\d{4,6}", s) and M.is_book_num(s):
             return s
-    blob = " ".join(x for x in (filename, text) if x)
+    blob = " ".join(x for x in (fname, text) if x)
     for n in M.extract_book_nums(blob):
-        if re.fullmatch(r"\d{4,6}", str(n)):
+        if re.fullmatch(r"\d{4,6}", str(n)) and M.is_book_num(str(n)):
             return str(n)
     return _UNKNOWN_ATTACH
 
@@ -55,11 +86,12 @@ def _catalog_item(m: dict, role: str, session_id: str, session_name: str) -> dic
     attach_id = _pick_attach_id(keys.get("nums") or [], keys.get("text") or "", fname)
     mid = str(m.get("message_id") or "").strip()
     kind = "text" if role == "text" else "file"
-    return {
+    display = fname if kind == "file" else "群聊修改意见.txt"
+    item = {
         "role": role,
         "kind": kind,
         "attachId": attach_id,
-        "filename": fname if kind == "file" else "群聊修改意见.txt",
+        "filename": display,
         "time": _msg_time(m),
         "sender": str(m.get("sender") or ""),
         "messageId": mid,
@@ -69,7 +101,11 @@ def _catalog_item(m: dict, role: str, session_id: str, session_name: str) -> dic
         "text": str(m.get("text") or m.get("snippet") or "")[:400] if kind == "text" else "",
         "sessionId": session_id,
         "sessionName": session_name,
+        "company": _company_of(display if kind == "file" else (keys.get("text") or "")),
     }
+    if kind == "file":
+        item["person"] = _person_of(item)
+    return item
 
 
 def extract_catalog(messages: list, *, session_id: str = "", session_name: str = "") -> dict:
@@ -136,16 +172,40 @@ def bind_opinions_time_window(
     return vers, unbound
 
 
+def _item_blob(item: dict) -> str:
+    return " ".join(
+        str(x) for x in (
+            item.get("filename") or "",
+            item.get("text") or "",
+            " ".join(str(n) for n in (item.get("nums") or [])),
+        ) if x
+    )
+
+
 def _id_match(attach_id: str, item: dict) -> bool:
-    if attach_id == _UNKNOWN_ATTACH:
-        nums = item.get("nums") or []
-        blob = " ".join([str(item.get("filename") or ""), str(item.get("text") or "")])
-        return not nums and not M.extract_book_nums(blob)
-    nums = {str(x) for x in (item.get("nums") or [])}
-    if attach_id in nums:
+    return _talent_item_match({"attachId": attach_id, "label": attach_id}, item)
+
+
+def _talent_item_match(talent: dict, item: dict) -> bool:
+    """编号优先；同号再看公司；无编号则公司或人名。"""
+    aid = str(talent.get("attachId") or "").strip()
+    company = str(talent.get("company") or "").strip()
+    person = str(talent.get("person") or "").strip()
+    blob = _item_blob(item)
+    item_co = str(item.get("company") or "") or _company_of(item.get("filename") or "")
+    if aid and aid != _UNKNOWN_ATTACH:
+        nums = {str(x) for x in (item.get("nums") or [])}
+        id_hit = aid in nums or aid in blob or aid in set(M.extract_book_nums(blob))
+        if not id_hit:
+            return False
+        if company and item_co and item_co != company:
+            return False
         return True
-    blob = " ".join([str(item.get("filename") or ""), str(item.get("text") or "")])
-    return attach_id in blob or attach_id in " ".join(M.extract_book_nums(blob))
+    if company:
+        return bool(item_co and item_co == company) or (company in blob)
+    if person:
+        return person.lower() in blob.lower()
+    return False
 
 
 def bind_opinions_name_id(
@@ -153,19 +213,23 @@ def bind_opinions_name_id(
     opinions: list[dict],
     *,
     attach_id: str,
+    talent: dict | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """文件名或正文编号一致才绑；时间只用于排序；冲突写入 conflicts。"""
+    """文件名或正文编号/公司一致才绑；时间只用于排序；冲突写入 conflicts。"""
     vers = [dict(v) for v in versions or []]
     for v in vers:
         v["opinions"] = []
-    pool = [op for op in opinions or [] if _id_match(attach_id, op)]
+    meta = talent or {"attachId": attach_id, "label": attach_id}
+    pool = [op for op in opinions or [] if _talent_item_match(meta, op)]
     unbound = [op for op in opinions or [] if op not in pool]
     conflicts: list[dict] = []
     for op in sorted(pool, key=lambda x: (parse_time(x.get("time")) or datetime.min, x.get("messageId") or "")):
         cands = []
         for ver in vers:
-            if _id_match(attach_id, ver) or attach_id == _UNKNOWN_ATTACH:
+            if _talent_item_match(meta, ver) or (not meta.get("attachId") and not meta.get("company")):
                 cands.append(ver)
+        if not cands:
+            cands = list(vers)
         if not cands:
             unbound.append(op)
             continue
@@ -191,6 +255,69 @@ def bind_opinions_name_id(
             })
             unbound.append(op)
     return vers, unbound, conflicts
+
+
+def _opinion_has_id(op: dict) -> bool:
+    nums = [str(x) for x in (op.get("nums") or []) if M.is_book_num(str(x))]
+    if nums:
+        return True
+    blob = _item_blob(op)
+    return bool(M.extract_book_nums(blob))
+
+
+def bind_orphan_opinions(
+    talents: list[dict],
+    opinions: list[dict],
+    *,
+    window_hours: int = 48,
+    cluster_minutes: int = 15,
+) -> list[dict]:
+    """无编号意见挂到时间上紧挨着的上一份申报书；同一分钟发出的多份一起挂。"""
+    bound_ids: set[str] = set()
+    rows = []
+    for t in talents or []:
+        for v in t.get("versions") or []:
+            for op in v.get("opinions") or []:
+                mid = str(op.get("messageId") or "")
+                if mid:
+                    bound_ids.add(mid)
+            rows.append((t, v, parse_time(v.get("time")) or datetime.min))
+    rows.sort(key=lambda x: (x[2], str(x[1].get("messageId") or "")))
+    leftover = []
+    try:
+        hours = int(window_hours)
+    except (TypeError, ValueError):
+        hours = 48
+    span = timedelta(minutes=max(1, int(cluster_minutes)))
+    for op in opinions or []:
+        mid = str(op.get("messageId") or "")
+        if mid in bound_ids:
+            continue
+        if _opinion_has_id(op) or op.get("company"):
+            leftover.append(op)
+            continue
+        op_dt = parse_time(op.get("time"))
+        if not op_dt:
+            leftover.append(op)
+            continue
+        cands = [r for r in rows if r[2] <= op_dt]
+        if not cands:
+            leftover.append(op)
+            continue
+        latest = cands[-1][2]
+        if hours > 0 and op_dt >= latest + timedelta(hours=max(1, hours)):
+            leftover.append(op)
+            continue
+        cluster = [r for r in cands if latest - r[2] <= span]
+        slim = _slim_opinion(op)
+        for _t, ver, _dt in cluster:
+            ops = list(ver.get("opinions") or [])
+            if any(str(x.get("messageId") or "") == mid for x in ops):
+                continue
+            ops.append(slim)
+            ver["opinions"] = ops
+        bound_ids.add(mid)
+    return leftover
 
 
 def _slim_opinion(op: dict) -> dict:
@@ -233,21 +360,44 @@ def _match_library(chat_time: str, rows: list[dict], can_read: Callable[[dict], 
     return _public_library(best), False
 
 
+def _group_key(app: dict) -> tuple[str, str, str]:
+    aid = str(app.get("attachId") or "").strip()
+    if aid == _UNKNOWN_ATTACH:
+        aid = ""
+    company = str(app.get("company") or "") or _company_of(app.get("filename") or "")
+    person = str(app.get("person") or "") or (_person_of(app) if not aid and not company else "")
+    if not aid and not company and not person:
+        return ("", "", _UNKNOWN_ATTACH)
+    return (aid, company, person)
+
+
+def _talent_label(aid: str, company: str, person: str) -> str:
+    if aid and company:
+        return aid + " " + company
+    if aid:
+        return aid
+    if company:
+        return company
+    if person:
+        return person
+    return _UNKNOWN_ATTACH
+
+
 def build_talent_versions(
     apps: list[dict],
     *,
     list_by_attach: Callable[[str], list[dict]] | None = None,
     can_read: Callable[[dict], bool] | None = None,
 ) -> list[dict]:
-    """按 attach_id 分组，申报书按时间 chat-1、chat-2…"""
-    groups: dict[str, list[dict]] = {}
+    """按编号+公司（或人名）分组，申报书按时间 chat-1、chat-2…"""
+    groups: dict[tuple[str, str, str], list[dict]] = {}
     for app in apps or []:
-        aid = str(app.get("attachId") or _UNKNOWN_ATTACH)
-        groups.setdefault(aid, []).append(app)
+        groups.setdefault(_group_key(app), []).append(app)
     talents = []
-    for aid in sorted(groups.keys(), key=lambda x: (x == _UNKNOWN_ATTACH, x)):
-        vers_apps = sorted(groups[aid], key=lambda x: (parse_time(x.get("time")) or datetime.min, x.get("messageId") or ""))
-        lib_rows = list_by_attach(aid) if list_by_attach and aid != _UNKNOWN_ATTACH else []
+    keys = sorted(groups.keys(), key=lambda x: (x[2] == _UNKNOWN_ATTACH, x[0] == "", x[0], x[1], x[2]))
+    for aid, company, person in keys:
+        vers_apps = sorted(groups[(aid, company, person)], key=lambda x: (parse_time(x.get("time")) or datetime.min, x.get("messageId") or ""))
+        lib_rows = list_by_attach(aid) if list_by_attach and aid else []
         versions = []
         for i, app in enumerate(vers_apps):
             lib, hidden = _match_library(app.get("time") or "", lib_rows, can_read)
@@ -260,11 +410,14 @@ def build_talent_versions(
                 "opinions": [],
                 "libraryVersion": lib,
                 "libraryHidden": bool(hidden),
+                "company": company or str(app.get("company") or "") or _company_of(app.get("filename") or ""),
             }
             versions.append(row)
         talents.append({
-            "attachId": aid if aid != _UNKNOWN_ATTACH else "",
-            "label": aid,
+            "attachId": aid,
+            "label": _talent_label(aid, company, person),
+            "company": company,
+            "person": person if person != _UNKNOWN_ATTACH else "",
             "versions": versions,
         })
     return talents
@@ -353,13 +506,15 @@ def _bind_result_for_prompt(
     all_unbound: list[dict] = []
     conflicts: list[dict] = []
     for t in talents:
-        aid = str(t.get("label") or t.get("attachId") or "")
+        aid = str(t.get("attachId") or t.get("label") or "")
         vers = [dict(v) for v in t.get("versions") or []]
-        pool = [op for op in opinions if _id_match(aid, op) or (aid == _UNKNOWN_ATTACH and op.get("attachId") == _UNKNOWN_ATTACH)]
+        pool = [op for op in opinions if _talent_item_match(t, op)]
         if prompt_id == PROMPT_TIME_WINDOW:
+            # 有编号的仍按本人才时间窗；无编号的后面用簇填充
             vers, unbound = bind_opinions_time_window(vers, pool, window_hours=window_hours)
         elif prompt_id == PROMPT_NAME_ID:
-            vers, unbound, conflicts = bind_opinions_name_id(vers, pool, attach_id=aid)
+            vers, unbound, extra = bind_opinions_name_id(vers, pool, attach_id=aid, talent=t)
+            conflicts.extend(extra)
         else:
             unbound = pool
         for v in vers:
@@ -367,26 +522,21 @@ def _bind_result_for_prompt(
                 bound_ops.add(str(op.get("messageId") or ""))
         out_talents.append({**t, "versions": vers})
         all_unbound.extend(unbound)
-    # 全局未绑定：不在任何版本上的意见
-    global_unbound = []
-    seen = set()
-    for op in opinions:
-        mid = str(op.get("messageId") or "")
-        if mid in bound_ops or mid in seen:
-            continue
-        seen.add(mid)
-        global_unbound.append(_slim_opinion(op))
     if prompt_id in (PROMPT_TIME_WINDOW, PROMPT_NAME_ID):
-        # 合并各组 unbound 去重
+        leftover = bind_orphan_opinions(out_talents, opinions, window_hours=window_hours)
+        bound_ops = set()
+        for t in out_talents:
+            for v in t.get("versions") or []:
+                for op in v.get("opinions") or []:
+                    bound_ops.add(str(op.get("messageId") or ""))
         ub_seen = set()
-        merged = []
-        for op in all_unbound + global_unbound:
+        unbound_out = []
+        for op in leftover + all_unbound:
             mid = str(op.get("messageId") or op.get("message_id") or "")
             if not mid or mid in ub_seen or mid in bound_ops:
                 continue
             ub_seen.add(mid)
-            merged.append(_slim_opinion(op))
-        unbound_out = merged
+            unbound_out.append(_slim_opinion(op))
     else:
         unbound_out = [_slim_opinion(op) for op in opinions if str(op.get("messageId") or "") not in bound_ops]
     return {
@@ -514,6 +664,21 @@ async def _bind_semantic(
         cleaned["id"] = pid
         # 保留库版本字段
         cleaned["talents"] = _merge_library_fields(cleaned.get("talents") or [], talents)
+        leftover = bind_orphan_opinions(
+            cleaned.get("talents") or [],
+            catalog.get("opinions") or [],
+            window_hours=window_hours,
+        )
+        bound = {
+            str(op.get("messageId") or "")
+            for t in (cleaned.get("talents") or [])
+            for v in (t.get("versions") or [])
+            for op in (v.get("opinions") or [])
+        }
+        cleaned["unboundOpinions"] = [
+            _slim_opinion(op) for op in leftover
+            if str(op.get("messageId") or "") not in bound
+        ]
         return cleaned
     except (LlmError, ValueError, TypeError, json.JSONDecodeError) as e:
         return {

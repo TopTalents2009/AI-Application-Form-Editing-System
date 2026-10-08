@@ -530,6 +530,13 @@ class TaskStore:
         Path(tmp).write_text(json.dumps(clone, ensure_ascii=False, indent=2), encoding="utf-8")
         atomic_replace(tmp, self.mpath(t["id"]))
 
+    def _alert_failed(self, t):
+        try:
+            from . import alert as AL
+            AL.task_failed(t)
+        except Exception:
+            pass
+
     def log(self, t, msg):
         t.setdefault("log", []).append({"t": now_str(), "msg": str(msg)})
         if len(t["log"]) > 600: del t["log"][: len(t["log"]) - 600]
@@ -1797,12 +1804,15 @@ class TaskStore:
                 await self.apply_confirmed(t, edits, leftovers, actor=actor)
         except ValueError as e:
             t["status"] = "failed"; t["error"] = str(e); t["finishedAt"] = now_str(); self.persist(t)
+            self._alert_failed(t)
         except LlmError as e:
             t["status"] = "failed"; t["error"] = str(e); t["finishedAt"] = now_str(); self.persist(t)
+            self._alert_failed(t)
         except Exception as e:
             import traceback; t["status"] = "failed"
             t["error"] = traceback.format_exc()[-900:]
             t["finishedAt"] = now_str(); self.persist(t)
+            self._alert_failed(t)
 
     # ---------- ② 人工确认后写入文件 ----------
     async def apply_confirmed(self, t, edits, leftovers, actor: str = ""):
@@ -2101,9 +2111,12 @@ class TaskStore:
                     "全部 " + str(tried) + " 条编辑均未写入申报书（find 未命中）。"
                     "已生成修改对照表供核对，请修正改前摘录后重试"
                 )
+                self._alert_failed(t)
                 return
             if not await self.verify_outputs(t):
-                t["status"] = "failed"; t["error"] = "成品校验未通过（详见产出校验信息）"; return
+                t["status"] = "failed"; t["error"] = "成品校验未通过（详见产出校验信息）"
+                self._alert_failed(t)
+                return
             t["status"] = "done"
             try:
                 self.snapshot_version(t)
@@ -2129,10 +2142,13 @@ class TaskStore:
             self.log(t, "完成：编辑 " + str(hits) + "/" + str(len(applied)) + "，遗留 " + str(len(leftovers)) + " 条，产出 " + str(len(t["outputs"])) + " 个文件" + who)
         except ValueError as e:
             t["status"] = "failed"; t["error"] = str(e)
+            self._alert_failed(t)
         except LlmError as e:
             t["status"] = "failed"; t["error"] = str(e)
+            self._alert_failed(t)
         except Exception as e:
             import traceback; t["status"] = "failed"
             t["error"] = traceback.format_exc()[-900:]
+            self._alert_failed(t)
         finally:
             t["finishedAt"] = now_str(); self.persist(t)

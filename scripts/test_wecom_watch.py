@@ -62,6 +62,22 @@ def test_rule_skips_chatter():
     assert "护照" in hits[0]["text"]
 
 
+def test_rule_respects_context_kind():
+    passport = {
+        "message_id": 9,
+        "attachment_name": "张三.pdf",
+        "has_attachment": True,
+    }
+    hits = rule_opinion_ids([passport], kind_of=lambda m: "ignore")
+    assert hits == []
+    hits2 = rule_opinion_ids([
+        passport,
+        {"text": "这是修改意见，请按意见改申报书", "message_id": 10},
+    ], kind_of=lambda m: "ignore" if m.get("has_attachment") else "text")
+    assert len(hits2) == 1
+    assert hits2[0]["message_id"] == 10
+
+
 def test_judgment_prompt_keeps_chinese():
     text = judgment_prompt([{"id": 2, "text": "请把护照号码改成 E123", "rule": "text", "sender": "审核"}])
     assert "has_opinion" in text
@@ -148,6 +164,9 @@ def test_intent_bubble_is_read():
     assert rows[1]["intent"] == "send_form"
     short = parse_intent_list('[{"intent":"chat"}]', 2)
     assert len(short) == 2 and short[1]["error"]
+    wrapped = parse_intent_list('{"items":[{"intent":"confirm"},{"intent":"send_form"}]}', 2)
+    assert wrapped[0]["intent"] == "confirm"
+    assert wrapped[1]["intent"] == "send_form"
 
 
 def test_resolve_needs_key():
@@ -222,6 +241,7 @@ if __name__ == "__main__":
     test_parse_watch_json()
     test_strip_think()
     test_rule_skips_chatter()
+    test_rule_respects_context_kind()
     test_judgment_prompt_keeps_chinese()
     test_pending_origin()
     test_uploaded_book_stays_out_of_review_until_new_material()

@@ -72,6 +72,15 @@ def api_me(request: Request):
     return {"ok": True, "user": u}
 
 
+@router.get("/api/departments")
+def api_departments_public():
+    from .. import depts
+    try:
+        return {"ok": True, "items": depts.public_names()}
+    except Exception as e:
+        raise HTTPException(503, "数据库不可用：" + str(e)[:160])
+
+
 @router.get("/portal")
 def portal_page():
     return FileResponse(STATIC_DIR / "portal.html", headers={"Cache-Control": "no-cache"})

@@ -43,9 +43,9 @@ def _file_upload_public() -> dict:
 
 @router.post("/api/wecom/file-summary")
 async def api_file_summary(body: dict, request: Request):
-    """当前会话里的文件按人才附件类别汇总。登录用户可用（主界面与管理页）。"""
+    """当前会话文件按聊天上下文分类汇总；无缓存时调用模型复核。"""
     _user(request)
-    from ..attachments import classify_talent_filename
+    from ..wecom_file_class import CAT_ORDER, LABEL_TO_ID, classify_session_files
     body = body if isinstance(body, dict) else {}
     sid = str(body.get("session_id") or "").strip()
     if not sid:
@@ -60,47 +60,51 @@ async def api_file_summary(body: dict, request: Request):
         )
     except W.WecomError as e:
         raise _http(e)
+    messages = [m for m in (data.get("items") or []) if isinstance(m, dict)]
+    sess_name = str(data.get("display_name") or body.get("session_name") or "")
+    typed = await classify_session_files(messages, session_id=sid, use_gemini=True, keep_entries=True)
     groups = {}
     order = []
     seen = set()
-    for m in data.get("items") or []:
-        if not isinstance(m, dict):
+    for it in typed.get("entries") or typed.get("items") or []:
+        if not isinstance(it, dict):
             continue
-        fname = str(m.get("attachment_name") or "").strip()
-        if not fname and not m.get("has_attachment"):
-            continue
-        if not fname:
-            fname = str(m.get("text") or m.get("snippet") or "").strip()[:80]
-        if not fname:
-            continue
-        key = (fname, str(m.get("time_text") or ""), str(m.get("sender") or ""), str(m.get("message_id") or ""))
-        if key in seen:
+        fname = str(it.get("filename") or "").strip()
+        mid = it.get("messageId") or 0
+        key = (fname, str(it.get("time") or ""), str(it.get("sender") or ""), str(mid))
+        if not fname or key in seen:
             continue
         seen.add(key)
-        cid, label = classify_talent_filename(fname)
+        cid = str(it.get("type") or LABEL_TO_ID.get(it.get("label") or "") or "other")
+        label = str(it.get("label") or "其他")
         if cid not in groups:
             groups[cid] = {"id": cid, "label": label, "files": []}
             order.append(cid)
-        sess_name = str(data.get("display_name") or body.get("session_name") or "")
+        idx = it.get("index")
+        m = messages[idx] if isinstance(idx, int) and 0 <= idx < len(messages) else {}
         copies = []
-        for c in m.get("copies") or []:
+        for c in (m.get("copies") or []) if isinstance(m, dict) else []:
             if not isinstance(c, dict):
                 continue
             copies.append({
                 "source_id": str(c.get("source_id") or ""),
                 "source_label": str(c.get("source_label") or c.get("label") or ""),
-                "message_id": c.get("message_id") or m.get("message_id") or 0,
+                "message_id": c.get("message_id") or mid,
                 "session_id": str(c.get("session_id") or sid),
             })
         groups[cid]["files"].append({
             "filename": fname,
-            "sender": str(m.get("sender") or ""),
-            "time": str(m.get("time_text") or ""),
-            "messageId": m.get("message_id") or 0,
+            "sender": str(it.get("sender") or ""),
+            "time": str(it.get("time") or ""),
+            "messageId": mid,
             "copies": copies,
             "sessionId": sid,
             "sessionName": sess_name,
+            "reason": str(it.get("reason") or ""),
+            "source": str(it.get("source") or ""),
         })
+    rank = {lab: i for i, lab in enumerate(CAT_ORDER)}
+    order = sorted(order, key=lambda cid: rank.get((groups[cid] or {}).get("label") or "", 99))
     peers = []
     try:
         peers = await W.session_peers(sid)
@@ -110,7 +114,6 @@ async def api_file_summary(body: dict, request: Request):
         for g in groups.values():
             for f in g.get("files") or []:
                 f["copies"] = W.merge_copy_peers(f.get("copies") or [], peers)
-    sess_name = str(data.get("display_name") or body.get("session_name") or "")
     return {
         "ok": True,
         "session_id": sid,
@@ -119,6 +122,9 @@ async def api_file_summary(body: dict, request: Request):
         "fileCount": len(seen),
         "groups": [groups[k] for k in order],
         "upload": _file_upload_public(),
+        "classifyNote": typed.get("geminiNote") or "",
+        "usedGemini": bool(typed.get("usedGemini")),
+        "counts": typed.get("counts") or {},
     }
 
 
@@ -171,7 +177,7 @@ async def api_intent_page(body: dict, request: Request):
     messages = body.get("messages") if isinstance(body.get("messages"), list) else []
     if not messages:
         raise HTTPException(400, "本页没有可分析的聊天记录")
-    items = await judge_page(messages[:80])
+    items = await judge_page(messages)
     sid = str(body.get("session_id") or "").strip()
     keys = body.get("keys") if isinstance(body.get("keys"), list) else []
     if sid and keys:
@@ -378,6 +384,7 @@ async def api_group_messages(
     from_end: int = Query(0),
     around_id: str = Query(""),
     around_time: str = Query(""),
+    full: bool = Query(False),
 ):
     _user(request)
     try:
@@ -386,6 +393,7 @@ async def api_group_messages(
             start_date=start_date, end_date=end_date,
             offset=offset, limit=limit, tail=tail, from_end=from_end,
             around_id=around_id, around_time=around_time,
+            full=full,
         )
     except W.WecomError as e:
         raise _http(e)

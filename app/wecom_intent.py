@@ -8,7 +8,7 @@ import asyncio
 import json
 
 from .config import LLM_TIMEOUT_CLASSIFY, resolve_gemini
-from .llm import LlmError, chat, extract_json_lenient
+from .llm import LlmError, chat, extract_json_lenient, _strip_json_fence
 
 _INTENTS = {
     "send_form": "发送申报书",
@@ -76,11 +76,25 @@ def _blank_intent(note: str = "", error: str = "") -> dict:
 
 def parse_intent_list(text: str, n: int) -> list:
     """按输入条数对齐的意图数组。缺条或坏条记为其他。"""
-    s = str(text or "")
-    a = s.find("[")
-    if a < 0:
-        raise ValueError("意图结果不是数组")
-    data, _ = json.JSONDecoder().raw_decode(s, a)
+    s = _strip_json_fence(str(text or ""))
+    data = None
+    stripped = s.lstrip()
+    if stripped.startswith("["):
+        try:
+            data, _ = json.JSONDecoder().raw_decode(stripped, 0)
+        except json.JSONDecodeError:
+            data = None
+    if data is None:
+        obj = extract_json_lenient(s)
+        if isinstance(obj, list):
+            data = obj
+        elif isinstance(obj, dict):
+            for key in ("items", "intents", "results", "messages", "data"):
+                if isinstance(obj.get(key), list):
+                    data = obj[key]
+                    break
+            if data is None and ("intent" in obj or "read" in obj):
+                data = [obj]
     if not isinstance(data, list):
         raise ValueError("意图结果不是数组")
     out = []
@@ -154,9 +168,9 @@ async def judge_message(message: dict, context: list | None = None) -> dict:
 
 _BATCH_PROMPT = """You judge several enterprise WeChat messages in a Chinese talent-application (申报书) chat.
 Instructions are English. Keep each message text unchanged. Do not invent facts.
-Return a JSON array with exactly one object per input message, in the same order.
-Each object:
-{"read":true,"intent":"confirm","need":"","action":""}
+json_mode requires one JSON object. Return exactly:
+{"items":[{"read":true,"intent":"confirm","need":"","action":""}]}
+items length must equal the number of input messages, same order.
 intent is one of send_form, request_revision, supply_material, confirm, chat, other.
 send_form = they sent or will send an application form.
 request_revision = they ask to change form text, fields, or wording.
@@ -172,7 +186,7 @@ Messages:
 
 async def judge_page(messages: list) -> list:
     """本页消息批量判断。空消息不调用模型。每 8 条一组，最多两组同时进行。"""
-    rows = [m if isinstance(m, dict) else {} for m in (messages or [])][:80]
+    rows = [m if isinstance(m, dict) else {} for m in (messages or [])][:200]
     out: list = []
     pending: list[int] = []
     for i, message in enumerate(rows):
@@ -201,11 +215,11 @@ async def judge_page(messages: list) -> list:
                     json_mode=True,
                     timeout_s=timeout,
                     profile=prof,
-                    retries=0,
+                    retries=1,
                     apply_profile_timeout=False,
                 )
                 parsed = parse_intent_list(resp.get("content") or "", len(ids))
-            except (LlmError, ValueError, TypeError, json.JSONDecodeError) as e:
+            except Exception as e:
                 err = str(e)[:160]
                 parsed = [_blank_intent(error=err) for _ in ids]
         for idx, got in zip(ids, parsed):
@@ -215,4 +229,7 @@ async def judge_page(messages: list) -> list:
     for i, row in enumerate(out):
         if row is None:
             out[i] = _blank_intent(error="这条没有返回意图")
+    extra = len(messages or []) - len(out)
+    if extra > 0:
+        out.extend([_blank_intent(error="本批未覆盖，请再点分析意图") for _ in range(extra)])
     return out

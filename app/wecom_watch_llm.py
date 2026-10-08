@@ -8,13 +8,14 @@ from .wecom_jev import judgment_prompt
 from .wecom_split_llm import _allow_opinion, _as_int, _catalog
 
 
-def rule_opinion_ids(messages: list) -> list:
+def rule_opinion_ids(messages: list, kind_of=None) -> list:
     """规则层认为像修改意见的消息（文档或文本）。"""
+    kfn = kind_of if callable(kind_of) else _msg_kind
     hits = []
     for m in messages or []:
         if not isinstance(m, dict):
             continue
-        kind = _msg_kind(m)
+        kind = kfn(m)
         if kind in ("opinion", "text"):
             hits.append(m)
             continue
@@ -51,9 +52,9 @@ def parse_watch_json(text: str) -> dict:
     }
 
 
-async def detect_opinions(messages: list) -> dict:
+async def detect_opinions(messages: list, kind_of=None) -> dict:
     """看小窗口消息，返回是否有修改意见及对应原消息。"""
-    cat = _catalog(messages)
+    cat = _catalog(messages, kind_of=kind_of)
     empty = {
         "hasOpinion": False,
         "opinions": [],
@@ -89,7 +90,7 @@ async def detect_opinions(messages: list) -> dict:
         )
         parsed = parse_watch_json(resp.get("content") or "")
     except (LlmError, ValueError, TypeError, json.JSONDecodeError) as e:
-        hits = rule_opinion_ids(messages)
+        hits = rule_opinion_ids(messages, kind_of=kind_of)
         if hits:
             return {
                 "hasOpinion": True,
@@ -106,7 +107,7 @@ async def detect_opinions(messages: list) -> dict:
     out = []
     for row in parsed.get("opinions") or []:
         hit = by_id.get(row["id"])
-        if not hit or not _allow_opinion(hit["m"]):
+        if not hit or not _allow_opinion(hit["m"], kind_of):
             continue
         out.append({"message": hit["m"], "confidence": row["confidence"], "id": row["id"]})
     has = bool(parsed.get("hasOpinion") and out)

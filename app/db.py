@@ -64,7 +64,7 @@ def init_db() -> dict:
                   real_name VARCHAR(64) NOT NULL,
                   department VARCHAR(64) NOT NULL,
                   password_hash VARCHAR(255) NOT NULL,
-                  role ENUM('user','admin') NOT NULL DEFAULT 'user',
+                  role ENUM('user','leader','admin') NOT NULL DEFAULT 'user',
                   status ENUM('active','disabled') NOT NULL DEFAULT 'active',
                   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   last_login_at DATETIME NULL,
@@ -132,6 +132,24 @@ def init_db() -> dict:
                     if e.args and e.args[0] == 1060:
                         continue
                     raise
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS departments (
+                  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                  name VARCHAR(64) NOT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (id),
+                  UNIQUE KEY uk_dept_name (name)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            try:
+                cur.execute(
+                    "ALTER TABLE users MODIFY COLUMN role "
+                    "ENUM('user','leader','admin') NOT NULL DEFAULT 'user'"
+                )
+            except OperationalError:
+                pass
             try:
                 cur.execute(
                     "ALTER TABLE users ADD COLUMN must_set_credentials TINYINT(1) NOT NULL DEFAULT 0"
@@ -280,6 +298,10 @@ def init_db() -> dict:
                 notes.append("已创建初始管理员 " + BOOTSTRAP_ADMIN)
             else:
                 notes.append("用户表已有 " + str(n) + " 人")
+            cur.execute(
+                "INSERT IGNORE INTO departments (name) "
+                "SELECT DISTINCT department FROM users WHERE department IS NOT NULL AND department <> ''"
+            )
     finally:
         conn.close()
     return {"ok": True, "database": db, "notes": notes}

@@ -162,7 +162,13 @@ def create(user: dict, content: str, uploads: list) -> dict:
             "real_name": user.get("realName") or user.get("real_name") or "",
             "department": user.get("department") or "",
         }
-        return _row_public(row, _pack_files(fid, stored), is_admin=False)
+        pub = _row_public(row, _pack_files(fid, stored), is_admin=False)
+        try:
+            from . import alert as AL
+            AL.feedback_new(pub)
+        except Exception:
+            pass
+        return pub
     except Exception:
         if fid:
             try:
