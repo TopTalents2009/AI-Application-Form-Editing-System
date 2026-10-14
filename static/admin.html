@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py99">
+<link rel="stylesheet" href="/public/style.css?v=py116">
 <style>
 :root{ --nav-w:216px; }
 *{box-sizing:border-box}
@@ -107,6 +107,9 @@ table.tbl td.ops{overflow:visible;white-space:nowrap}
 .mono{font-family:Consolas,monospace}
 .mini{font-size:12px;padding:4px 10px;border:1px solid #d7deea;background:#fff;border-radius:8px;cursor:pointer;font-family:inherit}
 .mini:hover{border-color:var(--brand2);background:#f0f6ff}
+.mini.bad{color:#c5221f}
+.ar-admin-txt{white-space:normal !important;max-width:460px;line-height:1.45;word-break:break-word}
+.ar-admin-pin{color:#b54708;font-size:11px;font-weight:700}
 .mini.active{border-color:var(--brand2);background:#e9f0fc;color:var(--brand);font-weight:700}
 .fb-item .fb-meta{align-items:center}
 .fb-item .fb-imgs a{cursor:zoom-in}
@@ -322,7 +325,9 @@ td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visib
 .wecom-chat-hd .grow{flex:1;min-width:140px}
 .wecom-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .wecom-filters input[type="date"]{width:138px}
-.wecom-stream{flex:1 1 0;height:0;min-height:0;overflow:auto;padding:14px 16px;background:#f4f6fa}
+.wecom-stream{flex:1 1 0;height:0;min-height:0;overflow:auto;padding:14px 16px;background:#f4f6fa;display:flex;flex-direction:column}
+.wecom-stream-list{margin-top:auto;display:flex;flex-direction:column;width:100%}
+.wecom-earlier-hint{flex:0 0 auto;text-align:center;font-size:12px;color:#8a93a6;padding:6px 0 12px;line-height:1.4}
 .wecom-empty{color:#8a93a6;font-size:13.5px;padding:40px 16px;text-align:center;line-height:1.7}
 .wecom-msg{background:#fff;border:1px solid #e9edf5;border-radius:12px;padding:10px 12px;margin:0 0 10px;box-shadow:0 1px 2px rgba(16,32,64,.04)}
 .wecom-msg.hit{border-color:#2450a4;box-shadow:0 0 0 3px rgba(36,80,164,.22);background:#f4f8ff}
@@ -604,6 +609,8 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
             <div class="f-row"><label>任务归属账号</label><div class="inp"><input type="text" id="wwOwner" placeholder="用户名，可空"></div></div>
             <div class="f-row span2"><label>无独立意见时</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwAllowNoOpinion"> 允许仅凭申报书标注栏提交（无群聊意见文档/文本）</div></div>
             <div class="f-row span2"><label>不上传之后</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwSkipDismissed" checked> 点过「不上传」的申报书不再进入待审</div></div>
+            <div class="f-row span2"><label>新材料入库</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwTalentUpload" checked> 值班扫到护照/学历等新文件且能匹配人才编号时，自动上传到人才库附件</div></div>
+            <div class="f-row"><label>每会话每轮最多</label><div class="inp"><input type="number" id="wwTalentUploadMax" min="1" max="50" placeholder="10"><div style="font-size:11px;color:#8a93a6;margin-top:4px">上传接口在「人才库」配置里填写；未填则走人才库 Base URL</div></div></div>
           </div>
           <div class="wecom-watch-events" id="wecomWatchPanelEvents" hidden></div>
           <div class="wecom-watch-pending" id="wecomWatchPending" hidden></div>
@@ -655,11 +662,6 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
                 </div>
               </div>
               <div class="wecom-stream" id="wecomStream"><div class="wecom-empty">选择会话后显示消息。解析服务未启动时无法读取本地企业微信库。</div></div>
-              <div class="wecom-pager" id="wecomPager" hidden>
-                <button type="button" class="ghost mini" id="wecomPrev">更早</button>
-                <span id="wecomPageInfo">—</span>
-                <button type="button" class="ghost mini" id="wecomNext">更晚</button>
-              </div>
             </div>
             <aside class="wecom-rail" id="wecomRail" hidden>
               <div class="wecom-rail-resizer" id="wecomRailResizer" title="拖动调整宽度"></div>
@@ -673,7 +675,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
               <div class="wecom-rail-pane" id="wecomRailAi">
                 <div class="wecom-ai-hd">
                   <div class="grow">
-                    <div class="wecom-ai-sub" id="wecomAiSub">Gemini 读取当前日期窗内的会话</div>
+                    <div class="wecom-ai-sub" id="wecomAiSub">扫描全部文件 → 规则分类 → 按时间绑定版本</div>
                     <div class="wecom-ai-tabs">
                       <button type="button" class="wecom-ai-tab on" id="wecomAiTabRead" data-tab="read">本次解读</button>
                       <button type="button" class="wecom-ai-tab" id="wecomAiTabLog" data-tab="log">解读记录</button>
@@ -681,8 +683,8 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
                   </div>
                 </div>
                 <div class="wecom-ai-body" id="wecomAiBody">
-                  <div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>
-                  <div class="wecom-ai-card"><h5>版本绑定</h5><div class="wecom-ai-bind-tabs"><button type="button" class="wecom-ai-bind-tab on">时间窗</button><button type="button" class="wecom-ai-bind-tab">编号匹配</button><button type="button" class="wecom-ai-bind-tab">语义上下文</button><button type="button" class="wecom-ai-bind-tab">并排</button></div><p>本次记录无结构化绑定</p></div>
+                  <div class="wecom-empty">选择会话后点「AI 解读」，将扫描全部文件、按规则分类，再按时间确认版本与修改意见。</div>
+                  <div class="wecom-ai-card"><h5>版本绑定</h5><div class="wecom-ai-bind-tabs"><button type="button" class="wecom-ai-bind-tab on">时间窗</button></div><p>先扫描全部文件并按规则分类，再按时间确认各版申报书对应的修改意见</p></div>
                 </div>
               </div>
               <div class="wecom-rail-pane" id="wecomRailFiles" hidden>
@@ -691,6 +693,55 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
                 </div>
               </div>
             </aside>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI 审核样本 -->
+      <section class="content-sec" id="sec-aireview">
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>AI 审核</h2>
+        <p class="sec-desc" id="arAdminHint">主界面保存的审核结果会写入样本库。下次分析时，启用中的意图样本会写进 Jev 题目，用来校正同类消息。</p>
+        <div class="msg" id="arAdminMsg"></div>
+        <div class="stat-grid">
+          <div class="stat" style="--sc:#2450a4"><div class="sn" id="arStReviews">—</div><div class="sl">审核记录</div></div>
+          <div class="stat" style="--sc:#188038"><div class="sn" id="arStIntent">—</div><div class="sl">启用中的意图样本</div></div>
+          <div class="stat" style="--sc:#b26a00"><div class="sn" id="arStFilter">—</div><div class="sl">启用中的过滤样本</div></div>
+          <div class="stat" style="--sc:#6b4fa0"><div class="sn" id="arStPinned">—</div><div class="sl">置顶样本</div></div>
+        </div>
+        <div class="acard">
+          <h3>样本库
+            <button type="button" class="mini" id="arAdminReload">刷新</button>
+            <button type="button" class="mini primary" id="arAdminRebuild">按审核记录重建</button>
+          </h3>
+          <p class="sec-desc" style="margin-bottom:12px">置顶会优先进入 Jev；停用后下次分析不再使用。重建会按全部审核重写未置顶样本，已置顶和停用状态会保留。</p>
+          <h3 style="margin-top:4px">意图样本（Jev）</h3>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th style="width:160px">意图</th><th>原文</th><th style="width:88px">审核人</th><th style="width:120px">时间</th><th style="width:72px">状态</th><th style="width:210px">操作</th></tr>
+              </thead>
+              <tbody id="arAdminIntentBody"><tr><td colspan="6">加载中…</td></tr></tbody>
+            </table>
+          </div>
+          <h3 style="margin-top:18px">过滤样本（历史）</h3>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th style="width:160px">标签</th><th>原文</th><th style="width:88px">审核人</th><th style="width:120px">时间</th><th style="width:72px">状态</th><th style="width:210px">操作</th></tr>
+              </thead>
+              <tbody id="arAdminFilterBody"><tr><td colspan="6">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="acard" style="margin-bottom:0">
+          <h3>最近审核</h3>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead>
+                <tr><th style="width:130px">时间</th><th>会话</th><th style="width:88px">发送人</th><th>选定意图</th><th style="width:88px">审核人</th><th style="width:96px">过滤</th></tr>
+              </thead>
+              <tbody id="arAdminReviewBody"><tr><td colspan="6">加载中…</td></tr></tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -799,7 +850,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         </div>
         <div class="acard">
           <h3>规则3 · 重要问题自动通知组长</h3>
-          <p class="sec-desc" style="margin:0 0 12px">值班扫描关注群新消息时，命中下列关键词即发 P0 到告警群。会从该群会话里找出昵称含「组长」的发送者，提取手机号后用企微手机号 @（如「申报一组组长-小唐18198156910」）。昵称无手机号时，再回落后台「@ 组长」里部门为 * 的默认 userid。「？」只匹配整句问号或连续问号，避免普通问句刷屏。</p>
+          <p class="sec-desc" style="margin:0 0 12px">值班扫描关注群新消息时，命中下列关键词即发 P0 到告警群。会先在本群找昵称含「组长」的发送者；若没有，再按组名（如「申报一组」）在已 ★ 关注的会话里匹配「申报一组组长-小唐18198156910」这类会话，提取手机号用企微手机号 @。昵称无手机号时，再回落后台「@ 组长」里部门为 * 的默认 userid。「？」只匹配整句问号或连续问号，避免普通问句刷屏。</p>
           <div class="cfg-grid">
             <div class="f-row"><label>开启规则</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="issueWatchEnabled" checked> 群内催问 / 质疑时通知组长</div></div>
             <div class="f-row span2"><label>关键词（一行一条）</label>
@@ -914,6 +965,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       <button type="button" class="nav-item" data-sec="feedback"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>用户反馈<span class="nav-count" id="fbBadge" hidden></span></button>
       <button type="button" class="nav-item" data-sec="wecom"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>会话记录</button>
       <button type="button" class="nav-item" data-sec="files"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8"/></svg>文件汇总</button>
+      <button type="button" class="nav-item" data-sec="aireview"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>AI 审核</button>
       <button type="button" class="nav-item" data-sec="openapi"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>开放 API<span class="nav-count" id="apiReqBadge" hidden></span></button>
       <button type="button" class="nav-item" data-sec="alert"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>告警通知</button>
       <button type="button" class="nav-item" data-sec="config"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型配置</button>
@@ -966,7 +1018,8 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   </div>
 
 <script src="/public/session.js?v=py54"></script>
-<script src="/public/wecom-board.js?v=py61"></script>
+<script src="/public/wecom-board.js?v=py69"></script>
+<script src="/public/admin-agent-review.js?v=py3"></script>
 <script>
 (function () {
   var me = null;
@@ -1041,6 +1094,9 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     { key: 'wecom', sec: document.getElementById('sec-wecom'), load: function () {
       if (window.loadWecomBoard) window.loadWecomBoard(true);
       if (window.loadWecomWatchPanel) window.loadWecomWatchPanel();
+    } },
+    { key: 'aireview', sec: document.getElementById('sec-aireview'), load: function () {
+      if (window.loadAgentReviewAdmin) window.loadAgentReviewAdmin();
     } },
     { key: 'openapi', sec: document.getElementById('sec-openapi'), load: function () { loadOpenApi(true); } },
     { key: 'alert', sec: document.getElementById('sec-alert'), load: function () { loadAlertPanel(true); } },
@@ -1202,6 +1258,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     loadUsers();
     loadFeedback();
     if (window.loadWecomBoard) window.loadWecomBoard();
+    if (window.loadAgentReviewAdmin) window.loadAgentReviewAdmin();
     loadOpenApi();
     loadSystem();
     loadAlertPanel();
@@ -2789,7 +2846,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       var k = el.getAttribute('data-k');
       if (k === 'apiKey' || k === 'password') { if (el.value.trim()) p[k] = el.value.trim(); }
       else if (el.type === 'checkbox') p[k] = !!el.checked;
-      else if (k === 'timeoutSec' || k === 'intervalSec' || k === 'windowHours' || k === 'opinionWaitMin') {
+      else if (k === 'timeoutSec' || k === 'intervalSec' || k === 'windowHours' || k === 'opinionWaitMin' || k === 'talentUploadMax') {
         var n = parseInt(el.value, 10); if (n > 0 || k === 'opinionWaitMin') p[k] = isNaN(n) ? 0 : n;
       }
       else if (k === 'temperature') { var t = parseFloat(el.value); if (!isNaN(t)) p.temperature = t; }
@@ -2915,8 +2972,8 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
           '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="pool" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://192.168.2.23:8078"></div></div>' +
           '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="pool" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-API-KEY') + '"></div></div>' +
           '<div class="f-row"><label>检索模式</label><div class="inp"><input data-f="pool" data-k="mode" value="' + esc(p.mode || 'all') + '" placeholder="all"></div></div>' +
-          '<div class="f-row span2"><label>人才附件上传接口</label><div class="inp"><input data-f="pool" data-k="fileUploadUrl" value="' + esc(p.fileUploadUrl || '') + '" placeholder="暂不填写"></div></div>' +
-          '<div class="f-row span2"><label>人才附件上传 Key</label><div class="inp"><input type="password" data-f="pool" data-k="fileUploadKey" value="" placeholder="' + (p.fileUploadHasKey ? '••••••••（已配置，留空不修改）' : '暂不填写') + '"></div></div>' +
+          '<div class="f-row span2"><label>人才附件上传接口</label><div class="inp"><input data-f="pool" data-k="fileUploadUrl" value="' + esc(p.fileUploadUrl || '') + '" placeholder="可空，默认走 Base URL /api/external-read/v1/talent-files"><div style="font-size:12px;color:#8a93a6;margin-top:6px">值班扫描到新材料时按此接口入库。multipart 字段 attach_id、kind、file。</div></div></div>' +
+          '<div class="f-row span2"><label>人才附件上传 Key</label><div class="inp"><input type="password" data-f="pool" data-k="fileUploadKey" value="" placeholder="' + (p.fileUploadHasKey ? '••••••••（已配置，留空不修改）' : '可空，默认用人才库 API Key') + '"></div></div>' +
           '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已就绪 · 检索时参与' : '未配置 · 跳过检索，缺数据写遗留') + '</div></div>' +
         '</div>' +
         '<div class="cfg-save-row">' +
@@ -3117,6 +3174,8 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
           '<div class="f-row"><label>判断超时（秒）</label><div class="inp"><input data-f="wecomWatch" data-k="timeoutSec" value="' + esc(w.timeoutSec || 60) + '" placeholder="60"></div></div>' +
           '<div class="f-row"><label>意见等待（分钟）</label><div class="inp"><input data-f="wecomWatch" data-k="opinionWaitMin" value="' + esc(w.opinionWaitMin != null ? w.opinionWaitMin : 60) + '" placeholder="60"></div></div>' +
           '<div class="f-row span2"><label>无独立意见时</label><div class="chk" style="padding-top:10px"><input type="checkbox" data-f="wecomWatch" data-k="allowNoOpinion"' + (w.allowNoOpinion ? ' checked' : '') + '> 允许仅凭申报书标注栏提交</div></div>' +
+          '<div class="f-row span2"><label>新材料入库</label><div class="chk" style="padding-top:10px"><input type="checkbox" data-f="wecomWatch" data-k="talentUploadEnabled"' + (w.talentUploadEnabled !== false ? ' checked' : '') + '> 扫到护照/学历等新文件且能匹配编号时自动上传到人才库</div></div>' +
+          '<div class="f-row"><label>每会话每轮最多</label><div class="inp"><input data-f="wecomWatch" data-k="talentUploadMax" value="' + esc(w.talentUploadMax || 10) + '" placeholder="10"></div></div>' +
           '<div class="f-row"><label>值班连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomWatchProbeBtn">检测 Gemini</button> <button type="button" class="mini" id="wecomWatchRunBtn">立即扫描</button><span id="wecomWatchProbeMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
         '</div>' +
         '<div class="cfg-save-row">' +

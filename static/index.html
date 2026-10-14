@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py99">
+<link rel="stylesheet" href="/public/style.css?v=py116">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -229,11 +229,6 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         </div>
       </div>
       <div class="wecom-stream" id="wecomStream"><div class="wecom-empty">选择会话后显示消息。解析服务未启动时无法读取本地企业微信库。</div></div>
-      <div class="wecom-pager" id="wecomPager" hidden>
-        <button type="button" class="ghost mini" id="wecomPrev">更早</button>
-        <span id="wecomPageInfo">—</span>
-        <button type="button" class="ghost mini" id="wecomNext">更晚</button>
-      </div>
     </div>
     <aside class="wecom-rail" id="wecomRail" hidden>
       <div class="wecom-rail-resizer" id="wecomRailResizer" title="拖动调整宽度"></div>
@@ -247,7 +242,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
       <div class="wecom-rail-pane" id="wecomRailAi">
         <div class="wecom-ai-hd">
           <div class="grow">
-            <div class="wecom-ai-sub" id="wecomAiSub">Gemini 读取当前日期窗内的会话</div>
+            <div class="wecom-ai-sub" id="wecomAiSub">扫描全部文件 → 规则分类 → 按时间绑定版本</div>
             <div class="wecom-ai-tabs">
               <button type="button" class="wecom-ai-tab on" id="wecomAiTabRead" data-tab="read">本次解读</button>
               <button type="button" class="wecom-ai-tab" id="wecomAiTabLog" data-tab="log">解读记录</button>
@@ -255,8 +250,8 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
           </div>
         </div>
         <div class="wecom-ai-body" id="wecomAiBody">
-          <div class="wecom-empty">选择会话后点「AI 解读」，将扫描申报书、修改意见并生成摘要。</div>
-          <div class="wecom-ai-card"><h5>版本绑定</h5><div class="wecom-ai-bind-tabs"><button type="button" class="wecom-ai-bind-tab on">时间窗</button><button type="button" class="wecom-ai-bind-tab">编号匹配</button><button type="button" class="wecom-ai-bind-tab">语义上下文</button><button type="button" class="wecom-ai-bind-tab">并排</button></div><p>本次记录无结构化绑定</p></div>
+          <div class="wecom-empty">选择会话后点「AI 解读」，将扫描全部文件、按规则分类，再按时间确认版本与修改意见。</div>
+          <div class="wecom-ai-card"><h5>版本绑定</h5><div class="wecom-ai-bind-tabs"><button type="button" class="wecom-ai-bind-tab on">时间窗</button></div><p>先扫描全部文件并按规则分类，再按时间确认各版申报书对应的修改意见</p></div>
         </div>
       </div>
       <div class="wecom-rail-pane" id="wecomRailFiles" hidden>
@@ -265,6 +260,150 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         </div>
       </div>
     </aside>
+  </div>
+</section>
+
+<section class="card wecom-home" id="agentReviewHome">
+  <h2>AI 审核</h2>
+  <p class="wecom-lead">会话列表与上方会话记录共用星标关注。甲方由 Jev 打分；乙方不进入 Jev，分析完成后仍按原时间顺序显示在原位。勾选「仅甲方」只影响列表筛选。</p>
+  <div class="ar-tabs" id="arTabs">
+    <button type="button" class="ar-tab on" data-ar-page="queue">待审意图</button>
+    <button type="button" class="ar-tab" data-ar-page="dropped">过滤明细</button>
+    <button type="button" class="ar-tab" data-ar-page="examples">优化样本</button>
+    <button type="button" class="ar-tab" data-ar-page="party">甲乙方名单</button>
+  </div>
+  <div class="ar-bar" id="arBar">请先在左侧选择一个会话。Jev 意图评分只处理这一个会话。</div>
+  <div class="wecom-board ar-board" id="arBoard">
+    <aside class="wecom-side">
+      <div class="wecom-side-hd">
+        <input type="search" id="arSessionQ" placeholder="筛选会话" autocomplete="off">
+        <div class="wecom-side-filters">
+          <label class="wecom-filter-chip"><input type="checkbox" id="arOnlyGroup"> 仅群聊</label>
+          <label class="wecom-filter-chip"><input type="checkbox" id="arOnlyWatch" checked> 仅关注</label>
+        </div>
+        <div class="wecom-watch-hint" id="arWatchHint">点左侧 ★ 关注，与上方会话记录共用</div>
+      </div>
+      <div class="wecom-list" id="arSessions"><div class="wecom-empty">正在加载会话…</div></div>
+    </aside>
+    <div class="wecom-chat">
+      <div class="wecom-chat-hd">
+        <div class="grow">
+          <div id="arChatTitle" style="font-weight:700;font-size:14px">未选择会话</div>
+          <div id="arChatSub" style="font-size:12px;color:#8a93a6;margin-top:2px">默认列出已关注会话；点开会话后由 Jev 做意图评分</div>
+        </div>
+        <div class="wecom-filters" id="arReplayTools">
+          <button type="button" class="mini primary" id="arAnalyzeBtn">分析本会话</button>
+          <button type="button" class="mini primary" id="arResumeBtn" hidden>继续分析</button>
+          <button type="button" class="mini" id="arPauseBtn" hidden>暂停</button>
+          <button type="button" class="mini primary" id="arIncBtn" hidden>增量分析</button>
+          <button type="button" class="mini" id="arAnalyzeForceBtn">重新全量分析</button>
+          <label class="wecom-filter-chip"><input type="checkbox" id="arOnlyJia"> 仅甲方</label>
+        </div>
+      </div>
+      <div id="arMain">
+        <div class="ar-page" id="arPage-queue">
+          <p class="ar-note" id="arQueueNote">点开会话显示全部消息，并停在最新一条。点上方分类只看这一类，方便按意图审核。甲方走 Jev，乙方只展示原文。评分 ≥ 70 的甲方可点审核本条，意图可多选。</p>
+          <div id="arProgress" class="ar-progress" hidden>
+            <div class="ar-progress-row">
+              <span class="ar-progress-spin"></span>
+              <span id="arProgressLab">准备中…</span>
+              <span id="arProgressPct">0%</span>
+            </div>
+            <div class="ar-progress-track"><div class="ar-progress-bar" id="arProgressBar"></div></div>
+            <div class="ar-progress-meta" id="arProgressMeta"></div>
+          </div>
+          <div id="arStats"></div>
+          <div id="arIntentNav" class="ar-intent-nav"></div>
+          <div class="wecom-stream ar-stream" id="arHitList"><div class="wecom-empty">选择会话后点「分析本会话」。</div></div>
+        </div>
+        <div class="ar-page hidden" id="arPage-dropped">
+          <p class="ar-note">Jev 判为闲聊/确认，以及评分不到 70 的意图。点分类只看这一类。可点「审核本条」纠正，意图可多选；纠正结果会进入优化样本。</p>
+          <div class="ar-filters">
+            <select id="arDropView">
+              <option value="dropped">闲聊 / 确认</option>
+              <option value="low">评分未到 70</option>
+            </select>
+          </div>
+          <div id="arIntentNavDrop" class="ar-intent-nav"></div>
+          <div class="wecom-stream ar-stream" id="arDropList"><div class="wecom-empty">分析完成后在这里看过滤结果。</div></div>
+        </div>
+        <div class="ar-page hidden" id="arPage-examples">
+          <p class="ar-note">组长纠正过的样本。下一次分析会把意图样本送给 Jev 判断。</p>
+          <button type="button" class="mini" id="arLoadExamplesBtn" style="margin:0 12px 8px">刷新样本</button>
+          <div id="arExampleBox" class="ar-stream" style="padding:8px 12px"></div>
+        </div>
+        <div class="ar-page hidden" id="arPage-party">
+          <p class="ar-note">乙方是本公司人员，分析时只展示原文、不进 Jev。企业微信里不在名单中的人是甲方。个人微信里 reaching 永远是甲方，其他人默认乙方。</p>
+          <div class="ar-review-tools">
+            <input type="search" id="arPartyQ" placeholder="筛选姓名或别名" autocomplete="off">
+            <button type="button" class="mini" id="arLoadPartyBtn">重新加载</button>
+            <button type="button" class="mini primary" id="arSavePartyBtn">保存名单</button>
+            <span class="ar-note" id="arPartySaveNote"></span>
+          </div>
+          <div id="arPartyStats"></div>
+          <div class="ar-party-body">
+            <div class="ar-party-card">
+              <h3><span class="ar-chip jia">甲方</span> reaching 别名</h3>
+              <p class="ar-party-hint">名字里包含这些词的人，一律视为甲方。</p>
+              <div id="arReachBox" class="ar-party-chips"></div>
+              <div class="ar-party-add">
+                <input type="text" id="arReachIn" placeholder="添加甲方别名，如 reaching" autocomplete="off">
+                <button type="button" class="mini" id="arReachAddBtn">添加</button>
+              </div>
+            </div>
+            <div class="ar-party-card">
+              <h3>试一下判定</h3>
+              <div class="ar-party-probe">
+                <input type="text" id="arPartyProbe" placeholder="输入发送人显示名" autocomplete="off">
+                <select id="arPartyPlat">
+                  <option value="wecom">企业微信</option>
+                  <option value="wechat">个人微信</option>
+                </select>
+                <span id="arPartyProbeOut" class="ar-party-probe-out">输入名字后即时显示甲 / 乙方</span>
+              </div>
+            </div>
+            <div class="ar-party-card">
+              <h3><span class="ar-chip yi">乙方</span> 本公司人员</h3>
+              <div class="ar-party-add">
+                <input type="text" id="arPartyName" placeholder="姓名（企微显示名）" autocomplete="off">
+                <input type="text" id="arPartyAliases" placeholder="别名，逗号分隔" autocomplete="off">
+                <button type="button" class="mini" id="arStaffAddBtn">添加</button>
+              </div>
+              <div id="arStaffBox"></div>
+            </div>
+            <div class="ar-party-card">
+              <h3>头衔规则</h3>
+              <p class="ar-party-hint">发送人名字命中此正则时也视为乙方。留空则用默认：申报组 / 匹配组 / 组员 / 海归就业创业 等。</p>
+              <input type="text" id="arTitlePat" class="ar-party-pat" placeholder="申报.?组|匹配.?组|…" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+          <details class="ar-party-json-wrap" id="arPartyJsonWrap">
+            <summary>高级：查看 JSON</summary>
+            <textarea id="arPartyJson" class="ar-party-json" spellcheck="false"></textarea>
+            <button type="button" class="mini" id="arApplyPartyJsonBtn">用 JSON 覆盖上方名单</button>
+          </details>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="arReviewMask" class="ar-pop-mask" hidden>
+    <div class="ar-pop" id="arReviewPop" role="dialog" aria-labelledby="arReviewTitle">
+      <div class="ar-pop-hd">
+        <div class="grow">
+          <div id="arReviewTitle">审核本条</div>
+          <div class="ar-pop-who" id="arReviewerLine">审核人：</div>
+        </div>
+        <button type="button" class="ghost mini" id="arReviewClose">关闭</button>
+      </div>
+      <div class="ar-pop-body">
+        <div id="arReviewBody"></div>
+        <div id="arCandidateBox"></div>
+      </div>
+      <div class="ar-pop-ft">
+        <button type="button" class="mini primary" id="arSaveReviewBtn">保存审核</button>
+        <span class="ar-note" id="arSaveNote"></span>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -346,7 +485,8 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </div>
 
 <script src="/public/session.js?v=py55"></script>
-<script src="/public/wecom-board.js?v=py61"></script>
+<script src="/public/wecom-board.js?v=py69"></script>
+<script src="/public/agent-review.js?v=py30"></script>
 <script src="/public/app.js?v=py74"></script>
 </body>
 </html>

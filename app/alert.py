@@ -10,6 +10,8 @@ from .config import DATA_DIR, atomic_replace, load_config
 from . import wecom_notify as N
 
 _MOBILE_RE = re.compile(r"(?<!\d)(1\d{10})(?!\d)")
+# 「申报一组唐文秀」「申报书三组组员-…」「匹配三组长-…」→ 组键
+_TEAM_RE = re.compile(r"(申报书?[一二三四五六七八九十百零〇\d]+组|匹配[一二三四五六七八九十百零〇\d]+组)")
 
 _LOCK = threading.Lock()
 _STORE = DATA_DIR / "data" / "alert_log.json"
@@ -234,6 +236,15 @@ def leaders_from_messages(messages: list | None) -> list[str]:
     return out
 
 
+def team_key_from_name(name: str) -> str:
+    """从会话名/昵称提取组键，如「申报一组唐文秀」→「申报一组」。"""
+    s = str(name or "").strip()
+    if not s:
+        return ""
+    m = _TEAM_RE.search(s)
+    return m.group(1) if m else ""
+
+
 def mobiles_from_leader_names(names: list | None) -> list[str]:
     """从组长昵称提取手机号，如「…小唐18198156910」→ 18198156910。"""
     out = []
@@ -241,6 +252,72 @@ def mobiles_from_leader_names(names: list | None) -> list[str]:
         for m in _MOBILE_RE.findall(str(name or "")):
             if m not in out:
                 out.append(m)
+    return out
+
+
+def _watched_group_names(groups: dict | None = None) -> list[str]:
+    """已关注会话显示名。groups 可注入便于测试。"""
+    if groups is None:
+        try:
+            from . import wecom_watch as WW
+            state = WW._load_state()
+            groups = state.get("groups") if isinstance(state, dict) else {}
+        except Exception:
+            groups = {}
+    out = []
+    if not isinstance(groups, dict):
+        return out
+    for sid, row in groups.items():
+        if isinstance(row, dict):
+            name = str(row.get("name") or "").strip()
+        else:
+            name = str(row or "").strip()
+        if not name:
+            name = str(sid or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def leaders_from_watched_sessions(
+    session_name: str = "",
+    *,
+    session_id: str = "",
+    groups: dict | None = None,
+) -> list[str]:
+    """按组键在已关注会话名里找含「组长」的会话（如申报一组 → 申报一组组长-小唐…）。"""
+    team = team_key_from_name(session_name) or team_key_from_name(session_id)
+    if not team:
+        return []
+    out = []
+    for name in _watched_group_names(groups):
+        if "组长" not in name:
+            continue
+        if team_key_from_name(name) != team:
+            continue
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def resolve_group_leaders(
+    messages: list | None = None,
+    *,
+    session_name: str = "",
+    session_id: str = "",
+    groups: dict | None = None,
+) -> list[str]:
+    """本群发言组长 + 同组已关注会话名中的组长，去重保序。"""
+    out = []
+    sess = str(session_name or "").strip()
+    if sess and "组长" in sess and sess not in out:
+        out.append(sess)
+    for who in leaders_from_messages(messages):
+        if who not in out:
+            out.append(who)
+    for who in leaders_from_watched_sessions(sess, session_id=session_id, groups=groups):
+        if who not in out:
+            out.append(who)
     return out
 
 
@@ -253,8 +330,8 @@ def notify_group_issues(
 ) -> int:
     """规则3：关注群新消息命中重要问题关键词时 @ 组长。
 
-    关键词扫 messages；组长从 leader_messages（缺省用 messages）里
-    昵称含「组长」的发送者提取手机号，走 mentioned_mobile_list。
+    关键词扫 messages；组长优先取本群发言昵称，再按组键（如申报一组）
+    从已关注会话名里匹配含「组长」的会话，提取手机号走 mentioned_mobile_list。
     """
     from .issue_watch import scan_messages
     iw = cfg().get("issueWatch") if isinstance(cfg().get("issueWatch"), dict) else {}
@@ -280,11 +357,15 @@ def notify_group_issues(
     if more > 0:
         lines.append("另有 " + str(more) + " 条未列出")
     lines.insert(0, "命中：" + "、".join(kws[:12]))
-    leaders = leaders_from_messages(leader_messages if leader_messages is not None else messages)
+    sess = str(session_name or session_id or "").strip()
+    leaders = resolve_group_leaders(
+        leader_messages if leader_messages is not None else messages,
+        session_name=session_name or sess,
+        session_id=session_id,
+    )
     mobiles = mobiles_from_leader_names(leaders)
     if leaders:
         lines.insert(0, " ".join("@" + n for n in leaders[:8]))
-    sess = str(session_name or session_id or "").strip()
     title = "群内重要问题"
     if sess:
         title = title + " · " + sess[:40]

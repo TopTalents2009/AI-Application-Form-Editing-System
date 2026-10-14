@@ -5,7 +5,7 @@ import httpx
 from urllib.parse import urlparse
 from .config import (
     LLM_TIMEOUT_DEFAULT, LLM_CONNECT_TIMEOUT, LLM_TEMPERATURE, LLM_RETRIES, LLM_STREAM,
-    llm_chat_url, llm_genai_url, api_format_of, resolve_llm, httpx_trust_env, catalog_entries,
+    llm_chat_url, llm_genai_url, api_format_of, resolve_llm, httpx_proxy, httpx_trust_env, catalog_entries,
 )
 
 FENCE = chr(96) * 3
@@ -325,7 +325,7 @@ async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, ret
         elif with_search and search_style == "type":
             payload["tools"] = [{"type": "google_search"}]
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=trust) as client:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=trust, proxy=httpx_proxy()) as client:
                 if use_stream:
                     async with client.stream("POST", url, headers=headers, json=payload) as r:
                         if r.status_code >= 400:
@@ -412,7 +412,7 @@ async def _chat_genai(prof, messages, *, json_mode: bool, timeout_s: float, retr
         elif with_search and search_style == "retrieval":
             payload["tools"] = [{"google_search_retrieval": {}}]
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=trust) as client:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=trust, proxy=httpx_proxy()) as client:
                 if use_stream:
                     async with client.stream("POST", url, headers=headers, json=payload) as r:
                         if r.status_code >= 400:

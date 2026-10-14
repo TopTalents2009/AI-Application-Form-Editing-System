@@ -11,6 +11,8 @@ from app.wecom_cases import cluster_messages
 from app.wecom_file_class import (
     classify_name_with_context,
     gather_context,
+    image_media_type,
+    is_image_message,
     list_file_entries,
     make_cluster_kind_of,
 )
@@ -155,6 +157,48 @@ def test_watch_kind_person_pdf_stays_app_without_chat():
     assert kind_of(msgs[0]) == "app"
 
 
+def test_image_message_and_mime():
+    assert is_image_message({"media_url": "https://wework.qpic.cn/x"})
+    assert is_image_message({"msg_type": 4, "attachment_name": "图片"})
+    assert is_image_message({"msg_type": 4, "has_attachment": True, "attachment_name": "图片"})
+    assert is_image_message(filename="截图.png")
+    assert not is_image_message(filename="51104申报书.docx")
+    assert not is_image_message(filename="申报书.wps", media_url="https://wework.qpic.cn/cover")
+    assert not is_image_message({"has_attachment": True, "media_url": "https://wework.qpic.cn/cover", "attachment_name": "材料.wps"})
+    assert not is_image_message(filename="说明.pdf", media_url="https://wework.qpic.cn/cover")
+    assert image_media_type("a.png") == "image/png"
+    assert image_media_type("a.bin", content=b"\x89PNG\r\n\x1a\nxxxx") == "image/png"
+    assert image_media_type("a.bin", content=b"%PDF-1.4") == ""
+
+
+def test_list_file_entries_keeps_screenshot_preview():
+    msgs = [
+        _m(1, "截图.png"),
+        {"message_id": 2, "text": "", "sender": "陈侃", "time_text": "2026-09-01 10:00:00", "media_url": "https://wework.qpic.cn/p"},
+    ]
+    items = list_file_entries(msgs)
+    by_mid = {str(it["messageId"]): it for it in items}
+    assert by_mid["1"]["isImage"] is True
+    assert by_mid["2"]["isImage"] is True
+    assert by_mid["2"]["mediaUrl"].startswith("https://wework.qpic.cn")
+
+
+def test_later_app_filename_does_not_reclassify_passport():
+    msgs = [
+        _m(1, text="这是护照扫描件，请归档"),
+        _m(2, "张三.pdf"),
+        _m(3, "51104申报书.docx"),
+        _m(4, "51104_修改意见.txt"),
+    ]
+    items = list_file_entries(msgs)
+    by_name = {it["filename"]: it for it in items}
+    assert by_name["张三.pdf"]["label"] == "护照", by_name["张三.pdf"]
+    assert by_name["51104申报书.docx"]["label"] == "申报书"
+    kind_of = make_cluster_kind_of(items)
+    assert kind_of(msgs[1]) == "ignore"
+    assert kind_of(msgs[2]) == "app"
+
+
 if __name__ == "__main__":
     test_person_pdf_passport_from_prev_chat()
     test_explicit_app_not_stolen_by_passport_chat()
@@ -170,4 +214,7 @@ if __name__ == "__main__":
     test_watch_kind_chat_opinion()
     test_watch_kind_meeting_not_opinion()
     test_watch_kind_person_pdf_stays_app_without_chat()
+    test_image_message_and_mime()
+    test_list_file_entries_keeps_screenshot_preview()
+    test_later_app_filename_does_not_reclassify_passport()
     print("ALL OK")

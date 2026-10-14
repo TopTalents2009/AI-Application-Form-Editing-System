@@ -37,6 +37,8 @@ def test_watch_block():
     assert w["model"] == "Qwen/Qwen3.5-4B"
     assert w["configured"] is True
     assert w["enabled"] is True
+    assert w["talentUploadEnabled"] is True
+    assert w["talentUploadMax"] == 10
     assert "v1" in w["baseUrl"]
 
 

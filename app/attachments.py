@@ -1069,6 +1069,7 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                     end_date=str(prior.get("endDate") or ""),
                     forbidden_names=prior.get("forbidden") or [],
                     aliases=prior.get("aliases") or [],
+                    education=prior.get("education") or [],
                 )
             if gen.get("error"):
                 result["generateError"] = str(gen.get("error") or "")

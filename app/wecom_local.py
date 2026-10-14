@@ -8,7 +8,7 @@ from pathlib import Path
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, tuple] = {}
-_CACHE_MAX = 24
+_CACHE_MAX = 64
 
 
 def _safe_id(value: str) -> str:
@@ -293,9 +293,11 @@ def read_window(
         return [], False
     start_date = str(start_date or "")[:10]
     end_date = str(end_date or "")[:10]
-    if int(need or 0) <= 0 and not start_date and not end_date:
+    if int(need or 0) <= 0:
         data = _read_json(path, [])
         rows = [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+        if start_date or end_date:
+            return _filter_dates(rows, start_date, end_date), False
         return rows, False
     target = max(1, int(need or 80))
     fetch = target
@@ -326,7 +328,12 @@ def search_session(q: str, session_id: str, *, source_id: str = "", limit: int =
     qn = str(q or "").strip().lower()
     if not qn or not session_id:
         return []
-    lim = max(1, min(int(limit or 80), 200))
+    try:
+        lim_in = int(limit or 0)
+    except (TypeError, ValueError):
+        lim_in = 80
+    unlimited = lim_in <= 0
+    lim = 0 if unlimited else max(1, min(lim_in, 10000))
     want = str(source_id or "").strip()
     hits = []
     for src in list_sources():
@@ -342,6 +349,6 @@ def search_session(q: str, session_id: str, *, source_id: str = "", limit: int =
             ]).lower()
             if qn in blob:
                 hits.append(m)
-                if len(hits) >= lim:
+                if not unlimited and len(hits) >= lim:
                     return hits
     return hits

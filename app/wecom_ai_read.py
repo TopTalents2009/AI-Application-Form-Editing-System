@@ -1,18 +1,17 @@
-"""AI 解读：通读关注群聊天记录，规则拆解 + Gemini 配对申报书与修改意见。"""
+"""AI 解读：先扫当前会话全部文件，按规则分类，再按时间绑定申报书版本与修改意见。"""
 from __future__ import annotations
-import asyncio
 import json
 from datetime import datetime, timedelta
 
 from .config import LLM_TIMEOUT_CLASSIFY, resolve_gemini
 from . import wecom_client as W
 from .llm import LlmError, chat, extract_json_lenient
+from .wecom_ai_bind import PROMPT_TIME_WINDOW
 from .wecom_cases import annotate_existing, cluster_messages, split_scan_stats
-from .wecom_file_class import classify_session_files
+from .wecom_file_class import counts_of, list_file_entries, make_cluster_kind_of, slim_items
 from .wecom_groups import list_watch_groups
-from .wecom_split_llm import assist_split_with_gemini
 
-_SUMMARY_PROMPT = """你是申报书修改系统的聊天解读助手。已通读企业微信群消息并完成「申报书 ↔ 修改意见」配对扫描。
+_SUMMARY_PROMPT = """你是申报书修改系统的聊天解读助手。已扫描会话全部文件、按规则分类，并按时间完成「申报书版本 ↔ 修改意见」绑定。
 
 只输出一个 JSON 对象：
 {
@@ -63,6 +62,7 @@ def _slim_case(c: dict, session_name: str = "") -> dict:
                 "filename": o.get("filename") or "",
                 "time": o.get("time") or "",
                 "message_id": o.get("message_id") or 0,
+                "text": str(o.get("text") or "")[:400] if str(o.get("kind") or "") == "text" else "",
             }
             for o in ops[:6]
         ],
@@ -148,6 +148,57 @@ async def _summarize(
         }
 
 
+def scan_files_then_pair(
+    messages: list,
+    *,
+    session_id: str = "",
+    session_name: str = "",
+    window_hours: int = 48,
+    runner=None,
+) -> dict:
+    """先扫全部文件，用原有规则分类，再按分类结果拆案。"""
+    entries = list_file_entries(messages)
+    kind_of = make_cluster_kind_of(entries)
+    scan = split_scan_stats(messages, kind_of=kind_of)
+    cluster_hours = int(window_hours or 48)
+    if cluster_hours <= 0:
+        cluster_hours = 48
+    cases = cluster_messages(
+        messages,
+        session_id=session_id,
+        session_name=session_name,
+        window_hours=cluster_hours,
+        kind_of=kind_of,
+    )
+    if runner is not None:
+        annotate_existing(cases, runner)
+    for c in cases:
+        c["session_name"] = session_name
+        c["session_id"] = session_id
+    n_app = sum(1 for it in entries if it.get("type") == "app")
+    n_op = sum(1 for it in entries if it.get("type") == "opinion")
+    note = (
+        "已扫描全部文件 " + str(len(entries))
+        + " 个，按文件名与前后聊天规则分类（申报书 " + str(n_app)
+        + "、修改意见 " + str(n_op)
+        + "）；申报书版本与修改意见按时间绑定"
+    )
+    return {
+        "entries": entries,
+        "kind_of": kind_of,
+        "scan": scan,
+        "cases": cases,
+        "geminiNote": note,
+        "fileTypes": {
+            "items": slim_items(entries),
+            "counts": counts_of(entries),
+            "fileCount": len(entries),
+            "geminiNote": note,
+            "usedGemini": False,
+        },
+    }
+
+
 async def _analyze_one_group(
     *,
     session_id: str,
@@ -173,63 +224,41 @@ async def _analyze_one_group(
     )
     messages = data.get("items") or []
     name = str(session_name or data.get("display_name") or sid)
-    scan = split_scan_stats(messages)
-    cluster_hours = int(window_hours or 48)
-    if cluster_hours <= 0:
-        cluster_hours = 48
-    file_task = asyncio.create_task(classify_session_files(messages, session_id=sid))
-    cases = cluster_messages(
+    paired = scan_files_then_pair(
         messages,
         session_id=sid,
         session_name=name,
-        window_hours=cluster_hours,
+        window_hours=window_hours,
+        runner=runner,
     )
-    cases, gemini_note = await assist_split_with_gemini(
-        messages,
-        cases,
-        session_id=sid,
-        session_name=name,
-        window_hours=cluster_hours,
-        max_files=catalog_max_files,
-        max_texts=catalog_max_texts,
-    )
-    if runner is not None:
-        annotate_existing(cases, runner)
-    for c in cases:
-        c["session_name"] = name
-        c["session_id"] = sid
+    cases = paired.get("cases") or []
     ready = sum(1 for c in cases if c.get("ready") and not c.get("existing"))
     bind_out = {}
     if bind:
         from .wecom_ai_bind import run_version_bind
+        prompts = bind_prompts if isinstance(bind_prompts, list) and bind_prompts else [PROMPT_TIME_WINDOW]
         bind_out = await run_version_bind(
             messages,
             session_id=sid,
             session_name=name,
             window_hours=int(window_hours or 48),
-            bind_prompts=bind_prompts,
+            bind_prompts=prompts,
             user=user,
+            kind_of=paired.get("kind_of"),
         )
-    try:
-        file_class = await file_task
-    except Exception as e:
-        file_class = {
-            "items": [], "counts": {}, "fileCount": 0,
-            "geminiNote": "文件分类失败：" + str(e)[:160], "usedGemini": False,
-        }
     return {
         "session_id": sid,
         "session_name": name,
         "start_date": start_date,
         "end_date": end_date,
         "messageCount": data.get("total") or len(messages),
-        "scan": scan,
+        "scan": paired.get("scan") or {},
         "cases": cases,
         "readyCount": ready,
-        "geminiNote": gemini_note or "",
+        "geminiNote": paired.get("geminiNote") or "",
         "hasOpinion": _cases_have_opinion(cases),
         "bindPrompts": bind_out,
-        "fileTypes": file_class,
+        "fileTypes": paired.get("fileTypes") or {},
     }
 
 
@@ -359,7 +388,7 @@ async def ai_read_watched(
         },
         "errors": errors[:8],
         "model": model,
-        "engine": "split-gemini",
+        "engine": "file-rules-time",
     }
 
 
@@ -377,7 +406,7 @@ async def ai_read_chat(
     bind_prompts: list | None = None,
     user: dict | None = None,
 ) -> dict:
-    """scope=watch 时通读全部关注群；scope=session 时只分析当前群。"""
+    """scope=watch 时扫描全部关注群；scope=session 时扫描当前会话全部文件后按规则分类、按时间绑定。"""
     if str(scope or "").strip().lower() == "watch":
         return await ai_read_watched(
             start_date=start_date,
@@ -440,5 +469,5 @@ async def ai_read_chat(
         "bindPrompts": one.get("bindPrompts") or {},
         "fileTypes": one.get("fileTypes") or {},
         "model": model,
-        "engine": "split-gemini",
+        "engine": "file-rules-time",
     }

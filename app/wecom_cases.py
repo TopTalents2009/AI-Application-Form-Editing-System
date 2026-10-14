@@ -277,13 +277,18 @@ def resolve_app_upload(chat_name: str, cache_name: str, message_id=None) -> dict
     return {"ok": True, "kind": "app", "filename": store}
 
 
-def split_scan_stats(messages: list) -> dict:
+def split_scan_stats(messages: list, kind_of=None) -> dict:
     """预览用：两千条消息里实际扫到多少文件、几份申报书。"""
     files = [m for m in (messages or []) if isinstance(m, dict) and _has_file(m)]
     apps, opinions, ignored = [], [], []
     for m in files:
         fn = _fname(m)
-        kind = classify_file(*_names_of(m), message_id=m.get("message_id"))
+        if callable(kind_of):
+            kind = kind_of(m)
+            if kind not in ("app", "opinion", "text", "ignore", "other"):
+                kind = classify_file(*_names_of(m), message_id=m.get("message_id"))
+        else:
+            kind = classify_file(*_names_of(m), message_id=m.get("message_id"))
         if kind == "app":
             apps.append(fn)
         elif kind == "opinion":

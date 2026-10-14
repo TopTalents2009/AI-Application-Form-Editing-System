@@ -39,14 +39,63 @@ def _now() -> str:
 async def _context_kind_of(messages: list, session_id: str):
     """识别到文件后，用前后聊天（规则 + 模型）确认是申报书、修改意见还是其它材料。"""
     from .wecom_file_class import classify_session_files, make_cluster_kind_of
+    empty = []
     if not any(isinstance(m, dict) and _has_file(m) for m in (messages or [])):
-        return _msg_kind, ""
+        return _msg_kind, "", empty
     try:
         got = await classify_session_files(messages, session_id=session_id, keep_entries=True)
         note = str(got.get("geminiNote") or "")
-        return make_cluster_kind_of(got.get("entries") or []), note
+        entries = list(got.get("entries") or [])
+        return make_cluster_kind_of(entries), note, entries
     except Exception as e:
-        return _msg_kind, "文件分类失败：" + str(e)[:160]
+        return _msg_kind, "文件分类失败：" + str(e)[:160], empty
+
+
+async def _upload_fresh_talent_files(
+    *,
+    entries: list,
+    fresh: list,
+    session_id: str,
+    session_name: str,
+    cfg: dict,
+    state: dict,
+) -> dict:
+    """值班扫到的新材料按人才编号入库。失败不影响拆解。"""
+    empty = {"uploaded": 0, "failed": 0, "noId": 0, "note": ""}
+    if not cfg.get("talentUploadEnabled"):
+        return empty
+    from .wecom_talent_upload import auto_upload_files, select_fresh_files, upload_configured
+    if not upload_configured():
+        return {**empty, "note": "未配置人才库上传接口"}
+    fresh_ids = [m.get("message_id") for m in (fresh or []) if isinstance(m, dict)]
+    files = select_fresh_files(entries, fresh_ids)
+    if not files:
+        return empty
+    for f in files:
+        f["sessionId"] = session_id
+    try:
+        max_n = max(1, min(int(cfg.get("talentUploadMax") or 10), 50))
+    except (TypeError, ValueError):
+        max_n = 10
+    try:
+        _rows, summary = await auto_upload_files(files, session_id=session_id, max_n=max_n)
+    except Exception as e:
+        note = "材料入库失败：" + str(e)[:120]
+        _push_event(state, session_name + " " + note, kind="error")
+        return {**empty, "failed": 1, "note": note}
+    note = str(summary.get("note") or "")
+    uploaded = int(summary.get("uploaded") or 0)
+    failed = int(summary.get("failed") or 0)
+    if uploaded:
+        _push_event(state, session_name + " " + (note or ("材料入库 " + str(uploaded))), kind="ok")
+    elif failed:
+        _push_event(state, session_name + " " + (note or "材料入库失败"), kind="error")
+    return {
+        "uploaded": uploaded,
+        "failed": failed,
+        "noId": int(summary.get("noId") or 0),
+        "note": note,
+    }
 
 
 def _load_state() -> dict:
@@ -128,6 +177,8 @@ def public_status() -> dict:
         "lastNote": _status.get("lastNote") or "",
         "pending": pending,
         "events": events,
+        "talentUploadEnabled": bool(cfg.get("talentUploadEnabled", True)),
+        "talentUploadMax": int(cfg.get("talentUploadMax") or 10),
     }
 
 
@@ -336,6 +387,8 @@ async def _scan_groups(cfg: dict, *, force: bool = False, trigger: str = "auto")
             "caseCount": int(st.get("caseCount") or 0),
             "readyCount": int(st.get("readyCount") or 0),
             "fileClassNote": str(st.get("fileClassNote") or ""),
+            "talentUploaded": int(st.get("talentUploaded") or 0),
+            "talentUploadNote": str(st.get("talentUploadNote") or ""),
             "issueHits": int(st.get("issueHits") or 0),
             "createdCount": len(one.get("created") or []),
             "pendingCount": len(one.get("pending") or []),
@@ -346,6 +399,7 @@ async def _scan_groups(cfg: dict, *, force: bool = False, trigger: str = "auto")
     state["lastRunAt"] = _now()
     state["lastError"] = ""
     _status["pending"] = _public_pending(state.get("pending") or [])
+    upload_n = sum(int(g.get("talentUploaded") or 0) for g in group_logs)
     if created_all:
         summary = "已提交 " + str(len(created_all)) + " 条待确认任务"
         _push_event(state, summary, kind="ok")
@@ -355,6 +409,10 @@ async def _scan_groups(cfg: dict, *, force: bool = False, trigger: str = "auto")
     else:
         summary = "本轮未发现可提交的修改意见"
         _push_event(state, summary, kind="info")
+    if upload_n:
+        extra = "材料入库 " + str(upload_n)
+        summary = summary + "，" + extra
+        _push_event(state, extra, kind="ok")
     _save_state(state)
     log = _finish_log(
         ok=True,
@@ -867,7 +925,7 @@ async def _rebuild_pending_case(item: dict) -> dict | None:
         if dt and (dt < start or dt > end):
             continue
         messages.append(m)
-    kind_of, _note = await _context_kind_of(messages, sid)
+    kind_of, _note, _entries = await _context_kind_of(messages, sid)
     cases = cluster_messages(
         messages,
         session_id=sid,
@@ -917,6 +975,8 @@ async def _scan_group(
         "readyCount": 0,
         "fileClassNote": "",
         "issueHits": 0,
+        "talentUploaded": 0,
+        "talentUploadNote": "",
     }
 
     def _ret(created, pending, skipped, *, status: str = "done", note: str = ""):
@@ -954,8 +1014,18 @@ async def _scan_group(
     except Exception:
         stats["issueHits"] = 0
 
-    kind_of, class_note = await _context_kind_of(messages, session_id)
+    kind_of, class_note, file_entries = await _context_kind_of(messages, session_id)
     stats["fileClassNote"] = class_note
+    up = await _upload_fresh_talent_files(
+        entries=file_entries,
+        fresh=fresh,
+        session_id=session_id,
+        session_name=session_name,
+        cfg=cfg,
+        state=state,
+    )
+    stats["talentUploaded"] = int(up.get("uploaded") or 0)
+    stats["talentUploadNote"] = str(up.get("note") or "")
 
     rule_hits = rule_opinion_ids(fresh, kind_of=kind_of)
     maybe_text = []
@@ -968,7 +1038,12 @@ async def _scan_group(
             maybe_text.append(m)
     if not rule_hits and not maybe_text:
         _advance_cursor(row, messages)
-        return _ret([], [], [], status="skip", note="新消息中无可疑意见")
+        note = "新消息中无可疑意见"
+        if stats.get("talentUploaded"):
+            note += "；" + (stats.get("talentUploadNote") or ("材料入库 " + str(stats["talentUploaded"])))
+        elif stats.get("talentUploadNote") and "未配置" in str(stats.get("talentUploadNote") or ""):
+            note += "；" + stats["talentUploadNote"]
+        return _ret([], [], [], status="skip", note=note)
 
     detected = await detect_opinions(messages, kind_of=kind_of)
     stats["hasOpinion"] = bool(detected.get("hasOpinion"))
@@ -977,7 +1052,10 @@ async def _scan_group(
         return _ret([], [], [], status="error", note=str(detected.get("error") or "")[:160])
     if not detected.get("hasOpinion"):
         _advance_cursor(row, messages)
-        return _ret([], [], [], status="no_opinion", note="Gemini 未识别到修改意见")
+        note = "Gemini 未识别到修改意见"
+        if stats.get("talentUploaded"):
+            note += "；" + (stats.get("talentUploadNote") or ("材料入库 " + str(stats["talentUploaded"])))
+        return _ret([], [], [], status="no_opinion", note=note)
 
     cases = cluster_messages(
         messages,
@@ -1131,4 +1209,7 @@ async def _scan_group(
         note = "待人审 " + str(len(pending)) + " 条"
     elif skipped or errors:
         note = "跳过 " + str(len(skipped) + len(errors)) + " 条"
+    if stats.get("talentUploaded"):
+        extra = stats.get("talentUploadNote") or ("材料入库 " + str(stats["talentUploaded"]))
+        note = (note + "；" + extra) if note else extra
     return _ret(created, pending, skipped + errors, status="done", note=note)

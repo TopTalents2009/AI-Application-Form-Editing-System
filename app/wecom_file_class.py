@@ -8,7 +8,7 @@ from pathlib import Path
 from .attachments import KINDS, classify_talent_filename
 from .config import DATA_DIR, LLM_TIMEOUT_CLASSIFY, atomic_replace, resolve_gemini
 from .llm import LlmError, chat, extract_json_lenient
-from .wecom_cases import _fname, _has_file, _msg_kind
+from .wecom_cases import _copies, _fname, _has_file, _msg_kind
 
 FILE_TYPES = [
     ("app", "申报书"),
@@ -18,10 +18,73 @@ TYPE_IDS = {k for k, _ in FILE_TYPES}
 TYPE_LABEL = {k: lab for k, lab in FILE_TYPES}
 LABEL_TO_ID = {lab: k for k, lab in FILE_TYPES}
 CAT_ORDER = [lab for _, lab in FILE_TYPES]
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+NON_IMAGE_EXTS = {
+    ".pdf", ".doc", ".docx", ".docm", ".dot", ".dotx", ".wps", ".wpt",
+    ".xls", ".xlsx", ".xlsm", ".xlsb", ".et", ".ett",
+    ".ppt", ".pptx", ".dps", ".dpt",
+    ".zip", ".rar", ".7z", ".tar", ".gz",
+    ".txt", ".md", ".csv", ".rtf", ".ofd",
+    ".mp3", ".mp4", ".m4a", ".wav", ".aac", ".ogg", ".flac", ".amr", ".wma", ".webm",
+}
+IMAGE_MIME = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+}
+
+
+def is_image_message(m: dict | None = None, *, filename: str = "", media_url: str = "") -> bool:
+    """只有图片才预览。WPS/PDF/Office 等即使带封面 media_url 也不算图片。"""
+    name = str(filename or _fname(m or {}) or "")
+    ext = Path(name).suffix.lower()
+    if ext in NON_IMAGE_EXTS:
+        return False
+    if ext in IMAGE_EXTS:
+        return True
+    try:
+        t = int((m or {}).get("msg_type") or 0)
+    except (TypeError, ValueError):
+        t = 0
+    if t in (4, 15):
+        return True
+    if (m or {}).get("has_attachment") and ext not in IMAGE_EXTS:
+        return False
+    media = str(media_url or (m or {}).get("media_url") or "").strip()
+    return bool(media and not ext)
+
+
+def image_media_type(filename: str = "", content_type: str = "", content: bytes | None = None) -> str:
+    """给内联预览用的图片 MIME；不是图片则空串。"""
+    c = str(content_type or "").strip().lower()
+    if c.startswith("image/") and "octet-stream" not in c:
+        return c
+    ext = Path(str(filename or "")).suffix.lower()
+    if ext in IMAGE_MIME:
+        return IMAGE_MIME[ext]
+    head = content[:16] if content else b""
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"\x89PNG"):
+        return "image/png"
+    if head.startswith(b"GIF8"):
+        return "image/gif"
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head.startswith(b"BM"):
+        return "image/bmp"
+    return ""
 
 _RADIUS = 4
 _MAX_LLM_FILES = 60
 _CACHE_DIR = DATA_DIR / "data" / "wecom_file_types"
+_SUMMARY_CACHE: dict[str, tuple] = {}
+_SUMMARY_CACHE_MAX = 24
 
 _EXPLICIT_APP = re.compile(r"申报书|申请表|application\s*form", re.I)
 _STRONG_OPINION_NAME = re.compile(r"修改意见|审核意见|辅导意见|反馈意见|批注|修改说明")
@@ -92,23 +155,37 @@ def cache_key(message_id, filename: str) -> str:
 
 
 def save_type_cache(session_id: str, items: list) -> None:
+    """按 messageId|filename 合并写入，避免日期窗子集覆盖掉其它文件的分类。"""
     sid = str(session_id or "").strip()
     if not sid:
         return
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    merged = load_type_cache(sid)
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        fname = str(it.get("filename") or "")
+        kid = _norm_type(it.get("type") or it.get("label") or "") or "other"
+        merged[cache_key(it.get("messageId"), fname)] = {
+            "messageId": it.get("messageId"),
+            "filename": fname,
+            "type": kid,
+            "label": TYPE_LABEL.get(kid, str(it.get("label") or "其他")),
+            "reason": str(it.get("reason") or "")[:160],
+            "source": str(it.get("source") or "filename"),
+        }
     payload = {
         "session_id": sid,
         "items": [
             {
-                "messageId": it.get("messageId"),
-                "filename": it.get("filename") or "",
-                "type": it.get("type") or "other",
-                "label": it.get("label") or TYPE_LABEL.get(it.get("type") or "", "其他"),
-                "reason": it.get("reason") or "",
-                "source": it.get("source") or "filename",
+                "messageId": row.get("messageId"),
+                "filename": row.get("filename") or "",
+                "type": row.get("type") or "other",
+                "label": row.get("label") or TYPE_LABEL.get(row.get("type") or "", "其他"),
+                "reason": row.get("reason") or "",
+                "source": row.get("source") or "filename",
             }
-            for it in (items or [])
-            if isinstance(it, dict)
+            for row in merged.values()
         ],
     }
     path = _cache_path(sid)
@@ -132,8 +209,12 @@ def load_type_cache(session_id: str) -> dict:
         kid = _norm_type(it.get("type") or it.get("label") or "")
         if not kid:
             continue
-        key = cache_key(it.get("messageId"), it.get("filename") or "")
+        mid = it.get("messageId")
+        fname = str(it.get("filename") or "")
+        key = cache_key(mid, fname)
         out[key] = {
+            "messageId": mid,
+            "filename": fname,
             "type": kid,
             "label": TYPE_LABEL[kid],
             "reason": str(it.get("reason") or "")[:160],
@@ -224,10 +305,17 @@ def _cue_from_context(ctx: dict) -> tuple[str, str, str]:
     after = list((ctx or {}).get("after") or [])
     before = list((ctx or {}).get("before") or [])
     for line in after[:2] + list(reversed(before[-2:])):
+        # 邻条附件名不含本文件类型；全量扫描时后面的「申报书.pdf」不应改写当前文件
+        if "[文件 " in str(line or ""):
+            continue
         kid, lab = _cue_hit(line, soft=True)
         if kid:
             return kid, lab, "near"
-    kid, lab = _cue_hit(str((ctx or {}).get("blob") or ""), soft=False)
+    blob = str((ctx or {}).get("blob") or "")
+    blob_text = "\n".join(
+        ln for ln in blob.splitlines() if "[文件 " not in ln
+    ) or blob
+    kid, lab = _cue_hit(blob_text, soft=False)
     if kid:
         return kid, lab, "blob"
     return "", "", ""
@@ -294,11 +382,16 @@ def classify_name_with_context(filename: str, context: dict | str = "") -> dict:
 def list_file_entries(messages: list) -> list:
     out = []
     for i, m in enumerate(messages or []):
-        if not isinstance(m, dict) or not _has_file(m):
+        if not isinstance(m, dict):
+            continue
+        media = str(m.get("media_url") or "").strip()
+        if not _has_file(m) and not media:
             continue
         fname = _fname(m)
         if not fname:
-            continue
+            if not media:
+                continue
+            fname = "图片"
         ctx = gather_context(messages, i)
         hit = classify_name_with_context(fname, ctx)
         out.append({
@@ -315,6 +408,9 @@ def list_file_entries(messages: list) -> list:
             "label": hit["label"],
             "reason": hit["reason"],
             "source": hit["source"],
+            "mediaUrl": media,
+            "copies": _copies(m),
+            "isImage": is_image_message(m, filename=fname, media_url=media),
         })
     return out
 
@@ -450,8 +546,69 @@ def slim_items(items: list, limit: int = 80) -> list:
             "label": it.get("label") or "其他",
             "reason": it.get("reason") or "",
             "source": it.get("source") or "filename",
+            "mediaUrl": str(it.get("mediaUrl") or it.get("media_url") or ""),
+            "copies": list(it.get("copies") or [])[:8],
+            "isImage": bool(it.get("isImage") or is_image_message(
+                filename=str(it.get("filename") or ""),
+                media_url=str(it.get("mediaUrl") or it.get("media_url") or ""),
+            )),
         })
     return out
+
+
+def session_data_stamp(session_id: str, *, start_date: str = "", end_date: str = "") -> str:
+    """用各电脑消息文件的 mtime/size 做轻量签名；文件未变则可复用汇总结果。"""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return ""
+    parts = [sid, str(start_date or "")[:10], str(end_date or "")[:10]]
+    try:
+        from . import wecom_local as L
+    except Exception:
+        return "|".join(parts)
+    if not L.available():
+        return "|".join(parts)
+    try:
+        srcs = L.list_sources()
+    except Exception:
+        return "|".join(parts)
+    for src in srcs or []:
+        if not isinstance(src, dict):
+            continue
+        source_id = str(src.get("id") or "")
+        path = L._msg_path(source_id, sid) if source_id else None
+        if not path:
+            continue
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        parts.append(source_id + ":" + str(st.st_mtime_ns) + ":" + str(st.st_size))
+    return "|".join(parts)
+
+
+def get_summary_cache(session_id: str, stamp: str) -> dict | None:
+    sid = str(session_id or "").strip()
+    if not sid or not stamp:
+        return None
+    hit = _SUMMARY_CACHE.get(sid)
+    if not hit:
+        return None
+    if hit[0] != stamp:
+        return None
+    payload = hit[1]
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def put_summary_cache(session_id: str, stamp: str, payload: dict) -> None:
+    sid = str(session_id or "").strip()
+    if not sid or not stamp or not isinstance(payload, dict):
+        return
+    _SUMMARY_CACHE[sid] = (stamp, dict(payload))
+    if len(_SUMMARY_CACHE) <= _SUMMARY_CACHE_MAX:
+        return
+    for key in list(_SUMMARY_CACHE.keys())[: max(1, len(_SUMMARY_CACHE) - _SUMMARY_CACHE_MAX)]:
+        _SUMMARY_CACHE.pop(key, None)
 
 
 async def classify_session_files(
@@ -466,25 +623,34 @@ async def classify_session_files(
     used = False
     cached = load_type_cache(session_id) if session_id else {}
     covered = 0
-    if cached and entries:
+    pending = []
+    if entries:
         for it in entries:
-            hit = cached.get(cache_key(it.get("messageId"), it.get("filename") or ""))
-            if not hit:
-                continue
-            it["type"] = hit["type"]
-            it["label"] = hit["label"]
-            it["reason"] = hit.get("reason") or it.get("reason") or ""
-            it["source"] = hit.get("source") or "gemini"
-            covered += 1
-    need_gemini = bool(use_gemini and entries and covered < len(entries))
-    if need_gemini:
-        entries, note = await _gemini_overlay(entries)
-        used = any(it.get("source") == "gemini" for it in entries)
+            hit = cached.get(cache_key(it.get("messageId"), it.get("filename") or "")) if cached else None
+            if hit:
+                it["type"] = hit["type"]
+                it["label"] = hit["label"]
+                it["reason"] = hit.get("reason") or it.get("reason") or ""
+                it["source"] = hit.get("source") or "gemini"
+                covered += 1
+            else:
+                pending.append(it)
+    if use_gemini and pending:
+        pending, note = await _gemini_overlay(pending)
+        used = any(it.get("source") == "gemini" for it in pending)
         if session_id:
             save_type_cache(session_id, entries)
+        if covered and note:
+            note = "新文件已复核；其余沿用缓存。 " + note
+        elif covered and not note:
+            note = "新文件已分类；其余沿用缓存"
     elif covered:
         note = "已按聊天上下文分类"
         used = any(it.get("source") == "gemini" for it in entries)
+        if session_id and pending:
+            save_type_cache(session_id, entries)
+    elif session_id and entries:
+        save_type_cache(session_id, entries)
     out = {
         "items": slim_items(entries),
         "counts": counts_of(entries),

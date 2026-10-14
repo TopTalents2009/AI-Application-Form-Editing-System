@@ -198,47 +198,118 @@ _WX_MEDIA_URL = re.compile(
     r"imunion\.weixin\.qq\.com|(?:[\w.-]+\.)?weixin\.qq\.com/cgi-bin/mmae-bin/tpdownloadmedia)\S*",
     re.I,
 )
+# 文件名提取：限制长度，避免长正文上 +? 回溯拖慢合并
 _WX_FILE_NAME = re.compile(
-    r"\[?(?:文件|file)?\]?\s*([^\n[\]/\\]+?\.(?:zip|rar|7z|pdf|xlsx?|docx?|pptx?|png|jpe?g|gif|webp|bmp|mp4|txt|md))",
+    r"(?:\[?(?:文件|file)?\]?\s*)?"
+    r"([^\n[\]/\\]{1,180}\.(?:zip|rar|7z|pdf|xlsx?|docx?|pptx?|png|jpe?g|gif|webp|bmp|mp4|txt|md))",
     re.I,
+)
+_WX_SPACES = re.compile(r"[ \t]+")
+_WX_NEWLINES = re.compile(r"\n{3,}")
+_WX_FILE_TAG = re.compile(r"^\[(?:文件|file)\]\s*", re.I)
+_WX_IMG_HOST = re.compile(r"qpic\.cn|qlogo\.cn|pic\.weixin", re.I)
+_WX_URL_HINT = ("http://", "https://", "weixin", "qpic.cn", "tpdownload")
+_WX_FILE_EXT_HINT = (
+    ".pdf", ".doc", ".xls", ".ppt", ".png", ".jpg", ".jpeg", ".zip", ".rar",
+    ".7z", ".txt", ".md", ".gif", ".webp", ".bmp", ".mp4",
 )
 
 
+def _text_has_url_hint(text: str) -> bool:
+    low = text.lower()
+    return any(tok in low for tok in _WX_URL_HINT)
+
+
+def _text_has_file_hint(text: str) -> bool:
+    low = text.lower()
+    if "文件" in text or "[file]" in low:
+        return True
+    return any(tok in low for tok in _WX_FILE_EXT_HINT)
+
+
+def _extract_filename(text: str) -> str:
+    """只在短窗口里找文件名，避免对整段长聊天做文件名正则。"""
+    s = str(text or "").strip()
+    if not s or not _text_has_file_hint(s):
+        return ""
+    if len(s) > 240:
+        s = s[:160] + "\n" + s[-80:]
+    hit = _WX_FILE_NAME.search(s)
+    return str(hit.group(1) or "").strip() if hit else ""
+
+
 def _normalize_msg(m: dict) -> dict:
-    """文件通知常被解析成「系统消息」+ 内部下载链，收成附件字段并去掉 URL。"""
+    """文件通知常被解析成「系统消息」+ 内部下载链，收成附件字段并去掉 URL。
+
+    无链接且已有附件字段的普通消息直接返回原对象，避免合并多机副本时整表拷贝。
+    需要改写时再浅拷贝，避免污染本地 JSON 缓存。
+    """
     if not isinstance(m, dict):
         return m
     text = str(m.get("text") or m.get("snippet") or "")
-    urls = _WX_MEDIA_URL.findall(text)
-    cleaned = _WX_MEDIA_URL.sub(" ", text)
-    cleaned = re.sub(r"[ \t]+", " ", cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     fname = str(m.get("attachment_name") or "").strip()
+    has_url = _text_has_url_hint(text) if text else False
+    if not has_url:
+        if fname or m.get("media_url") or m.get("has_attachment"):
+            return m
+        if not text:
+            return m
+        got = _extract_filename(text)
+        if not got:
+            return m
+        out = dict(m)
+        out["attachment_name"] = got
+        out["has_attachment"] = True
+        return out
+
+    urls = _WX_MEDIA_URL.findall(text)
+    if not urls:
+        if fname or m.get("media_url") or m.get("has_attachment"):
+            return m
+        got = _extract_filename(text)
+        if not got:
+            return m
+        out = dict(m)
+        out["attachment_name"] = got
+        out["has_attachment"] = True
+        return out
+
+    cleaned = _WX_MEDIA_URL.sub(" ", text)
+    cleaned = _WX_SPACES.sub(" ", cleaned)
+    cleaned = _WX_NEWLINES.sub("\n\n", cleaned).strip()
     if not fname:
-        hit = _WX_FILE_NAME.search(cleaned) or _WX_FILE_NAME.search(text)
-        if hit:
-            fname = str(hit.group(1) or "").strip()
+        fname = _extract_filename(cleaned) or _extract_filename(text)
     is_file_url = any(
         "tpdownloadmedia" in u.lower() or "imunion.weixin.qq.com" in u.lower()
         for u in urls
     )
+    img = ""
+    if not m.get("media_url"):
+        img = next((u for u in urls if _WX_IMG_HOST.search(u)), "")
+    out = dict(m)
     if is_file_url:
-        m["has_attachment"] = True
+        out["has_attachment"] = True
         if fname:
-            m["attachment_name"] = fname
-    img = next((u for u in urls if re.search(r"qpic\.cn|qlogo\.cn|pic\.weixin", u, re.I)), "")
-    if img and not m.get("media_url"):
-        m["media_url"] = img
-    if urls:
-        leftover = cleaned
-        shown = str(m.get("attachment_name") or fname or "").strip()
-        if shown:
-            leftover = re.sub(r"^\[(?:文件|file)\]\s*", "", leftover, flags=re.I)
-            leftover = leftover.replace(shown, "")
-            leftover = leftover.strip(" \n\t[]【】")
-            leftover = re.sub(r"\s+", " ", leftover).strip()
-        m["text"] = leftover
-    return m
+            out["attachment_name"] = fname
+    elif fname and not out.get("attachment_name"):
+        out["attachment_name"] = fname
+        out["has_attachment"] = True
+    if img:
+        out["media_url"] = img
+    leftover = cleaned
+    shown = str(out.get("attachment_name") or fname or "").strip()
+    if shown:
+        leftover = _WX_FILE_TAG.sub("", leftover)
+        leftover = leftover.replace(shown, "")
+        leftover = leftover.strip(" \n\t[]【】")
+        leftover = _WX_SPACES.sub(" ", leftover).strip()
+    out["text"] = leftover
+    return out
+
+
+_WS_COLLAPSE = re.compile(r"\s+")
+_MERGE_CACHE: dict[str, tuple] = {}
+_MERGE_CACHE_MAX = 16
 
 
 def _msg_fuse_key(m: dict) -> tuple:
@@ -251,8 +322,34 @@ def _msg_fuse_key(m: dict) -> tuple:
         return ("m", media[:160])
     if att:
         return ("f", att.lower(), sender)
-    text = re.sub(r"\s+", " ", str(m.get("text") or "")).strip()[:120]
+    text = _WS_COLLAPSE.sub(" ", str(m.get("text") or "")).strip()[:120]
     return ("t", clock, sender, typ, text)
+
+
+def _merge_cache_stamp(session_id: str, start_date: str = "", end_date: str = "", source_id: str = "") -> str:
+    try:
+        from .wecom_file_class import session_data_stamp
+        return session_data_stamp(session_id, start_date=start_date, end_date=end_date) + "|" + str(source_id or "")
+    except Exception:
+        return "|".join([str(session_id or ""), str(start_date or "")[:10], str(end_date or "")[:10], str(source_id or "")])
+
+
+def _get_merge_cache(stamp: str) -> dict | None:
+    if not stamp:
+        return None
+    hit = _MERGE_CACHE.get(stamp)
+    return hit[1] if hit else None
+
+
+def _put_merge_cache(stamp: str, payload: dict) -> None:
+    if not stamp or not isinstance(payload, dict):
+        return
+    _MERGE_CACHE[stamp] = (time.time(), payload)
+    if len(_MERGE_CACHE) <= _MERGE_CACHE_MAX:
+        return
+    ranked = sorted(_MERGE_CACHE.items(), key=lambda kv: kv[1][0])
+    for key, _row in ranked[: max(1, len(_MERGE_CACHE) - _MERGE_CACHE_MAX)]:
+        _MERGE_CACHE.pop(key, None)
 
 
 def _sync_stamp(value: str) -> str:
@@ -335,7 +432,7 @@ def merge_messages(batches: list, session_id: str = "") -> list:
         for m in msgs or []:
             if not isinstance(m, dict):
                 continue
-            m = _normalize_msg(dict(m))
+            m = _normalize_msg(m)
             key = _msg_fuse_key(m)
             row = buckets.get(key)
             if not row:
@@ -566,19 +663,43 @@ async def list_merged_messages(
     if want and want not in ("*", "all"):
         srcs = [s for s in srcs if str(s.get("id") or "") == want]
 
-    lim = max(1, min(int(limit or 80), 200))
     off = max(0, int(offset or 0))
     fe = max(0, int(from_end or 0))
     around_id = str(around_id or "").strip()
     around_time = str(around_time or "").strip()
     want_around = bool(around_id or around_time)
     window = bool(tail or fe)
+    cap = 2000 if (full or window or want_around) else 200
+    lim = max(1, min(int(limit or 80), cap))
     if full or want_around:
         per_src = 0
     elif window:
         per_src = fe + lim
     else:
         per_src = min(2000, max(off + lim, lim))
+
+    merge_stamp = ""
+    if full and not want_around:
+        merge_stamp = _merge_cache_stamp(cid, start_date, end_date, want)
+        cached = _get_merge_cache(merge_stamp)
+        if cached:
+            return {
+                "items": list(cached.get("items") or []),
+                "count": int(cached.get("count") or 0),
+                "total": int(cached.get("total") or 0),
+                "offset": 0,
+                "limit": int(cached.get("limit") or 0),
+                "session_id": cid,
+                "replicas": list(cached.get("replicas") or []),
+                "display_name": str(cached.get("display_name") or ""),
+                "readMode": str(cached.get("readMode") or ("local" if L.available() else "http")),
+                "hasEarlier": False,
+                "hasNewer": False,
+                "fromEnd": 0,
+                "aroundHit": False,
+                "aroundIndex": 0,
+                "fromCache": True,
+            }
 
     async def one(src: dict) -> tuple:
         sid = str(src.get("id") or "")
@@ -625,7 +746,7 @@ async def list_merged_messages(
     have = [r for r in replicas if int(r.get("msg_count") or 0) > 0]
     if full:
         around_idx = find_message_index(merged, around_id, around_time) if want_around else -1
-        return {
+        result = {
             "items": merged,
             "count": len(merged),
             "total": len(merged),
@@ -641,6 +762,17 @@ async def list_merged_messages(
             "aroundHit": around_idx >= 0,
             "aroundIndex": around_idx if around_idx >= 0 else 0,
         }
+        if merge_stamp and not want_around:
+            _put_merge_cache(merge_stamp, {
+                "items": merged,
+                "count": len(merged),
+                "total": len(merged),
+                "limit": len(merged),
+                "replicas": have or replicas,
+                "display_name": display,
+                "readMode": read_mode,
+            })
+        return result
     if want_around:
         sliced = slice_around(merged, limit=lim, around_id=around_id, around_time=around_time)
         if sliced:
@@ -954,14 +1086,19 @@ async def search(q: str, *, source_id: str = "", session_id: str = "", limit: in
     qn = str(q or "").strip()
     if not qn:
         raise WecomError("BAD_REQUEST", "请输入关键词")
+    try:
+        lim_in = int(limit or 0)
+    except (TypeError, ValueError):
+        lim_in = 50
     if L.available() and str(session_id or "").strip():
         rows = await asyncio.to_thread(
             L.search_session, qn, str(session_id).strip(),
-            source_id=str(source_id or ""), limit=limit,
+            source_id=str(source_id or ""), limit=lim_in,
         )
         items = [_normalize_msg(dict(x)) for x in rows if isinstance(x, dict)]
         return {"items": items, "count": len(items), "q": qn, "readMode": "local"}
-    params = {"q": qn[:80], "limit": max(1, min(int(limit or 50), 200))}
+    remote_limit = 5000 if lim_in <= 0 else max(1, min(lim_in, 2000))
+    params = {"q": qn[:80], "limit": remote_limit}
     if source_id:
         params["source_id"] = str(source_id)
     if session_id:

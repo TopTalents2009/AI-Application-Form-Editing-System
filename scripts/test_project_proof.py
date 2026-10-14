@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -146,6 +147,16 @@ def _boeing_snap() -> dict:
                     "回国前职务中文": "首席科学家",
                     "回国前职务英文": "Chief Scientist",
                 },
+                "主要学历": [
+                    {
+                        "校名称": "University of Washington",
+                        "学位": "博士",
+                        "开始时间": "1997-09-01",
+                        "结束时间": "2001-12-31",
+                        "所在国家": "美国",
+                        "是否全日制": "是",
+                    }
+                ],
                 "工作经历": [{
                     "工作单位": "波音公司 / BOEING",
                     "担任职务": "首席科学家 / Chief Scientist",
@@ -160,13 +171,29 @@ def _boeing_snap() -> dict:
                         "项目来源": "波音公司",
                         "开始时间": "2020-02-13",
                         "结束时间": "2021-06-20",
+                        "完成人排序": "1/2",
                         "经费总额": "210",
+                    },
+                    {
+                        "项目名称": "Overlap PI / Real-time inverse modeling",
+                        "项目来源": "波音公司",
+                        "开始时间": "2020-01-19",
+                        "结束时间": "2021-09-14",
+                        "完成人排序": "1/5",
                     },
                     {
                         "项目名称": "PINN curing / Co-training of PINNs",
                         "项目来源": "美国能源部",
                         "开始时间": "2023-04-15",
                         "结束时间": "2025-05-13",
+                        "完成人排序": "1/8",
+                    },
+                    {
+                        "项目名称": "Colloidal Particles / Synthesis Photonic",
+                        "项目来源": "美国国防部",
+                        "开始时间": "2000-02-13",
+                        "结束时间": "2001-07-20",
+                        "完成人排序": "3/5",
                     },
                     {
                         "项目名称": "汽车零部件在线视觉检测系统",
@@ -176,6 +203,63 @@ def _boeing_snap() -> dict:
             },
         },
     }
+
+
+def test_feedback_project_sanitize() -> None:
+    """回归：同阶段双负责人、博士期高职级、汇总含项目来源、签发日不早于项目。"""
+    app_text = "申报企业：苏州启明智造科技有限公司"
+    ctx = PP.prior_work_context(_boeing_snap(), app_text)
+    assert ctx["ok"], ctx
+    projects = ctx["projects"]
+    assert projects, projects
+
+    by_name = {str(p.get("name") or "").upper(): p for p in projects}
+    # 博士期间项目不得保留首席/负责人
+    phd = next(p for p in projects if "PHOTONIC" in str(p.get("name") or "").upper() or "COLLOIDAL" in str(p.get("name") or "").upper())
+    role = str(phd.get("担任角色") or phd.get("role") or "")
+    assert "Chief" not in role and "首席" not in role and "负责人" not in role, phd
+    assert "Participant" in role or "参与" in role, phd
+
+    # 同阶段仅保留一个负责人
+    leads = []
+    for p in projects:
+        r = str(p.get("担任角色") or p.get("role") or "")
+        if "Principal" in r or "负责人" in r:
+            s = PP._parse_ym(p.get("开始时间") or p.get("startDate") or "")
+            e = PP._parse_ym(p.get("结束时间") or p.get("endDate") or "")
+            leads.append((PP._ym_key(s), PP._ym_key(e, end=True), str(p.get("name"))))
+    for i, (s0, e0, n0) in enumerate(leads):
+        for s1, e1, n1 in leads[i + 1:]:
+            assert not PP._ranges_overlap(s0, e0, s1, e1), (n0, n1)
+
+    letters = PP._build_autoref_letters(
+        ctx["person"], ctx["company"], projects, "51104",
+        role=ctx["role"], start_date=ctx["startDate"], end_date=ctx["endDate"],
+        language=ctx["language"], education=ctx.get("education") or [],
+    )
+    body = str(letters[0].get("letterContent") or "")
+    assert "Funding source:" in body, body
+    assert "Chief Scientist" not in body, body
+    issue = str(letters[0].get("issueDate") or letters[0].get("endDate") or "")
+    assert issue >= "2023-04", (issue, letters[0])
+
+    html = (
+        '<html lang="en"><body>'
+        '<div style="font-size:14px;line-height:1.7;min-height:120mm">OLD</div>'
+        '<div style="font-size:11px;color:#6b7280;margin-top:8px">July 15, 2021</div>'
+        "</body></html>"
+    )
+    doc = {"kind": "project.all", "titleEn": "All Projects", "html": html, "fields": {}}
+    out = PP._render_project_html(
+        doc, language="en", issuer=ctx["company"], person=ctx["person"],
+        projects=projects, default_role=ctx["role"],
+    )
+    assert "Funding source:" in out, out
+    assert "July 15, 2021" not in out, out
+    foot = re.search(r'margin-top:\s*8px[^>]*>([^<]+)<', out)
+    assert foot and foot.group(1).strip() >= "2023-04", out
+    assert "Chief Scientist" not in out, out
+    print("[OK] 反馈回归：双负责人/博士期角色/项目来源/签发日")
 
 
 def test_prior_employer_and_html() -> None:
@@ -420,6 +504,7 @@ def main() -> int:
     test_prompt_and_filter()
     test_autoref_contract()
     test_prior_employer_and_html()
+    test_feedback_project_sanitize()
     person, projects, snap = test_detect_and_extract()
     asyncio.run(test_resolve_skip_external())
     if not live:

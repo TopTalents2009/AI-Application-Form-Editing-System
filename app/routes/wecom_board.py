@@ -32,12 +32,13 @@ def _http(e: W.WecomError) -> HTTPException:
 
 
 def _file_upload_public() -> dict:
-    from ..config import load_config
-    cfg = load_config()
+    from ..pool import talent_upload_target
+    t = talent_upload_target()
     return {
-        "baseUrl": cfg.get("poolFileUploadUrl") or "",
-        "hasKey": bool(cfg.get("poolFileUploadKey")),
-        "configured": bool(cfg.get("poolFileUploadConfigured")),
+        "baseUrl": t.get("url") or "",
+        "hasKey": bool(t.get("key")),
+        "configured": bool(t.get("ok")),
+        "via": t.get("via") or "",
     }
 
 
@@ -45,17 +46,37 @@ def _file_upload_public() -> dict:
 async def api_file_summary(body: dict, request: Request):
     """当前会话文件按聊天上下文分类汇总；无缓存时调用模型复核。"""
     _user(request)
-    from ..wecom_file_class import CAT_ORDER, LABEL_TO_ID, classify_session_files
+    from ..wecom_file_class import (
+        CAT_ORDER,
+        LABEL_TO_ID,
+        classify_session_files,
+        get_summary_cache,
+        is_image_message,
+        put_summary_cache,
+        session_data_stamp,
+    )
     body = body if isinstance(body, dict) else {}
     sid = str(body.get("session_id") or "").strip()
     if not sid:
         raise HTTPException(400, "请先选择会话")
+    start_date = str(body.get("start_date") or "")
+    end_date = str(body.get("end_date") or "")
+    force = bool(body.get("force") or body.get("refresh"))
+    stamp = session_data_stamp(sid, start_date=start_date, end_date=end_date)
+    auto_raw = body.get("autoUpload")
+    do_auto = bool(auto_raw)
+    if not force:
+        cached = get_summary_cache(sid, stamp)
+        if cached:
+            cached["upload"] = _file_upload_public()
+            cached["fromCache"] = True
+            return await _with_auto_upload(cached, session_id=sid, do_auto=do_auto)
     try:
         data = await W.list_merged_messages(
             sid,
             source_id=str(body.get("source_id") or ""),
-            start_date=str(body.get("start_date") or ""),
-            end_date=str(body.get("end_date") or ""),
+            start_date=start_date,
+            end_date=end_date,
             full=True,
         )
     except W.WecomError as e:
@@ -92,6 +113,7 @@ async def api_file_summary(body: dict, request: Request):
                 "message_id": c.get("message_id") or mid,
                 "session_id": str(c.get("session_id") or sid),
             })
+        media = str((m or {}).get("media_url") or it.get("mediaUrl") or "")
         groups[cid]["files"].append({
             "filename": fname,
             "sender": str(it.get("sender") or ""),
@@ -102,6 +124,12 @@ async def api_file_summary(body: dict, request: Request):
             "sessionName": sess_name,
             "reason": str(it.get("reason") or ""),
             "source": str(it.get("source") or ""),
+            "mediaUrl": media,
+            "isImage": bool(it.get("isImage") or is_image_message(
+                m if isinstance(m, dict) else None,
+                filename=fname,
+                media_url=media,
+            )),
         })
     rank = {lab: i for i, lab in enumerate(CAT_ORDER)}
     order = sorted(order, key=lambda cid: rank.get((groups[cid] or {}).get("label") or "", 99))
@@ -114,7 +142,7 @@ async def api_file_summary(body: dict, request: Request):
         for g in groups.values():
             for f in g.get("files") or []:
                 f["copies"] = W.merge_copy_peers(f.get("copies") or [], peers)
-    return {
+    result = {
         "ok": True,
         "session_id": sid,
         "session_name": sess_name,
@@ -125,24 +153,82 @@ async def api_file_summary(body: dict, request: Request):
         "classifyNote": typed.get("geminiNote") or "",
         "usedGemini": bool(typed.get("usedGemini")),
         "counts": typed.get("counts") or {},
+        "fromCache": False,
     }
+    if stamp:
+        put_summary_cache(sid, stamp, result)
+    result = await _with_auto_upload(result, session_id=sid, do_auto=do_auto)
+    return result
+
+
+async def _with_auto_upload(result: dict, *, session_id: str, do_auto: bool) -> dict:
+    from ..wecom_talent_upload import apply_status_to_groups, auto_upload_files, flatten_groups
+    groups = result.get("groups") or []
+    files = flatten_groups(groups, session_id=session_id)
+    if do_auto:
+        files, summary = await auto_upload_files(files, session_id=session_id)
+    else:
+        from ..wecom_talent_upload import annotate_files, upload_configured
+        files = annotate_files(files)
+        summary = {
+            "ok": True,
+            "configured": upload_configured(),
+            "uploaded": 0,
+            "failed": 0,
+            "pending": 0,
+            "noId": sum(1 for f in files if f.get("uploadStatus") == "no_id"),
+            "note": "未自动入库",
+        }
+    apply_status_to_groups(groups, files)
+    result["groups"] = groups
+    result["autoUpload"] = summary
+    result["upload"] = _file_upload_public()
+    return result
 
 
 @router.post("/api/wecom/talent-files")
 async def api_upload_talent_files(body: dict, request: Request):
-    """把已分类文件上传到人才库人才附件。接口和 Key 未配置时不外发。"""
+    """把已分类文件上传到人才库人才附件。"""
     _user(request)
     info = _file_upload_public()
     if not info["configured"]:
-        raise HTTPException(503, "人才附件上传接口和 Key 尚未配置")
+        raise HTTPException(503, "未配置人才库或人才附件上传接口")
     body = body if isinstance(body, dict) else {}
     aid = str(body.get("attachId") or body.get("attach_id") or "").strip()
     files = body.get("files") if isinstance(body.get("files"), list) else []
-    if not aid:
-        raise HTTPException(400, "请填写人才编号")
     if not files:
         raise HTTPException(400, "请选择要上传的文件")
-    raise HTTPException(501, "上传接口已填写，但具体对接字段尚未实现")
+    from ..wecom_talent_upload import upload_one
+    out, errors = [], []
+    for raw in files:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        if aid:
+            row["attachId"] = aid
+        if not row.get("type") and row.get("kind"):
+            row["type"] = row.get("kind")
+        if not row.get("type") and row.get("label"):
+            from ..wecom_file_class import LABEL_TO_ID
+            row["type"] = LABEL_TO_ID.get(str(row.get("label") or ""), row.get("label"))
+        got = await upload_one(row, force=True)
+        if got.get("uploadStatus") == "uploaded":
+            out.append(got)
+        else:
+            errors.append({
+                "filename": got.get("filename") or row.get("filename") or "",
+                "detail": got.get("uploadNote") or "上传失败",
+            })
+    if not out and errors:
+        raise HTTPException(400, errors[0].get("detail") or "上传失败")
+    return {
+        "ok": True,
+        "uploaded": len(out),
+        "failed": len(errors),
+        "items": out,
+        "errors": errors,
+        "detail": "已上传 " + str(len(out)) + " 个" + (("，失败 " + str(len(errors)) + " 个") if errors else ""),
+    }
 
 
 @router.post("/api/wecom/intent")
@@ -492,8 +578,15 @@ async def api_search(
 
 
 @router.get("/api/wecom/sources/{source_id}/files/{message_id}")
-async def api_file(source_id: str, message_id: int, request: Request, session_id: str = Query("")):
+async def api_file(
+    source_id: str,
+    message_id: int,
+    request: Request,
+    session_id: str = Query(""),
+    inline: bool = Query(False),
+):
     _user(request)
+    from ..wecom_file_class import image_media_type
     try:
         got = await W.stream_attachment(source_id, message_id, session_id)
     except W.WecomError as e:
@@ -506,19 +599,32 @@ async def api_file(source_id: str, message_id: int, request: Request, session_id
     if got.get("kind") == "missing":
         raise HTTPException(404, got.get("detail") or "文件不在缓存")
     name = str(got.get("filename") or ("wecom-" + str(message_id)))
-    headers = {
-        "Cache-Control": "no-cache",
-        "Content-Disposition": "attachment; filename*=UTF-8''" + quote(name),
-    }
+    raw_type = str(got.get("content_type") or "application/octet-stream")
+    body = b"" if got.get("kind") == "stream" else (got.get("content") or b"")
+    img_type = image_media_type(name, raw_type, body if body else None)
+    if inline and not img_type and "." not in name:
+        img_type = "image/jpeg"
+    if inline and img_type:
+        headers = {
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": "inline; filename*=UTF-8''" + quote(name),
+        }
+        media_type = img_type
+    else:
+        headers = {
+            "Cache-Control": "no-cache",
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(name),
+        }
+        media_type = raw_type
     if got.get("kind") == "stream":
         return StreamingResponse(
             got["chunks"](),
-            media_type=str(got.get("content_type") or "application/octet-stream"),
+            media_type=media_type,
             headers=headers,
         )
     return Response(
-        content=got.get("content") or b"",
-        media_type=str(got.get("content_type") or "application/octet-stream"),
+        content=body,
+        media_type=media_type,
         headers=headers,
     )
 

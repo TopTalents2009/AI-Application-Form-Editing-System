@@ -44,6 +44,30 @@ def test_leaders_from_messages():
     print("leaders/mobile ok")
 
 
+def test_leaders_from_watched_team():
+    assert AL.team_key_from_name("申报一组唐文秀") == "申报一组"
+    assert AL.team_key_from_name("申报一组组长-小唐18198156910") == "申报一组"
+    assert AL.team_key_from_name("申报二组组长-小胡（小胡 18164804910）") == "申报二组"
+    groups = {
+        "S:a": {"name": "申报一组唐文秀"},
+        "S:b": {"name": "申报一组组长-小唐18198156910"},
+        "S:c": {"name": "申报二组组长-小胡（小胡 18164804910）"},
+        "S:d": {"name": "申报三组组长-任涛"},
+        "R:x": {"name": "无关项目群"},
+    }
+    got = AL.leaders_from_watched_sessions("申报一组唐文秀", groups=groups)
+    assert got == ["申报一组组长-小唐18198156910"]
+    assert AL.mobiles_from_leader_names(got) == ["18198156910"]
+    # 本群无组长发言时，靠同组已关注会话补上
+    resolved = AL.resolve_group_leaders(
+        [{"sender": "吴贤腾", "text": "？"}],
+        session_name="申报一组唐文秀",
+        groups=groups,
+    )
+    assert resolved == ["申报一组组长-小唐18198156910"]
+    print("watched team leaders ok")
+
+
 def test_mask_webhook():
     assert AL._mask_webhook("") == ""
     assert AL._mask_webhook("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=4535b383-128e-4fcb-8ece-7f7aa1274bfe") == "…4bfe"
@@ -87,6 +111,7 @@ if __name__ == "__main__":
     test_format_and_level()
     test_mentioned()
     test_leaders_from_messages()
+    test_leaders_from_watched_team()
     test_mask_webhook()
     test_issue_keywords()
     print("ALL OK")

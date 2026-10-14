@@ -11,6 +11,7 @@ from .routes import auth as auth_routes
 from .routes import admin as admin_routes
 from .routes import feedback as feedback_routes
 from .routes import wecom_board as wecom_board_routes
+from .routes import agent_review as agent_review_routes
 from .routes import openapi as openapi_routes
 from .routes import api_apply as api_apply_routes
 from .routes import talent_files as talent_files_routes
@@ -92,6 +93,7 @@ app.include_router(auth_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(feedback_routes.router)
 app.include_router(wecom_board_routes.router)
+app.include_router(agent_review_routes.router)
 app.include_router(openapi_routes.create_router(runner))
 app.include_router(api_apply_routes.router)
 app.include_router(talent_files_routes.router)

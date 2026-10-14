@@ -361,6 +361,10 @@ def prior_work_context(snap: dict, app_text: str = "") -> dict:
                         item["项目来源"] = en_name
                         break
         projects.append(item)
+    edu = education_spans(snap)
+    projects = sanitize_projects(
+        projects[:12], language=language, education=edu, default_role=role,
+    )
     aliases = [x for x in (zh, en) if x and x != company]
     return {
         "ok": True,
@@ -372,7 +376,8 @@ def prior_work_context(snap: dict, app_text: str = "") -> dict:
         "startDate": start,
         "endDate": end or "present",
         "person": person,
-        "projects": projects[:12],
+        "projects": projects,
+        "education": edu,
         "forbidden": forbidden,
         "aliases": aliases,
         "note": "签发单位=" + company + "（来华前工作单位，非申报企业）；语言=" + language,
@@ -458,26 +463,258 @@ def _field(row: dict, *keys) -> str:
     return ""
 
 
+_SENIOR_ROLE_RE = re.compile(
+    r"首席|总工程师|技术总监|项目负责人|主持|Principal\s*Investigator|\bPI\b|"
+    r"Chief\s*Scientist|Project\s*Investigator|Director|Lead\s*Scientist",
+    re.I,
+)
+_PARTICIPANT_ROLE_RE = re.compile(r"参与|参加|成员|助理|学生|博士生|研究生|participant|member|assistant|student", re.I)
+_PRESENT_RE = re.compile(r"^(至今|现在|今|present|now|current|-|—|–)?$", re.I)
+_YM_RE = re.compile(r"(?P<y>\d{4})(?:[./\-年](?P<m>\d{1,2}))?(?:[./\-月](?P<d>\d{1,2}))?")
+
+
+def _parse_ym(text: str) -> tuple[int, int] | None:
+    s = str(text or "").strip()
+    if not s or _PRESENT_RE.match(s):
+        return None
+    m = _YM_RE.search(s)
+    if not m:
+        return None
+    y = int(m.group("y"))
+    mo = int(m.group("m") or "1")
+    if y < 1950 or y > 2100 or mo < 1 or mo > 12:
+        return None
+    return y, mo
+
+
+def _ym_key(pair: tuple[int, int] | None, *, end: bool = False, present_key: int = 999912) -> int:
+    if pair is None:
+        return present_key if end else 0
+    return pair[0] * 100 + pair[1]
+
+
+def _fmt_ym(pair: tuple[int, int] | None, *, language: str, present: bool = False) -> str:
+    if present or pair is None:
+        return "present" if language == "en" else "至今"
+    y, m = pair
+    return f"{y:04d}-{m:02d}"
+
+
+def _ranges_overlap(a0: int, a1: int, b0: int, b1: int) -> bool:
+    return a0 <= b1 and b0 <= a1
+
+
+def _is_lead_role_text(role: str, rank: str = "") -> bool:
+    role = str(role or "")
+    rank = str(rank or "")
+    m = re.match(r"(\d+)\s*/\s*(\d+)", rank.strip())
+    if m:
+        return int(m.group(1)) == 1
+    if _PARTICIPANT_ROLE_RE.search(role) and not _SENIOR_ROLE_RE.search(role):
+        return False
+    return bool(_SENIOR_ROLE_RE.search(role))
+
+
+def _participant_role(language: str) -> str:
+    return "Project Participant" if language == "en" else "项目参与人"
+
+
+def _lead_role(language: str) -> str:
+    return "Principal Investigator" if language == "en" else "项目负责人（主持）"
+
+
+def _set_project_role(row: dict, role_zh: str, role_en: str) -> None:
+    row["担任角色"] = role_zh
+    row["role"] = role_en
+
+
+def education_spans(snap: dict) -> list[tuple[int, int, str]]:
+    """从人才库学历抽出时间段，供项目角色合理性校验。"""
+    payload = ((snap or {}).get("talent") or {}).get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    rows = []
+    for key in ("主要学历", "教育经历", "学历"):
+        block = payload.get(key)
+        if isinstance(block, list):
+            rows.extend(block)
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        degree = str(row.get("学位") or row.get("学历") or "").strip()
+        start = _parse_ym(row.get("开始时间") or row.get("入学时间") or "")
+        end = _parse_ym(row.get("结束时间") or row.get("毕业时间") or "")
+        if not start:
+            continue
+        s_key = _ym_key(start)
+        e_key = _ym_key(end, end=True)
+        if e_key < s_key:
+            e_key = s_key
+        out.append((s_key, e_key, degree))
+    return out
+
+
+def _ym_to_months(key: int) -> int:
+    return (key // 100) * 12 + (key % 100)
+
+
+def _during_fulltime_phd(start_key: int, end_key: int, spans: list[tuple[int, int, str]]) -> bool:
+    if not start_key:
+        return False
+    for s0, s1, degree in spans or []:
+        if not re.search(r"博士|Ph\.?\s*D|Doctor", degree, re.I):
+            continue
+        if not _ranges_overlap(start_key, end_key, s0, s1):
+            continue
+        # 项目完全落在博士期内，或重叠不少于 6 个月
+        if start_key >= s0 and end_key <= s1:
+            return True
+        overlap = _ym_to_months(min(end_key, s1)) - _ym_to_months(max(start_key, s0))
+        if overlap >= 5:
+            return True
+    return False
+
+
+def sanitize_projects(
+    projects: list,
+    *,
+    language: str = "zh",
+    education: list[tuple[int, int, str]] | None = None,
+    default_role: str = "",
+) -> list:
+    """纠偏项目清单：博士期不合理高职级、同阶段双负责人、补全角色字段。"""
+    rows = []
+    for raw in projects or []:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        if not str(row.get("name") or "").strip():
+            continue
+        rows.append(row)
+
+    for row in rows:
+        start = _parse_ym(row.get("startDate") or row.get("开始时间") or row.get("起止时间") or "")
+        end_raw = str(row.get("endDate") or row.get("结束时间") or "")
+        end_present = bool(_PRESENT_RE.match(end_raw.strip())) or (
+            "—" in end_raw and not _parse_ym(end_raw)
+        )
+        end = None if end_present else _parse_ym(end_raw)
+        if start and end and _ym_key(end, end=True) < _ym_key(start):
+            end = start
+        s_key = _ym_key(start)
+        e_key = _ym_key(end, end=True)
+        role = _field(row, "担任角色", "role")
+        rank = _field(row, "完成人排序", "participants")
+        lead = _is_lead_role_text(role, rank)
+        if not role and not rank and default_role:
+            # 任职头衔不能直接当作每个项目角色；无排序时默认参与
+            lead = False
+        if _during_fulltime_phd(s_key, e_key, education or []) and (
+            lead or _SENIOR_ROLE_RE.search(role or default_role or "")
+        ):
+            _set_project_role(row, "项目参与人", "Project Participant")
+            if rank and re.match(r"1\s*/\s*\d+", rank.strip()):
+                row["完成人排序"] = re.sub(r"^1\s*/", "2/", rank.strip(), count=1)
+                row["participants"] = row["完成人排序"]
+            continue
+        if lead:
+            _set_project_role(row, "项目负责人（主持）", "Principal Investigator")
+        elif rank and re.match(r"[2-9]\d*\s*/\s*\d+", rank.strip()):
+            _set_project_role(row, "项目参与人", "Project Participant")
+        elif role:
+            zh, en = _split_bilingual(role)
+            _set_project_role(row, zh or role, en or role)
+        else:
+            _set_project_role(row, "项目参与人", "Project Participant")
+
+    # 同阶段不可同时担任两个项目负责人：保留开始更早者，其余降为参与
+    lead_idx = []
+    for i, row in enumerate(rows):
+        role = _field(row, "担任角色", "role")
+        rank = _field(row, "完成人排序", "participants")
+        if not _is_lead_role_text(role, rank):
+            continue
+        start = _parse_ym(row.get("startDate") or row.get("开始时间") or "")
+        end = _parse_ym(row.get("endDate") or row.get("结束时间") or "")
+        lead_idx.append((i, _ym_key(start), _ym_key(end, end=True)))
+    lead_idx.sort(key=lambda x: (x[1], x[2], x[0]))
+    kept = []
+    for i, s0, e0 in lead_idx:
+        conflict = any(_ranges_overlap(s0, e0, ks, ke) for _, ks, ke in kept)
+        if conflict:
+            _set_project_role(rows[i], "项目参与人", "Project Participant")
+            rank = _field(rows[i], "完成人排序", "participants")
+            if rank and re.match(r"1\s*/\s*\d+", rank.strip()):
+                rows[i]["完成人排序"] = re.sub(r"^1\s*/", "2/", rank.strip(), count=1)
+                rows[i]["participants"] = rows[i]["完成人排序"]
+        else:
+            kept.append((i, s0, e0))
+    return rows
+
+
+def letter_issue_date(projects: list, *, fallback: str = "") -> str:
+    """签发日不早于清单中最晚项目结束日；进行中项目用当天。"""
+    from datetime import date as _date
+    best = None
+    today = _date.today()
+    for row in projects or []:
+        if not isinstance(row, dict):
+            continue
+        end_raw = str(row.get("endDate") or row.get("结束时间") or "").strip()
+        if _PRESENT_RE.match(end_raw) or end_raw in ("", "—", "-"):
+            best = today
+            continue
+        end = _parse_ym(end_raw)
+        if not end:
+            continue
+        y, m = end
+        d = min(28, today.day)
+        try:
+            cand = _date(y, m, d)
+        except ValueError:
+            cand = _date(y, m, 1)
+        if best is None or cand > best:
+            best = cand
+    if best is None:
+        fb = _parse_ym(fallback)
+        if fb:
+            return f"{fb[0]:04d}-{fb[1]:02d}-01"
+        return today.strftime("%Y-%m-%d")
+    if best > today:
+        best = today
+    return best.strftime("%Y-%m-%d")
+
+
 def _certificate_role(row: dict, fallback: str, language: str) -> str:
     role = _field(row, "担任角色", "role")
     rank = _field(row, "完成人排序", "participants")
-    lead = bool(re.search(r"主持|负责人|首席|PI\b|principal|lead", role, re.I))
-    m = re.match(r"(\d+)\s*/\s*(\d+)", rank)
-    if m and int(m.group(1)) == 1:
-        lead = True
-    if lead:
-        return "Principal Investigator" if language == "en" else "项目负责人（主持）"
-    if re.search(r"参与|参加|participant|member", role, re.I):
-        return "Project Participant" if language == "en" else "项目参与人"
+    m = re.match(r"(\d+)\s*/\s*(\d+)", rank.strip()) if rank else None
+    if m:
+        if int(m.group(1)) == 1:
+            return _lead_role(language)
+        return _participant_role(language)
+    if _SENIOR_ROLE_RE.search(role) and not _PARTICIPANT_ROLE_RE.search(role):
+        return _lead_role(language)
+    if _PARTICIPANT_ROLE_RE.search(role):
+        return _participant_role(language)
     if role:
         zh, en = _split_bilingual(role)
         picked = (en or role) if language == "en" else (zh or role)
-        return picked if (language != "en" or not _has_cjk(picked)) else (en or fallback or picked)
+        if language == "en" and _has_cjk(picked):
+            picked = en or _participant_role("en")
+        # 任职头衔（如首席科学家）不直接当作项目角色回退
+        if _SENIOR_ROLE_RE.search(picked) and re.search(
+            r"首席科学家|Chief\s*Scientist|总监|Director|总工程师", picked, re.I
+        ):
+            return _participant_role(language)
+        return picked
     fb = str(fallback or "").strip()
+    if fb and _SENIOR_ROLE_RE.search(fb):
+        return _participant_role(language)
     if fb:
         zh, en = _split_bilingual(fb)
         return (en or fb) if language == "en" else (zh or fb)
-    return "Project Investigator" if language == "en" else "项目负责人"
+    return _participant_role(language)
 
 
 def _match_project(pname: str, projects: list) -> dict | None:
@@ -565,8 +802,14 @@ def _projects_index_text(
         bits = [head, "Projects:"]
         for i, p in enumerate(rows, 1):
             role = _certificate_role(p, default_role, "en")
+            funding = _field(p, "funding", "项目来源").strip("()（）")
             span = _field(p, "startDate", "开始时间") + " – " + _field(p, "endDate", "结束时间")
-            bits.append(str(i) + ". " + str(p.get("name") or "") + " (" + role + ("; " + span.strip(" –") if span.strip(" –") else "") + ")")
+            parts = [role]
+            if funding:
+                parts.append("Funding source: " + funding)
+            if span.strip(" –"):
+                parts.append(span.strip(" –"))
+            bits.append(str(i) + ". " + str(p.get("name") or "") + " (" + "; ".join(parts) + ")")
         bits.append("This letter is issued for talent-program application purposes.")
         return "\n\n".join(bits)
     head = (
@@ -577,7 +820,14 @@ def _projects_index_text(
     bits = [head, "项目清单："]
     for i, p in enumerate(rows, 1):
         role = _certificate_role(p, default_role, "zh")
-        bits.append(str(i) + ". " + str(p.get("name") or "") + "（" + role + "）")
+        funding = _field(p, "funding", "项目来源").strip("()（）")
+        span = _field(p, "startDate", "开始时间") or _field(p, "起止时间")
+        end = _field(p, "endDate", "结束时间")
+        if span and end and "–" not in span and "-" not in span[4:]:
+            span = span + " 至 " + end
+        extra = "；项目来源：" + funding if funding else ""
+        time_bit = "；起止时间：" + span if span else ""
+        bits.append(str(i) + ". " + str(p.get("name") or "") + "（担任角色：" + role + extra + time_bit + "）")
     bits.append("特此证明，以供申报使用。")
     bits.append("签发单位：" + (company or ""))
     return "\n\n".join(bits)
@@ -588,6 +838,11 @@ _BODY_DIV_RE = re.compile(
     re.I | re.S,
 )
 _PRE_RE = re.compile(r"(<pre[^>]*>)(.*?)(</pre>)", re.I | re.S)
+_FOOTER_DATE_RE = re.compile(
+    r"(<div[^>]*margin-top:\s*8px[^>]*>)\s*"
+    r"(\d{4}-\d{2}-\d{2}|[A-Za-z]+ \d{1,2}, \d{4}|\d{4}年\d{1,2}月\d{1,2}日)\s*(</div>)",
+    re.I,
+)
 
 
 def _rewrite_html_body(html: str, text: str) -> str:
@@ -602,6 +857,24 @@ def _rewrite_html_body(html: str, text: str) -> str:
     return s
 
 
+def _rewrite_html_issue_date(html: str, issue: str) -> str:
+    s = str(html or "")
+    issue = str(issue or "").strip()
+    if not s or not issue:
+        return s
+    if _FOOTER_DATE_RE.search(s):
+        return _FOOTER_DATE_RE.sub(lambda m: m.group(1) + issue + m.group(3), s, count=1)
+    # 兜底：替换页脚中最早的 YYYY-MM-DD / Month DD, YYYY
+    s2, n = re.subn(
+        r"(>(?:Date[:：]\s*)?)(\d{4}-\d{2}-\d{2}|[A-Za-z]+ \d{1,2}, \d{4})(<)",
+        r"\g<1>" + issue + r"\3",
+        s,
+        count=1,
+        flags=re.I,
+    )
+    return s2 if n else s
+
+
 def _render_project_html(
     doc: dict,
     *,
@@ -614,26 +887,30 @@ def _render_project_html(
     default_role: str = "",
 ) -> str:
     html = _doc_html(doc, language)
+    kind = str((doc or {}).get("kind") or "")
+    fields = (doc or {}).get("fields") if isinstance((doc or {}).get("fields"), dict) else {}
+    pname = str(fields.get("projectName") or (doc or {}).get("projectName") or "").strip()
+    target_projects = list(projects or [])
     if person and issuer:
-        kind = str((doc or {}).get("kind") or "")
-        fields = (doc or {}).get("fields") if isinstance((doc or {}).get("fields"), dict) else {}
-        pname = str(fields.get("projectName") or (doc or {}).get("projectName") or "").strip()
         if kind == "project.all":
             body = _projects_index_text(
-                person=person, company=issuer, projects=projects or [],
+                person=person, company=issuer, projects=target_projects,
                 language=language, default_role=default_role,
             )
         else:
-            row = dict(_match_project(pname, projects) or {})
+            row = dict(_match_project(pname, target_projects) or {})
             if pname and not row.get("name"):
                 row["name"] = pname
             if not row.get("name"):
                 row["name"] = "Research Project" if language == "en" else "科研项目"
+            target_projects = [row]
             body = _project_certificate_text(
                 person=person, company=issuer, project=row,
                 language=language, default_role=default_role,
             )
         html = _rewrite_html_body(html, body)
+    issue = letter_issue_date(target_projects)
+    html = _rewrite_html_issue_date(html, issue)
     html = unify_html_language(html, language, issuer, forbidden_names, aliases)
     html = html.replace(
         "(the employer prior to the candidate coming to China, not the host company of the application).",
@@ -1067,11 +1344,15 @@ def _build_autoref_letters(
     start_date: str = "",
     end_date: str = "",
     language: str = "",
+    education: list | None = None,
 ) -> list:
+    lang = language or "en"
+    cleaned = sanitize_projects(
+        [p for p in (projects or []) if isinstance(p, dict)],
+        language=lang, education=education or [], default_role=role,
+    )
     custom = []
-    for p in projects or []:
-        if not isinstance(p, dict):
-            continue
+    for p in cleaned:
         name = str(p.get("name") or "").strip()
         if not name:
             continue
@@ -1093,9 +1374,11 @@ def _build_autoref_letters(
                 text = "(" + text + ")"
             row[dst] = text[:240]
         custom.append(row)
-    cert_role = _certificate_role(custom[0] if custom else {}, role, language or "en")
-    proj_start = custom[0].get("startDate") if custom else ""
-    proj_end = custom[0].get("endDate") if custom else ""
+    cert_role = _certificate_role(custom[0] if custom else {}, role, lang)
+    starts = [_parse_ym(c.get("startDate")) for c in custom]
+    starts = [s for s in starts if s]
+    proj_start = _fmt_ym(min(starts), language="en") if starts else ""
+    issue = letter_issue_date(custom, fallback=end_date or start_date)
     letter = {
         "id": "work-" + re.sub(r"\W+", "", attach_id or "1")[:24] or "1",
         "type": "work",
@@ -1103,14 +1386,15 @@ def _build_autoref_letters(
         "candidateName": (person or "Unknown").strip() or "Unknown",
         "role": cert_role,
         "startDate": (proj_start or start_date or "2020-01"),
-        "endDate": (proj_end or end_date or "present"),
+        "endDate": issue,
+        "issueDate": issue,
         "letterContent": _project_certificate_text(
             person=person, company=company,
             project=custom[0] if custom else {"name": "Research Project"},
-            language=language or "en", default_role=role,
+            language=lang, default_role=role,
         ) if len(custom) <= 1 else _projects_index_text(
             person=person, company=company, projects=custom,
-            language=language or "en", default_role=role,
+            language=lang, default_role=role,
         ),
     }
     if language:
@@ -1325,6 +1609,7 @@ async def call_generate_api(
     end_date: str = "",
     forbidden_names: list | None = None,
     aliases: list | None = None,
+    education: list | None = None,
 ) -> dict:
     _ = resume_pdf  # 申报书 PDF 含依托单位，不再作为 AutoRef 简历上传
     cfg = (load_config().get("projectProof") or {}).get("generate") or {}
@@ -1334,6 +1619,10 @@ async def call_generate_api(
     method = str(cfg.get("method") or "POST").upper()
     if method not in ("GET", "POST", "PUT"):
         method = "POST"
+    lang = language or "en"
+    projects = sanitize_projects(
+        list(projects or []), language=lang, education=education or [], default_role=role,
+    )
     ctx = {
         "apiKey": cfg.get("apiKey") or "",
         "attach_id": attach_id or "",
@@ -1359,6 +1648,7 @@ async def call_generate_api(
         letters = _build_autoref_letters(
             person, company, projects, attach_id,
             role=role, start_date=start_date, end_date=end_date, language=language,
+            education=education or [],
         )
         used = "documents"
         data, err, raw_text = await _autoref_post(
@@ -1369,11 +1659,16 @@ async def call_generate_api(
             (cwd / "generate.json").write_text(raw_text[:200000], encoding="utf-8")
         if not data:
             return {"ok": False, "error": err or ("AutoRef " + used + " 未返回数据"), "items": []}
+        letter_projects = []
+        for letter in letters:
+            for row in letter.get("customProjects") or letter.get("projects") or []:
+                if isinstance(row, dict):
+                    letter_projects.append(row)
         saved, save_err = _save_autoref_documents(
             data, cwd,
             language=language, issuer=company,
             forbidden_names=forbidden_names, aliases=aliases,
-            person=person, projects=projects, default_role=role,
+            person=person, projects=letter_projects or projects, default_role=role,
         )
         if not saved:
             return {"ok": False, "error": save_err or "AutoRef 未产出项目证明", "items": []}

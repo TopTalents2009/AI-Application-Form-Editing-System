@@ -20,6 +20,8 @@ PLAN_CONCURRENCY = 2
 EFFORT_LABELS = {"low": "短（low）", "medium": "中（medium）", "high": "长（high）"}
 SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
 WATCH_MODEL_DEFAULT = "Qwen/Qwen3.5-4B"
+TYPESAFE_BASE = "https://api.typesafe.ai"
+TYPESAFE_INTENT_MODEL = "jev-latest"
 
 def llm_api_base(url: str) -> str:
     """统一成 OpenAI 兼容根。已带 /v1、/v3、/api/v3 的保持原样（火山方舟是 /api/v3）。"""
@@ -68,15 +70,22 @@ def llm_genai_url(base: str, model: str, *, stream: bool = False) -> str:
     return url
 
 
-def httpx_trust_env() -> bool:
-    """仅当显式设置了 HTTP(S)_PROXY 时才走代理。
+def httpx_proxy() -> str | None:
+    """只认 HTTP(S) 代理。忽略 socks ALL_PROXY，避免 httpx 因未装 socksio 直接 ImportError。"""
+    for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        raw = str(os.environ.get(k) or "").strip()
+        if raw.lower().startswith(("http://", "https://")):
+            return raw
+    return None
 
-    Windows 的 Internet 设置会被 urllib/httpx 当成系统代理；本机开了无效代理时，
-    内网 Grok 网关会变成空 502，12ai 会变成空 ConnectError。
+
+def httpx_trust_env() -> bool:
+    """禁止 httpx 自行读环境变量。
+
+    ALL_PROXY=socks5 时 httpx 会在创建 Client 时 ImportError（缺 socksio），
+    企业微信附件下载、本地解析服务都会整段失败，已缓存文件也下不下来。
+    外网调用请显式传 proxy=httpx_proxy()。
     """
-    for k in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
-        if str(os.environ.get(k) or "").strip():
-            return True
     return False
 
 def _usable_secret(val) -> str:
@@ -370,6 +379,7 @@ def _wecom_chat_block(c: dict) -> dict:
         "readMode": read_mode,
         "configured": bool(key),
         "watch": _wecom_watch_block(raw),
+        "intent": _wecom_intent_block(raw),
     }
 
 
@@ -404,12 +414,55 @@ def _wecom_watch_block(raw: dict) -> dict:
         "opinionWaitMin": wait_min,
         "allowNoOpinion": _as_bool(w.get("allowNoOpinion"), False),
         "skipDismissed": _as_bool(w.get("skipDismissed"), True),
+        "talentUploadEnabled": _as_bool(w.get("talentUploadEnabled"), True),
+        "talentUploadMax": max(1, min(_as_int(w.get("talentUploadMax"), 10) or 10, 50)),
         "owner": owner,
         "baseUrl": llm_api_base(base),
         "apiKey": key,
         "model": model,
         "timeoutSec": timeout,
         "configured": bool(key and model),
+    }
+
+
+def _wecom_intent_block(raw: dict) -> dict:
+    """意图分析：TypeSafe System One（Jev），不再走 12ai Gemini。"""
+    w = raw.get("intent") if isinstance(raw.get("intent"), dict) else {}
+    base = str(w.get("baseUrl") or TYPESAFE_BASE).strip().rstrip("/")
+    if not base or FILL_MARK in base:
+        base = TYPESAFE_BASE
+    if base.lower().endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    model = str(w.get("model") or TYPESAFE_INTENT_MODEL).strip() or TYPESAFE_INTENT_MODEL
+    if FILL_MARK in model:
+        model = TYPESAFE_INTENT_MODEL
+    key = _usable_secret(w.get("apiKey") or w.get("api_key"))
+    timeout = max(15, min(_as_int(w.get("timeoutSec"), 60) or 60, 180))
+    return {
+        "baseUrl": base,
+        "apiKey": key,
+        "model": model,
+        "timeoutSec": timeout,
+        "configured": bool(key and model),
+        "engine": "typesafe",
+    }
+
+
+def resolve_intent_llm() -> dict:
+    """意图分析使用 TypeSafe /v1/systemone。"""
+    intent = ((load_config().get("wecomChat") or {}).get("intent")) or {}
+    if not intent:
+        intent = _wecom_intent_block(load_config().get("wecomChat") or {})
+    key = str(intent.get("apiKey") or "").strip()
+    if not key:
+        raise ValueError("未配置意图分析 TypeSafe API Key")
+    return {
+        "baseUrl": str(intent.get("baseUrl") or TYPESAFE_BASE).rstrip("/"),
+        "apiKey": key,
+        "model": str(intent.get("model") or TYPESAFE_INTENT_MODEL),
+        "timeoutSec": max(15, min(_as_int(intent.get("timeoutSec"), 60) or 60, 180)),
+        "label": "意图分析",
+        "engine": "typesafe",
     }
 
 
@@ -1041,6 +1094,8 @@ def _merge_wecom_chat(raw: dict, wecom: dict):
         blob["groups"] = groups
     if isinstance(wecom.get("watch"), dict):
         _merge_wecom_watch(blob, wecom.get("watch") or {})
+    if isinstance(wecom.get("intent"), dict):
+        _merge_wecom_intent(blob, wecom.get("intent") or {})
     if "dataRoot" in wecom:
         root = str(wecom.get("dataRoot") or "").strip()
         if root:
@@ -1070,6 +1125,10 @@ def _merge_wecom_watch(blob: dict, watch: dict):
         cur["allowNoOpinion"] = _as_bool(watch.get("allowNoOpinion"), False)
     if "skipDismissed" in watch:
         cur["skipDismissed"] = _as_bool(watch.get("skipDismissed"), True)
+    if "talentUploadEnabled" in watch:
+        cur["talentUploadEnabled"] = _as_bool(watch.get("talentUploadEnabled"), True)
+    if watch.get("talentUploadMax") not in (None, ""):
+        cur["talentUploadMax"] = max(1, min(_as_int(watch.get("talentUploadMax"), 10) or 10, 50))
     if "owner" in watch:
         cur["owner"] = str(watch.get("owner") or "").strip()
     if watch.get("baseUrl") is not None:
@@ -1084,6 +1143,24 @@ def _merge_wecom_watch(blob: dict, watch: dict):
     if key:
         cur["apiKey"] = key
     blob["watch"] = cur
+
+
+def _merge_wecom_intent(blob: dict, intent: dict):
+    """意图分析 TypeSafe 配置。密钥留空不改。"""
+    cur = blob.get("intent") if isinstance(blob.get("intent"), dict) else {}
+    if intent.get("baseUrl") is not None:
+        base = str(intent.get("baseUrl") or TYPESAFE_BASE).strip().rstrip("/")
+        if base.lower().endswith("/v1"):
+            base = base[:-3].rstrip("/")
+        cur["baseUrl"] = base or TYPESAFE_BASE
+    if intent.get("model") is not None:
+        cur["model"] = str(intent.get("model") or TYPESAFE_INTENT_MODEL).strip() or TYPESAFE_INTENT_MODEL
+    if intent.get("timeoutSec") not in (None, ""):
+        cur["timeoutSec"] = max(15, min(_as_int(intent.get("timeoutSec"), 60) or 60, 180))
+    key = _usable_secret(intent.get("apiKey")) if "apiKey" in intent else ""
+    if key:
+        cur["apiKey"] = key
+    blob["intent"] = cur
 
 
 def _merge_pool(raw: dict, pool: dict):
@@ -1297,6 +1374,7 @@ def editor_config() -> dict:
             "groups": list(cfg.get("wecomChatGroups") or []),
             "configured": bool(cfg.get("wecomChatConfigured")),
             "watch": _pack_watch_for_editor(((cfg.get("wecomChat") or {}).get("watch")) or {}, gemini),
+            "intent": _pack_wecom_intent(((cfg.get("wecomChat") or {}).get("intent")) or {}),
         },
         "alert": {
             "enabled": bool((cfg.get("alert") or {}).get("enabled")),
@@ -1338,6 +1416,18 @@ def _pack_project_proof(pp: dict) -> dict:
     }
 
 
+def _pack_wecom_intent(w: dict) -> dict:
+    w = w if isinstance(w, dict) else {}
+    return {
+        "baseUrl": str(w.get("baseUrl") or TYPESAFE_BASE),
+        "model": str(w.get("model") or TYPESAFE_INTENT_MODEL),
+        "timeoutSec": int(w.get("timeoutSec") or 60),
+        "hasKey": bool(w.get("apiKey")),
+        "configured": bool(w.get("configured") or w.get("apiKey")),
+        "engine": "typesafe",
+    }
+
+
 def _pack_wecom_watch(w: dict) -> dict:
     w = w if isinstance(w, dict) else {}
     return {
@@ -1348,6 +1438,8 @@ def _pack_wecom_watch(w: dict) -> dict:
         "opinionWaitMin": int(w.get("opinionWaitMin") or 60),
         "allowNoOpinion": bool(w.get("allowNoOpinion")),
         "skipDismissed": bool(w.get("skipDismissed", True)),
+        "talentUploadEnabled": bool(w.get("talentUploadEnabled", True)),
+        "talentUploadMax": int(w.get("talentUploadMax") or 10),
         "owner": str(w.get("owner") or ""),
         "baseUrl": str(w.get("baseUrl") or SILICONFLOW_BASE),
         "model": str(w.get("model") or WATCH_MODEL_DEFAULT),

@@ -473,6 +473,91 @@ def talent_file_url(attach_id: str, rel_path: str) -> str:
     return PREFIX + "/talent-files/file?" + q
 
 
+def talent_upload_target() -> dict:
+    """人才附件写入地址：优先独立上传接口，否则走人才库只读前缀下的 talent-files。"""
+    cfg = load_config()
+    url = str(cfg.get("poolFileUploadUrl") or "").strip().rstrip("/")
+    key = str(cfg.get("poolFileUploadKey") or "").strip()
+    via = "fileUpload"
+    if not url:
+        if not cfg.get("poolConfigured"):
+            return {"ok": False, "url": "", "key": "", "via": ""}
+        url = str(cfg.get("poolBaseUrl") or "").rstrip("/") + PREFIX + "/talent-files"
+        key = str(cfg.get("poolApiKey") or "").strip()
+        via = "pool"
+    elif not key:
+        key = str(cfg.get("poolApiKey") or "").strip()
+    if not url or not key:
+        return {"ok": False, "url": url, "key": "", "via": via}
+    return {"ok": True, "url": url, "key": key, "via": via}
+
+
+async def upload_talent_attachment(
+    *,
+    attach_id: str,
+    filename: str,
+    content: bytes,
+    content_type: str = "application/octet-stream",
+    kind: str = "",
+    label: str = "",
+) -> dict:
+    """把一份附件写进人才库。成功或库内已有时 ok=True。"""
+    aid = str(attach_id or "").strip()
+    name = str(filename or "file").strip() or "file"
+    if not aid:
+        raise PoolError("BAD_REQUEST", "缺少人才编号")
+    if not content:
+        raise PoolError("BAD_REQUEST", "文件内容为空")
+    target = talent_upload_target()
+    if not target.get("ok"):
+        raise PoolError("NOT_CONFIGURED", "未配置人才库或人才附件上传接口")
+    headers = {"X-API-KEY": target["key"], "X-Api-Key": target["key"]}
+    data = {
+        "attach_id": aid,
+        "attachId": aid,
+        "kind": str(kind or ""),
+        "category": str(kind or ""),
+        "label": str(label or ""),
+        "filename": name,
+        "name": name,
+    }
+    files = {"file": (name, content, str(content_type or "application/octet-stream"))}
+    urls = [target["url"]]
+    if not str(target["url"]).rstrip("/").endswith("/upload"):
+        urls.append(target["url"].rstrip("/") + "/upload")
+    last = None
+    timeout = httpx.Timeout(90.0, connect=8.0)
+    async with httpx.AsyncClient(timeout=timeout, trust_env=httpx_trust_env(), follow_redirects=True) as client:
+        for url in urls:
+            try:
+                r = await client.post(url, headers=headers, data=data, files=files)
+            except httpx.HTTPError as e:
+                last = PoolError("NETWORK", str(e)[:200])
+                continue
+            if r.status_code in (404, 405) and url != urls[-1]:
+                last = _err_from_body(r.status_code, r.text)
+                continue
+            if r.status_code in (200, 201, 202, 204, 409):
+                body = {}
+                try:
+                    body = r.json() if r.content else {}
+                except Exception:
+                    body = {}
+                if not isinstance(body, dict):
+                    body = {}
+                return {
+                    "ok": True,
+                    "status": r.status_code,
+                    "already": r.status_code == 409 or bool(body.get("already") or body.get("exists")),
+                    "detail": str(body.get("detail") or body.get("message") or ("已存在" if r.status_code == 409 else "已上传")),
+                    "via": target.get("via") or "",
+                }
+            last = _err_from_body(r.status_code, r.text)
+            if r.status_code in (401, 403):
+                raise last
+    raise last or PoolError("NETWORK", "人才附件上传失败")
+
+
 async def lookup_for_app(fname: str, app_text: str, mode: str | None = None) -> dict:
     keys = extract_pool_keys(fname, app_text)
     snap = {
