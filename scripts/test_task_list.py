@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 from app.attachments import (
     LOCAL_ATTACH_ROOT,
     build_task_list,
+    collect_kind_locations,
     extract_needed_kinds,
     format_task_list_md,
     scan_local_attachments,
@@ -129,6 +130,8 @@ def test_wecom_status_and_person_filter():
     assert _wecom_person_ok(hit, ["51104"], [])
     assert not _wecom_person_ok({"attachment_name": "护照.pdf", "text": ""}, ["51104"], ["林启明"])
     assert _wecom_person_ok({"attachment_name": "护照.pdf", "text": "林启明补传"}, ["51104"], ["林启明"])
+    assert not _wecom_person_ok({"attachment_name": "护照.pdf", "text": "王安全补传"}, [], ["王安"])
+    assert _wecom_person_ok({"attachment_name": "51104护照.pdf", "text": "王安全补传"}, ["51104"], ["王安"])
     attach = {
         "needed": ["护照"],
         "items": [{
@@ -139,6 +142,59 @@ def test_wecom_status_and_person_filter():
     items = build_task_list(["请更换护照扫描件"], attach=attach)
     hit = next(x for x in items if x["id"] == "passport")
     assert hit["statusLabel"] == "聊天记录已找到"
+
+
+def test_collect_kind_locations_from_clauses():
+    clauses = [
+        {"clause": "工作证明材料同步修改总体要求", "opinion": "合计 5 处需修改。\n请同步修改工作证明材料，按下列条款执行："},
+        {"clause": "工作证明要求1：发文时间改为2027年2月-3月", "opinion": "1. 发文时间改为2027年2月-3月。"},
+        {"clause": "工作证明要求2：1987年1月1日前出生的职位同步修改为副高级以上职位",
+         "opinion": "2. 出生年月在1987年1月1日以前的，同步将职位修改为副高级以上职位。"},
+        {"clause": "工作证明要求3：工作结束时间须不早于2027年12月或改为至今",
+         "opinion": "3. 工作证明中如涉及工作结束时间，须不早于2027年12月，或直接改为「至今」。"},
+    ]
+    kind = {"id": "work_proof", "label": "工作证明", "keys": ("工作证明", "工作经历证明", "在职证明")}
+    locs = collect_kind_locations(kind, clauses=clauses)
+    text = "\n".join(locs)
+    assert "发文时间改为2027年2月-3月" in text
+    assert "副高级以上职位" in text
+    assert "不早于2027年12月" in text or "改为至今" in text
+    assert "总体要求" not in text
+    assert "按下列条款执行" not in text
+    assert text.count("发文时间") == 1
+    assert "出生年月在1987" not in text
+    items = build_task_list(["请同步修改工作证明"], clauses=clauses)
+    hit = next(x for x in items if x["id"] == "work_proof")
+    assert any("发文时间" in x for x in (hit.get("locations") or []))
+
+
+def test_job_title_follows_gemini_edit():
+    clauses = [
+        {"clause": "工作证明要求2：1987年1月1日前出生的职位同步修改为副高级以上职位",
+         "opinion": "2. 同步将职位修改为副高级以上职位（与申报书「回国前职务」一致）。"},
+        {"clause": "回国前职务中文修改为首席功率芯片应用工程师",
+         "opinion": "【回国前职务中文】\n修改前：功率芯片应用工程师\n修改后：首席功率芯片应用工程师"},
+        {"clause": "回国前职务英文修改为Chief Power Die Applications Engineer",
+         "opinion": "【回国前职务英文】\n修改前：Power Die Applications Engineer\n修改后：Chief Power Die Applications Engineer"},
+    ]
+    edits = [
+        {"clause": "回国前职务中文修改为首席功率芯片应用工程师",
+         "opinion": "修改前：功率芯片应用工程师\n修改后：首席功率芯片应用工程师",
+         "replace": "现任美国沃伏速首席功率芯片应用工程师",
+         "opinionGemini": "现任美国沃伏速首席功率芯片应用工程师"},
+        {"clause": "回国前职务英文修改为Chief Power Die Applications Engineer",
+         "opinion": "修改后：Chief Power Die Applications Engineer",
+         "opinionGemini": "Chief Power Die Applications Engineer"},
+    ]
+    kind = {"id": "work_proof", "label": "工作证明", "keys": ("工作证明", "工作经历证明", "在职证明")}
+    locs = collect_kind_locations(kind, clauses=clauses, edits=edits)
+    text = "\n".join(locs)
+    assert "首席功率芯片应用工程师" in text
+    assert "Chief Power Die Applications Engineer" in text
+    assert "副高级以上职位" not in text
+    items = build_task_list(["请同步修改工作证明"], clauses=clauses, edits=edits)
+    hit = next(x for x in items if x["id"] == "work_proof")
+    assert any("首席功率芯片应用工程师" in x for x in (hit.get("locations") or []))
 
 
 def test_write_task_list_docx():
@@ -185,4 +241,6 @@ if __name__ == "__main__":
     test_local_scan_51104()
     test_wecom_status_and_person_filter()
     test_write_task_list_docx()
+    test_collect_kind_locations_from_clauses()
+    test_job_title_follows_gemini_edit()
     print("ok")

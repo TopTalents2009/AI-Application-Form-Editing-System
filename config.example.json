@@ -39,6 +39,11 @@
     "username": "填入",
     "password": "填入"
   },
+  "ps": {
+    "baseUrl": "http://192.168.2.50:18427/api/external/v1",
+    "apiKey": "填入 ptk_live_…",
+    "webUrl": ""
+  },
   "scanPdf": {
     "converter": "hybrid",
     "outputMode": "template",
@@ -99,8 +104,17 @@
       "opinionWaitMin": 60,
       "allowNoOpinion": false,
       "skipDismissed": true,
+      "talentUploadEnabled": true,
+      "talentUploadMax": 10,
       "owner": "",
       "timeoutSec": 60
+    },
+    "intent": {
+      "baseUrl": "https://api.typesafe.ai",
+      "apiKey": "填入",
+      "model": "jev-latest",
+      "timeoutSec": 60,
+      "proxy": ""
     }
   },
   "alert": {
@@ -148,6 +162,7 @@
     "port": 3306,
     "user": "root",
     "password": "填入",
-    "database": "shenbaoshu"
+    "database": "shenbaoshu",
+    "wecomDatabase": "shenbaoshu_wecom"
   }
 }

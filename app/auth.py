@@ -285,12 +285,6 @@ def complete_credentials(uid: int, body: dict) -> dict:
     username = str((body or {}).get("username") or "").strip()
     password = str((body or {}).get("password") or "")
     confirm = str((body or {}).get("confirmPassword") or (body or {}).get("confirm") or "")
-    if not USER_RE.fullmatch(username):
-        raise AuthError("用户名为 3–32 位字母、数字或下划线")
-    if username.lower() == "admin":
-        raise AuthError("该用户名不可用")
-    if username.startswith("_p"):
-        raise AuthError("请设置正式用户名，不要使用系统临时名")
     if len(password) < 6 or len(password) > 64:
         raise AuthError("密码长度 6–64 位")
     if password != confirm:
@@ -302,13 +296,32 @@ def complete_credentials(uid: int, body: dict) -> dict:
             row = cur.fetchone()
             if not row:
                 raise AuthError("用户不存在", 404)
-            cur.execute("SELECT id FROM users WHERE username=%s AND id<>%s", (username, uid))
-            if cur.fetchone():
-                raise AuthError("用户名已被占用")
-            cur.execute(
-                "UPDATE users SET username=%s, password_hash=%s, must_set_credentials=0 WHERE id=%s",
-                (username, hash_password(password), uid),
-            )
+            cur_name = str(row.get("username") or "")
+            need = bool(int(row.get("must_set_credentials") or 0)) or cur_name.startswith("_p")
+            if not need:
+                raise AuthError("账号已设置，请联系管理员改密", 403)
+            if verify_password(password, row.get("password_hash") or ""):
+                raise AuthError("请设置与临时密码不同的新密码")
+            placeholder = cur_name.startswith("_p")
+            if placeholder:
+                if not USER_RE.fullmatch(username):
+                    raise AuthError("用户名为 3–32 位字母、数字或下划线")
+                if username.lower() == "admin":
+                    raise AuthError("该用户名不可用")
+                if username.startswith("_p"):
+                    raise AuthError("请设置正式用户名，不要使用系统临时名")
+                cur.execute("SELECT id FROM users WHERE username=%s AND id<>%s", (username, uid))
+                if cur.fetchone():
+                    raise AuthError("用户名已被占用")
+                cur.execute(
+                    "UPDATE users SET username=%s, password_hash=%s, must_set_credentials=0 WHERE id=%s",
+                    (username, hash_password(password), uid),
+                )
+            else:
+                cur.execute(
+                    "UPDATE users SET password_hash=%s, must_set_credentials=0 WHERE id=%s",
+                    (hash_password(password), uid),
+                )
             cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
             return public_user(cur.fetchone())
     finally:
@@ -447,6 +460,9 @@ def update_user(uid: int, body: dict, actor: dict) -> dict:
                     raise AuthError("新密码长度 6–64 位")
                 fields.append("password_hash=%s")
                 args.append(hash_password(pw))
+                if int(row["id"]) != int(actor.get("id") or 0):
+                    fields.append("must_set_credentials=%s")
+                    args.append(1)
             if not fields:
                 return public_user(row)
             args.append(uid)

@@ -9,6 +9,7 @@ from .config import DATA_DIR, atomic_replace
 from . import matcher as M
 from . import pool as POOL
 from . import wecom_client as W
+from .party import sender_of
 from .wecom_ai_bind import _UNKNOWN_ATTACH, _pick_attach_id
 from .wecom_locate import parse_time
 
@@ -29,6 +30,12 @@ def _now() -> str:
 
 
 def _load_state() -> dict:
+    try:
+        from .wecom_talent_db import ensure, load_ok_map
+        ensure()
+        return {"items": load_ok_map()}
+    except Exception:
+        pass
     if not _STORE_PATH.is_file():
         return {"items": {}}
     try:
@@ -61,9 +68,18 @@ def file_key(session_id, message_id, filename: str) -> str:
 
 
 def already_uploaded(state: dict, key: str) -> dict | None:
-    row = (state.get("items") or {}).get(key)
+    row = ((state or {}).get("items") or {}).get(key)
     if isinstance(row, dict) and row.get("ok"):
         return row
+    try:
+        from .wecom_talent_db import get_ok
+        hit = get_ok(key)
+        if hit:
+            if isinstance(state, dict):
+                state.setdefault("items", {})[key] = hit
+            return hit
+    except Exception:
+        pass
     return None
 
 
@@ -77,6 +93,48 @@ def remember(state: dict, key: str, *, attach_id: str, kind: str, filename: str,
         "detail": str(detail or "")[:200],
         "at": _now(),
     }
+
+
+def _store_ingest(key: str, row: dict, *, source: str, ok: bool, status: str, detail: str = "") -> None:
+    rec = {
+        "file_key": key,
+        "source": source or "file_summary",
+        "session_id": str(row.get("sessionId") or row.get("session_id") or ""),
+        "session_name": str(row.get("sessionName") or row.get("session_name") or ""),
+        "message_id": str(row.get("messageId") or row.get("message_id") or ""),
+        "filename": str(row.get("filename") or ""),
+        "kind": str(row.get("type") or row.get("kind") or ""),
+        "label": str(row.get("label") or ""),
+        "attach_id": str(row.get("attachId") or ""),
+        "sender": sender_of(row),
+        "msg_time": str(row.get("time") or ""),
+        "ok": bool(ok),
+        "status": status,
+        "detail": detail,
+    }
+    try:
+        from .wecom_talent_db import upsert
+        upsert(rec)
+        return
+    except Exception as e:
+        print("[wecom-talent] 入库库写入失败，改记 JSON：" + str(e)[:160], flush=True)
+    state = {"items": {}}
+    if ok:
+        remember(state, key, attach_id=rec["attach_id"], kind=rec["kind"], filename=rec["filename"], ok=True, detail=detail)
+        old = _load_json_only()
+        old.setdefault("items", {}).update(state["items"])
+        _save_state(old)
+
+
+def _load_json_only() -> dict:
+    if not _STORE_PATH.is_file():
+        return {"items": {}}
+    try:
+        data = json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"items": {}}
+    items = data.get("items") if isinstance(data, dict) else None
+    return {"items": items if isinstance(items, dict) else {}}
 
 
 def attach_id_of(*, filename: str = "", text: str = "", nums=None) -> str:
@@ -218,9 +276,10 @@ async def _fetch_bytes(f: dict) -> tuple[bytes, str, str]:
     return got["content"], name, ctype
 
 
-async def upload_one(f: dict, *, state: dict | None = None, force: bool = False) -> dict:
+async def upload_one(f: dict, *, state: dict | None = None, force: bool = False, source: str = "") -> dict:
     """上传一份已分类文件。返回带 uploadStatus 的副本。"""
     state = state if isinstance(state, dict) else _load_state()
+    src = str(source or f.get("ingestSource") or "file_summary").strip() or "file_summary"
     row = dict(f)
     rows = fill_attach_ids([row])
     row = rows[0] if rows else row
@@ -253,34 +312,38 @@ async def upload_one(f: dict, *, state: dict | None = None, force: bool = False)
             label=TYPE_LABEL.get(kind) or str(row.get("label") or ""),
         )
         remember(state, key, attach_id=aid, kind=kind, filename=fname, ok=True, detail=str(got.get("detail") or ""))
-        _save_state(state)
         row["uploadStatus"] = "uploaded"
         row["uploadNote"] = ("库内已有 " if got.get("already") else "已上传到 ") + aid
         row["attachId"] = aid
+        _store_ingest(key, row, source=src, ok=True, status="uploaded", detail=str(got.get("detail") or ""))
         return row
     except POOL.PoolError as e:
         row["uploadStatus"] = "error"
         row["uploadNote"] = e.message[:160]
+        _store_ingest(key, row, source=src, ok=False, status="error", detail=row["uploadNote"])
         return row
     except W.WecomError as e:
         row["uploadStatus"] = "missing" if e.code in ("MISSING",) or e.status == 404 else "error"
         row["uploadNote"] = e.message[:160]
+        _store_ingest(key, row, source=src, ok=False, status=row["uploadStatus"], detail=row["uploadNote"])
         return row
     except Exception as e:
         row["uploadStatus"] = "error"
         row["uploadNote"] = str(e)[:160]
+        _store_ingest(key, row, source=src, ok=False, status="error", detail=row["uploadNote"])
         return row
 
 
-async def auto_upload_files(files: list, *, session_id: str = "", max_n: int = _MAX_PER_SCAN) -> tuple[list, dict]:
+async def auto_upload_files(files: list, *, session_id: str = "", max_n: int = _MAX_PER_SCAN, source: str = "file_summary") -> tuple[list, dict]:
     """扫描结果里尚未入库、且能匹配人才编号的材料自动上传。"""
     configured = upload_configured()
     state = _load_state()
     rows = annotate_files(files, state)
-    if session_id:
-        for f in rows:
-            if not f.get("sessionId"):
-                f["sessionId"] = session_id
+    src = str(source or "file_summary").strip() or "file_summary"
+    for f in rows:
+        if session_id and not f.get("sessionId"):
+            f["sessionId"] = session_id
+        f["ingestSource"] = src
     if not configured:
         return rows, _summary_of(rows, configured=False)
     cap = max(1, min(int(max_n or _MAX_PER_SCAN), 20))
@@ -292,7 +355,7 @@ async def auto_upload_files(files: list, *, session_id: str = "", max_n: int = _
             f["uploadNote"] = "本轮已达上限，下次扫描继续"
             continue
         n += 1
-        rows[i] = await upload_one(f, state=state)
+        rows[i] = await upload_one(f, state=state, source=src)
     return rows, _summary_of(rows, configured=True)
 
 

@@ -6,10 +6,11 @@ from datetime import datetime, timedelta
 from .pdf_app import ALLOWED_APP_EXT, WORD_APP_EXT, ext_of
 from .opinion_extract import ALLOWED_OPINION_EXT
 from . import matcher as M
+from .party import sender_of
 from .wecom_locate import extract_keys, locate_tasks, parse_time
 
 _APP_NAME = re.compile(r"申报书|申请表|application\s*form", re.I)
-_OPINION_NAME = re.compile(r"意见|反馈|审核|批注|辅导|会议|纪要|修改说明|评审|对各区")
+_OPINION_NAME = re.compile(r"修改意见|审核意见|辅导意见|反馈意见|批注|修改说明|对各区|(?<!会)意见")
 _DONE_NAME = re.compile(r"修改后|备份|对照表|遗留事项")
 _NOT_FORM = re.compile(
     r"需要提供|提供的资料|资料清单|材料清单|填表须知|填表说明|附件清单|"
@@ -28,11 +29,31 @@ _FILE_IN_TEXT = re.compile(
     + r"))",
     re.I,
 )
-_OPINION_TEXT = re.compile(
-    r"请改|请把|请补|请核|缺[少了]|补充|修改|护照|学历|论文|工作计划|"
-    r"附件|对照|申报书|人才编号|单位名称|英文名|按意见|按审核",
+_OPINION_ACTION = re.compile(
+    r"请(?:改|把|补|核|删|加|更新|修改)|"
+    r"缺[少了]|漏(?:填|了|写)|"
+    r"需要(?:修改|补充|改正|更正)|"
+    r"按(?:此|该|以上)?意见|按审核|"
+    r"(?:改成|改为|改掉|更正为)|"
+    r"(?:写错|填错|填反)|"
+    r"补充|再补|补交|补齐|修改一下|修改为|修改成"
 )
-_CHATTER = re.compile(r"^(收到|好的|谢谢|嗯|ok|OK|对|是|好)$")
+_OPINION_DEFECT = re.compile(
+    r"(护照|学历|学位|论文|工作计划|英文名|单位名称|人才编号|有效期|出生日期|入职|社保)"
+    r".{0,16}(不够|不足|有误|错误|不对|不符|过期|需补|要改|请改)|"
+    r"(不够|不足|有误|错误|不对|不符|过期|需补).{0,16}"
+    r"(护照|学历|学位|论文|工作计划|英文名|单位名称|人才编号|有效期)"
+)
+_OPINION_NOISE = re.compile(
+    r"这是申报书|新申报书|申报书已(?:发|传|上传)|已发(?:出)?申报书|"
+    r"智能表格|智能文档|加入了此(?:智能)?(?:表格|文档)|你创建了|你编辑了|"
+    r"已导入此文档|分享的链接加入|请查收申报书|申报书请查收"
+)
+_OPINION_DONE = re.compile(r"已(?:改好|修改好|补好)|修改好了|改好了发给")
+_CHATTER = re.compile(
+    r"^((收到|好的|好滴|谢谢|嗯+|哦+|噢+|ok|okay|对|是|好)[了啦啊的。.!！~，,\s]*)+$",
+    re.I,
+)
 
 
 def strip_cache_prefix(name: str, message_id=None) -> str:
@@ -109,7 +130,8 @@ def _copies(m: dict) -> list:
 
 
 _DOC_TITLE = re.compile(
-    r"表格|要求|结果|匹配|网络|安全|名录|样表|简介|统计|汇总|清单|需求|核对|模板|模版|说明|截图|证件照|白底"
+    r"表格|要求|结果|匹配|网络|安全|名录|样表|简介|统计|汇总|清单|需求|核对|模板|模版|说明|截图|证件照|白底|"
+    r"会议|纪要|评审|安排|辅导"
 )
 
 
@@ -117,7 +139,7 @@ def _person_app_stem(name: str) -> bool:
     """文件名几乎只有人名：张三.pdf / SANIYA ARFIN.pdf。带承诺、护照等附加字的不算。"""
     n = str(name or "").strip()
     ext = ext_of(n)
-    if ext not in ALLOWED_APP_EXT:
+    if ext not in (WORD_APP_EXT | {".pdf"}):
         return False
     stem = n[: -len(ext)] if ext and n.lower().endswith(ext) else n
     stem = re.sub(r"[_（）()\[\]【】]+", " ", stem)
@@ -312,6 +334,7 @@ def is_shared_opinion(name: str) -> bool:
 
 
 def is_opinion_text(text: str) -> bool:
+    """群聊正文是否为「请改/请补某字段」这类修改意见，而不是收发文件或寒暄。"""
     s = re.sub(r"\s+", " ", str(text or "")).strip()
     if len(s) < 8 or len(s) > 4000:
         return False
@@ -319,7 +342,11 @@ def is_opinion_text(text: str) -> bool:
         return False
     if re.fullmatch(r"https?://\S+", s, re.I):
         return False
-    return bool(_OPINION_TEXT.search(s))
+    if _OPINION_NOISE.search(s):
+        return False
+    if _OPINION_DONE.search(s) and not _OPINION_ACTION.search(s) and not _OPINION_DEFECT.search(s):
+        return False
+    return bool(_OPINION_ACTION.search(s) or _OPINION_DEFECT.search(s))
 
 
 def _msg_kind(m: dict) -> str:
@@ -345,7 +372,7 @@ def _file_ref(m: dict, role: str) -> dict:
         "filename": _fname(m),
         "text": m.get("text") or "",
         "time_text": m.get("time_text") or m.get("time") or "",
-        "sender": m.get("sender") or "",
+        "sender": sender_of(m),
         "session_name": m.get("session_name") or "",
     })
     return {
@@ -353,7 +380,7 @@ def _file_ref(m: dict, role: str) -> dict:
         "kind": "file",
         "filename": _fname(m),
         "time": str(m.get("time_text") or m.get("time") or ""),
-        "sender": str(m.get("sender") or ""),
+        "sender": sender_of(m),
         "message_id": m.get("message_id") or 0,
         "copies": _copies(m),
         "names": keys.get("names") or [],
@@ -369,7 +396,7 @@ def _text_ref(m: dict) -> dict:
         "kind": "text",
         "filename": "群聊修改意见.txt",
         "time": str(m.get("time_text") or m.get("time") or ""),
-        "sender": str(m.get("sender") or "群消息"),
+        "sender": sender_of(m, "群消息"),
         "message_id": m.get("message_id") or 0,
         "copies": [],
         "text": text[:4000],
@@ -394,14 +421,14 @@ def _merge_texts(case: dict) -> None:
         return
     parts = []
     for o in texts:
-        head = "发送人：" + str(o.get("sender") or "") + "　时间：" + str(o.get("time") or "")
+        head = "发送人：" + sender_of(o, "未知") + "　时间：" + str(o.get("time") or "")
         parts.append(head + "\n" + str(o.get("text") or "").strip())
     files.append({
         "role": "opinion",
         "kind": "text",
         "filename": "群聊修改意见.txt",
         "time": texts[0].get("time") or "",
-        "sender": texts[0].get("sender") or "",
+        "sender": sender_of(texts[0]),
         "message_id": texts[0].get("message_id") or 0,
         "copies": [],
         "text": "\n\n".join(parts)[:12000],
@@ -592,6 +619,6 @@ def opinion_txt_bytes(item: dict) -> bytes:
     body = str(item.get("text") or "").strip()
     if "发送人：" in body[:20]:
         return body.encode("utf-8")
-    sender = str(item.get("sender") or "")
+    sender = sender_of(item, "未知")
     when = str(item.get("time") or "")
     return ("发送人：" + sender + "\n时间：" + when + "\n\n" + body).encode("utf-8")

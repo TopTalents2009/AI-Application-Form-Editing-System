@@ -20,14 +20,50 @@
     abort: null,
     party: { staff: [], reachingAliases: ["reaching"], titleStaffPattern: "" },
     partyTimer: 0,
-    intentFilter: ""
+    role: "",
+    intentFilter: "",
+    exPageSize: 10,
+    ex: {
+      intent: { rows: [], page: 1, q: "" },
+      filter: { rows: [], page: 1, q: "" },
+      review: { rows: [], page: 1, q: "" }
+    }
   };
 
   function $(id) { return document.getElementById(id); }
+  function canReview() {
+    return state.role === "admin" || state.role === "leader";
+  }
+  function applyRoleGate() {
+    var ok = canReview();
+    [
+      "arAnalyzeBtn", "arResumeBtn", "arIncBtn", "arAnalyzeForceBtn",
+      "arSavePartyBtn", "arSaveReviewBtn", "arReachAddBtn", "arStaffAddBtn",
+      "arApplyPartyJsonBtn"
+    ].forEach(function (id) {
+      var el = $(id);
+      if (el) el.disabled = !ok;
+    });
+    [
+      "arReachIn", "arPartyName", "arPartyAliases", "arTitlePat", "arPartyJson"
+    ].forEach(function (id) {
+      var el = $(id);
+      if (el) el.readOnly = !ok;
+    });
+    if (!ok && $("arPartySaveNote") && !$("arPartySaveNote").textContent) {
+      $("arPartySaveNote").textContent = "仅组长或管理员可改名单、分析与审核。";
+    }
+    updateAnalyzeBtn();
+  }
   function esc(s) {
     return String(s || "").replace(/[&<>"']/g, function (c) {
       return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
     });
+  }
+  function senderLabel(s) {
+    s = String(s || "").trim();
+    if (!s || /^(null|none|undefined|nil)$/i.test(s)) return "未知";
+    return s;
   }
   function api(path, opts) {
     return fetch(path, Object.assign({
@@ -88,8 +124,10 @@
     renderIntentNav();
   }
   function hitReviewed(hit) {
-    var review = hit && hit.review;
-    return !!(review && (review.id || review.selected_intent ||
+    if (!hit) return false;
+    if (hit.reviewed) return true;
+    var review = hit.review;
+    return !!(review && (review.id || review.should_filter || review.selected_intent ||
       (review.selected_intents && review.selected_intents.length)));
   }
   function hitIntentCodes(hit) {
@@ -277,6 +315,7 @@
       var meta = (s.kindLabel || "") + (s.msg_count ? " · " + s.msg_count + " 条" : "") +
         (incomplete ? " · 未完成" + prog + "，可继续" : (analyzed ? " · 已分析" : "")) +
         (analyzed && run.queue ? " · 待审 " + run.queue : "") +
+        (analyzed && run.reviewed ? " · 已审核 " + run.reviewed : "") +
         (s.last_time ? " · " + s.last_time : "");
       var starTitle = watched ? "取消关注" : "加入关注会话";
       return '<div class="wecom-item-wrap' + on + '" data-id="' + esc(sid) + '" data-sid="' + esc(sid) + '" data-name="' + esc(name) + '">' +
@@ -291,9 +330,11 @@
     var skipJev = !!(hit.skip_jev || hit.party === "乙方");
     var chatter = !skipJev && (hit.intent === "confirm" || hit.intent === "chat" || !hit.gemini_useful);
     var useful = skipJev ? "原位展示" : (chatter ? "闲聊/确认" : "已评分");
+    var reviewed = hitReviewed(hit);
     var reviewChip = "";
-    if (review.id || review.selected_intent || (review.selected_intents && review.selected_intents.length)) {
+    if (reviewed) {
       reviewChip = '<span class="ar-chip ok">已审核</span>';
+      if (review.should_filter) reviewChip += '<span class="ar-chip drop">应过滤</span>';
     }
     var score = hit.score || 0;
     var scoreCls = score >= 70 ? "ok" : "bad";
@@ -309,13 +350,16 @@
         '<span class="ar-chip ' + scoreCls + '">评分 ' + esc(score) + "</span>" +
         (hit.need ? '<span class="ar-chip">' + esc(hit.need) + "</span>" : "")
       );
-    var reviewBtn = !skipJev
-      ? '<div style="margin-top:8px"><button type="button" class="mini" data-ar-open="' + esc(String(hit.message_id || "")) + '">审核本条</button></div>'
+    var reviewBtn = !skipJev && canReview()
+      ? '<div style="margin-top:8px"><button type="button" class="mini' + (reviewed ? " ar-btn-reviewed" : "") +
+        '" data-ar-open="' + esc(String(hit.message_id || "")) + '">' +
+        (reviewed ? "已审核 · 改" : "审核本条") + "</button></div>"
       : "";
-    return '<article class="ar-hit' + (selected ? " selected" : "") + (skipJev ? " ar-hit-yi" : "") + '">' +
+    return '<article class="ar-hit' + (selected ? " selected" : "") + (skipJev ? " ar-hit-yi" : "") +
+      (reviewed ? " ar-hit-reviewed" : "") + '">' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
       '<span class="ar-chip ' + (hit.party === "甲方" ? "jia" : "yi") + '">' + esc(hit.party || "") + "</span>" +
-      "<strong>" + esc(hit.sender) + "</strong>" +
+      "<strong>" + esc(senderLabel(hit.sender)) + "</strong>" +
       '<span class="ar-note" style="margin:0">' + esc(hit.time_text) + "</span>" +
       reviewChip +
       "</div>" +
@@ -349,7 +393,7 @@
       }
       state.sessions = items.map(function (it) {
         var sid = it.username || it.session_id || "";
-        var name = it.display_name || sid;
+        var name = (typeof wecomSessionTitle === "function") ? wecomSessionTitle(it) : (it.display_name || sid);
         var delivery = String(name).indexOf("交付") >= 0;
         return {
           session_id: sid,
@@ -456,12 +500,21 @@
       state.hits = data.data || [];
       state.total = data.total || 0;
       state.stats = data.stats || state.stats;
+      syncRunStats(cur.session_id);
       ensureFilter(state.hits);
       renderBar();
       renderStats();
+      renderSessions();
       paintCurrentHits(!!(opts && opts.keepScroll));
       updateAnalyzeBtn();
     });
+  }
+  function syncRunStats(sid) {
+    if (!sid) return;
+    var run = state.runs[sid] || {};
+    run.queue = (state.stats && state.stats.queue) || 0;
+    run.reviewed = (state.stats && state.stats.reviewed) || 0;
+    state.runs[sid] = run;
   }
   function loadDrops(opts) {
     var cur = currentSession();
@@ -474,9 +527,11 @@
       state.drops = data.data || [];
       state.dropTotal = data.total || 0;
       state.stats = data.stats || state.stats;
+      syncRunStats(cur.session_id);
       ensureFilter(state.drops);
       renderBar();
-      renderIntentNav();
+      renderStats();
+      renderSessions();
       paintCurrentDrops(!!(opts && opts.keepScroll));
     });
   }
@@ -550,6 +605,12 @@
     return false;
   }
   function updateAnalyzeBtn() {
+    if (!canReview()) {
+      ["arAnalyzeBtn", "arResumeBtn", "arIncBtn", "arAnalyzeForceBtn"].forEach(function (id) {
+        if ($(id)) $(id).hidden = true;
+      });
+      return;
+    }
     var analyzed = sessionAnalyzed();
     var incomplete = sessionIncomplete();
     if ($("arAnalyzeBtn")) $("arAnalyzeBtn").hidden = analyzed;
@@ -563,6 +624,10 @@
   function analyze(force) {
     var cur = currentSession();
     var note = $("arQueueNote");
+    if (!canReview()) {
+      if (note) note.textContent = "仅组长或管理员可以分析会话。";
+      return Promise.resolve();
+    }
     if (!cur.session_id) {
       if (note) note.textContent = "请先在左侧点一个会话。";
       return Promise.resolve();
@@ -722,6 +787,7 @@
   }
   function reviewLabels(review) {
     review = review || {};
+    if (review.should_filter) return ["应过滤"];
     var items = review.selected_intents;
     if (Array.isArray(items) && items.length) {
       return items.map(function (x) {
@@ -782,37 +848,46 @@
     }
     requestAnimationFrame(function () { placePop(); });
   }
+  function syncCustomIntent(on) {
+    var inp = $("arCustomIntent");
+    var box = $("arCustomIntentOn");
+    if (box) box.checked = !!on;
+    if (!inp) return;
+    inp.hidden = !on;
+    inp.disabled = !on;
+    if (on) {
+      try { inp.focus(); } catch (e) {}
+    }
+    requestAnimationFrame(function () { placePop(); });
+  }
   function fillReview(hit, anchor) {
     state.selected = hit;
-    $("arReviewTitle").textContent = (hit.sender || "甲方") + " · " + (hit.time_text || "");
+    $("arReviewTitle").textContent = senderLabel(hit.sender) + " · " + (hit.time_text || "");
     $("arReviewerLine").textContent = "审核人：" + (state.reviewer || "当前登录用户");
     var body = (hit.filename ? "【文件】" + hit.filename + "\n" : "") + (hit.text || "");
     $("arReviewBody").innerHTML = '<article class="ar-hit ar-pop-quote">' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
       '<span class="ar-chip ' + (hit.party === "甲方" ? "jia" : "yi") + '">' + esc(hit.party || "") + "</span>" +
-      "<strong>" + esc(hit.sender) + "</strong>" +
+      "<strong>" + esc(senderLabel(hit.sender)) + "</strong>" +
       '<span class="ar-note" style="margin:0">' + esc(hit.time_text) + "</span></div>" +
       '<div class="ar-msg">' + esc(body) + "</div></article>";
     var review = hit.review || {};
     var picked = pickedCodes(review);
     if (!picked.length && hit.intent) picked = [String(hit.intent)];
-    var cands = (hit.candidates || []).slice();
+    var cands = (hit.candidates || []).filter(function (c) { return c && !c.fallback; });
     if (!cands.length && hit.intent) {
       cands = [{ intent: hit.intent, intentLabel: hit.intent_label, score: hit.score, need: hit.need, action: hit.action }];
     }
-    if (cands.length > 1) cands = cands.slice(0, 1);
-    if (!cands.length) {
-      cands = (state.intents || []).map(function (it) {
-        return { intent: it.id, intentLabel: it.name, score: "", need: "", action: "", fallback: true };
-      });
-    }
-    if (!cands.length) {
-      $("arCandidateBox").innerHTML = '<div class="ar-note">没有可选择的意图。请先分析本会话。</div>';
-    } else {
-      var catalog = cands.some(function (c) { return c.fallback; }) || !hit.gemini_useful;
-      var hint = catalog
-        ? '<div class="ar-note">Jev 未给出业务意图。可多选正确意图；选业务类会把本条记为应保留。</div>'
-        : '<div class="ar-note">Jev 只给一条主意图。不对就改选，或点下方「选择其他意图」。可多选。</div>';
+    var shown = {};
+    cands.forEach(function (c) { shown[String(c.intent || "")] = true; });
+    picked.forEach(function (code) {
+      if (!code || shown[code]) return;
+      cands.push({ intent: code, intentLabel: intentName(code), score: "", extra: true });
+      shown[code] = true;
+    });
+    var customPrefill = otherNoteOf(review);
+    {
+      var hint = '<div class="ar-note">下面是本次 Jev 给出的意图，可多选、标「应过滤」，或自行填写更准确的意图。手填的名字会进入样本，下次分析会出现在题目里。</div>';
       function candRow(c, i, allowAuto, mini) {
         var id = String(c.intent || i);
         var on = picked.indexOf(id) >= 0 || (allowAuto && !picked.length && i === 0);
@@ -836,21 +911,28 @@
         }
         return row;
       }
-      var shown = {};
-      cands.forEach(function (c) { shown[String(c.intent || "")] = true; });
-      var extra = (state.intents || []).filter(function (it) { return it && it.id && !shown[it.id]; }).map(function (it) {
-        return { intent: it.id, intentLabel: it.name, score: "", need: "", action: "", extra: true };
-      });
+      var customOn = !review.should_filter && !!customPrefill && picked.some(function (c) {
+        return c === "other" || c === customPrefill;
+      }) && !cands.some(function (c) { return String(c.intent) === customPrefill; });
       $("arCandidateBox").innerHTML = hint +
+        '<label class="ar-cand ar-cand-drop"><input type="checkbox" id="arShouldFilter"' +
+        (review.should_filter ? " checked" : "") + ">" +
+        '<div class="ar-cand-main"><strong>应过滤</strong>' +
+        '<div class="ar-note" style="margin:4px 0 0">本条离开待审；相同文本下次分析也会过滤。</div></div></label>' +
         '<div class="ar-cand-acts"><button type="button" class="mini" data-ar-cand-act="all">全选</button> ' +
         '<button type="button" class="mini" data-ar-cand-act="none">清空</button></div>' +
-        '<div class="ar-cands">' + cands.map(function (c, i) { return candRow(c, i, true); }).join("") + "</div>" +
-        (extra.length
-          ? '<details class="ar-cand-more"' +
-            (extra.some(function (c) { return c.intent === "other" && picked.indexOf("other") >= 0; }) ? " open" : "") +
-            '><summary>选择其他意图</summary><div class="ar-cands ar-cands-mini">' +
-            extra.map(function (c, i) { return candRow(c, i, false, true); }).join("") + "</div></details>"
-          : "");
+        '<div class="ar-cands">' +
+          (cands.length ? cands.map(function (c, i) { return candRow(c, i, !review.should_filter && !customPrefill); }).join("") : "") +
+        "</div>" +
+        '<div class="ar-cand-block ar-cand-custom">' +
+          '<label class="ar-cand"><input type="checkbox" id="arCustomIntentOn"' + (customOn ? " checked" : "") + ">" +
+          '<div class="ar-cand-main"><strong>补充意图</strong>' +
+          '<div class="ar-note" style="margin:4px 0 0">Jev 没给出合适项时手填，例如「形式审核缺项」。</div></div></label>' +
+          '<input type="text" class="ar-other-note" id="arCustomIntent" maxlength="40" autocomplete="off"' +
+            ' placeholder="填写更准确的意图"' +
+            (customOn ? "" : " hidden disabled") +
+            ' value="' + esc(customPrefill || "") + '">' +
+        "</div>";
     }
     var labs = reviewLabels(review);
     $("arSaveNote").textContent = labs.length
@@ -861,12 +943,56 @@
     requestAnimationFrame(function () { placePop(); });
   }
   function saveReview() {
+    if (!canReview()) {
+      $("arSaveNote").textContent = "仅组长或管理员可以审核。";
+      return Promise.resolve();
+    }
     if (!state.selected || !state.current) return Promise.resolve();
     var hit = state.selected;
+    var shouldFilter = !!( $("arShouldFilter") && $("arShouldFilter").checked );
     var els = document.querySelectorAll('input[name="ar-cand"]:checked');
-    if (!els.length) {
-      $("arSaveNote").textContent = "请至少选择一条意图";
+    var customOn = !!( $("arCustomIntentOn") && $("arCustomIntentOn").checked );
+    var customText = (($("arCustomIntent") && $("arCustomIntent").value) || "").trim();
+    if (!shouldFilter && !els.length && !customText) {
+      $("arSaveNote").textContent = "请选择意图、填写补充意图，或标记应过滤";
       return Promise.resolve();
+    }
+    if (!shouldFilter && customOn && !customText) {
+      $("arSaveNote").textContent = "请填写补充意图";
+      syncCustomIntent(true);
+      return Promise.resolve();
+    }
+    if (shouldFilter) {
+      var payloadDrop = {
+        source_id: hit.source_id || state.current.source_id || "*",
+        session_id: state.current.session_id,
+        message_id: String(hit.message_id),
+        sender: hit.sender,
+        time_text: hit.time_text,
+        text: hit.text,
+        filename: hit.filename,
+        intent: hit.intent,
+        score: hit.score,
+        gemini_useful: hit.gemini_useful,
+        should_filter: true,
+        correct_useful: false,
+        selected_intents: [],
+        selected_intent: "",
+        selected_label: "应过滤",
+        selected_score: null,
+        intent_note: ""
+      };
+      return api("/api/agent-review/reviews", { method: "POST", body: JSON.stringify(payloadDrop) }).then(function (saved) {
+        hit.review = saved.data;
+        $("arSaveNote").textContent = "已标记应过滤 · " + (saved.data.updated_at || "");
+        closeReview();
+        var stay = { keepScroll: true };
+        if (state.page === "dropped") return loadDrops(stay);
+        if (state.page === "examples") return loadExamples();
+        return loadHits(stay);
+      }).catch(function (e) {
+        $("arSaveNote").textContent = e.message;
+      });
     }
     var otherNote = "";
     var selected_intents = [].map.call(els, function (el) {
@@ -892,6 +1018,12 @@
       syncOtherNote(true);
       return Promise.resolve();
     }
+    if (customText) {
+      var exists = selected_intents.some(function (x) { return x.intent === customText || x.label === customText; });
+      if (!exists) {
+        selected_intents.push({ intent: customText, label: customText, note: customText, score: null });
+      }
+    }
     var payload = {
       source_id: hit.source_id || state.current.source_id || "*",
       session_id: state.current.session_id,
@@ -912,7 +1044,8 @@
         });
         return nums.length ? Math.max.apply(null, nums) : null;
       })(),
-      intent_note: otherNote
+      intent_note: otherNote,
+      should_filter: false
     };
     return api("/api/agent-review/reviews", { method: "POST", body: JSON.stringify(payload) }).then(function (saved) {
       hit.review = saved.data;
@@ -927,21 +1060,105 @@
       $("arSaveNote").textContent = e.message;
     });
   }
+  function reviewLabs(r) {
+    if (!r) return [];
+    if (r.should_filter) return ["应过滤"];
+    if (Array.isArray(r.selected_intents) && r.selected_intents.length) {
+      return r.selected_intents.map(function (x) {
+        return (typeof x === "string") ? x : (x.label || x.intent || "");
+      }).filter(Boolean);
+    }
+    if (r.selected_label) {
+      return String(r.selected_label).split(/[、,，]/).map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+    if (r.selected_intent || r.correct_intent) {
+      return [r.selected_label || r.selected_intent || r.correct_intent];
+    }
+    return [];
+  }
+  function exampleBlob(key, r) {
+    if (key === "review") {
+      return [
+        r.session_id, r.sender, r.reviewer, r.updated_at, r.text, r.filename,
+        reviewLabs(r).join(" "),
+        r.should_filter ? "应过滤" : "已采信"
+      ].join(" ").toLowerCase();
+    }
+    var lab = r.label === "drop" ? "应过滤" : (r.label === "keep" ? "应保留" : (r.intentLabel || r.label || ""));
+    return [lab, r.filename, r.text, r.reviewer, r.session_id, r.score, r.enabled === false ? "停用" : "启用"].join(" ").toLowerCase();
+  }
+  function exampleCard(key, r) {
+    if (key === "review") {
+      var labs = reviewLabs(r);
+      var labHtml = labs.map(function (lab) {
+        return '<span class="ar-chip ' + (r.should_filter ? "drop" : "jia") + '">' + esc(lab) + "</span>";
+      }).join(" ") || '<span class="ar-chip">—</span>';
+      var blob = ((r.filename ? "【" + r.filename + "】 " : "") + (r.text || "")).slice(0, 160);
+      return '<div class="ar-hit ar-hit-reviewed"><span class="ar-chip ok">已审核</span> ' + labHtml +
+        (r.sender ? ' <span class="ar-chip">' + esc(r.sender) + "</span>" : "") +
+        (r.reviewer ? ' <span class="ar-chip">' + esc(r.reviewer) + "</span>" : "") +
+        '<div class="ar-msg">' + esc(blob || ((r.session_id || "") + " · " + (r.updated_at || "").slice(0, 16))) + "</div></div>";
+    }
+    var blob = ((r.filename ? "【" + r.filename + "】 " : "") + (r.text || "")).slice(0, 160);
+    var lab = r.label === "drop" ? "应过滤" : (r.label === "keep" ? "应保留" : (r.intentLabel || r.label || ""));
+    return '<div class="ar-hit"><span class="ar-chip ' + (r.label === "drop" ? "drop" : "jia") + '">' + esc(lab) + "</span> " +
+      (r.score != null ? '<span class="ar-chip">评分 ' + esc(r.score) + "</span> " : "") +
+      (r.enabled === false ? '<span class="ar-chip">停用</span> ' : "") +
+      '<div class="ar-msg">' + esc(blob || "（无正文）") + "</div></div>";
+  }
+  function paintExamplePanel(key) {
+    var ids = {
+      intent: { list: "arExIntentList", pager: "arExIntentPager", info: "arExIntentPageInfo", count: "arExIntentCount" },
+      filter: { list: "arExFilterList", pager: "arExFilterPager", info: "arExFilterPageInfo", count: "arExFilterCount" },
+      review: { list: "arExReviewList", pager: "arExReviewPager", info: "arExReviewPageInfo", count: "arExReviewCount" }
+    };
+    var p = state.ex[key];
+    var el = ids[key];
+    var box = $(el.list);
+    if (!box || !p) return;
+    var q = (p.q || "").trim().toLowerCase();
+    var rows = p.rows.filter(function (r) { return !q || exampleBlob(key, r).indexOf(q) >= 0; });
+    var size = state.exPageSize;
+    var pages = Math.max(1, Math.ceil(rows.length / size) || 1);
+    if (p.page > pages) p.page = pages;
+    if (p.page < 1) p.page = 1;
+    var count = $(el.count);
+    if (count) count.textContent = q ? ("筛选 " + rows.length + " / " + p.rows.length) : String(p.rows.length);
+    var info = $(el.info);
+    if (info) info.textContent = "第 " + p.page + " / " + pages + " 页 · 共 " + rows.length + " 条";
+    var pager = $(el.pager);
+    if (pager) {
+      pager.hidden = rows.length <= size;
+      var prev = pager.querySelector('[data-ar-pg="-1"]');
+      var next = pager.querySelector('[data-ar-pg="1"]');
+      if (prev) prev.disabled = p.page <= 1;
+      if (next) next.disabled = p.page >= pages;
+    }
+    var empty = key === "review" ? "还没有审核记录" : "暂无";
+    if (!rows.length) {
+      box.innerHTML = '<div class="ar-note">' + (q ? "没有匹配的记录" : empty) + "</div>";
+      return;
+    }
+    box.innerHTML = rows.slice((p.page - 1) * size, p.page * size).map(function (r) {
+      return exampleCard(key, r);
+    }).join("");
+  }
   function loadExamples() {
-    return api("/api/agent-review/examples").then(function (data) {
-      function block(title, rows) {
-        if (!(rows || []).length) return "<h3 class='ar-h3'>" + title + "</h3><div class='ar-note'>暂无</div>";
-        return "<h3 class='ar-h3'>" + title + "</h3>" + rows.map(function (r) {
-          var blob = ((r.filename ? "【" + r.filename + "】 " : "") + (r.text || "")).slice(0, 160);
-          return '<div class="ar-hit"><span class="ar-chip jia">' + esc(r.label) + "</span> " +
-            (r.score != null ? '<span class="ar-chip">评分 ' + esc(r.score) + "</span> " : "") +
-            '<div class="ar-msg">' + esc(blob) + "</div></div>";
-        }).join("");
-      }
-      $("arExampleBox").innerHTML = block("过滤样本（历史）", data.filter) +
-        block("意图样本（Jev）", data.intent);
+    return Promise.all([
+      api("/api/agent-review/examples?browse=1&limit=400"),
+      api("/api/agent-review/reviews")
+    ]).then(function (got) {
+      var data = got[0] || {};
+      state.ex.intent.rows = data.intent || [];
+      state.ex.filter.rows = data.filter || [];
+      state.ex.review.rows = (got[1] && got[1].data) || [];
+      paintExamplePanel("intent");
+      paintExamplePanel("filter");
+      paintExamplePanel("review");
     }).catch(function (e) {
-      $("arExampleBox").innerHTML = '<div class="wecom-empty">' + esc(e.message) + "</div>";
+      ["arExIntentList", "arExFilterList", "arExReviewList"].forEach(function (id) {
+        if ($(id)) $(id).innerHTML = '<div class="wecom-empty">' + esc(e.message) + "</div>";
+      });
     });
   }
   function splitAliases(text) {
@@ -1037,6 +1254,10 @@
     });
   }
   function saveParty() {
+    if (!canReview()) {
+      if ($("arPartySaveNote")) $("arPartySaveNote").textContent = "仅组长或管理员可改名单。";
+      return Promise.resolve();
+    }
     var data = currentParty();
     state.party = data;
     return api("/api/agent-review/party", { method: "PUT", body: JSON.stringify(data) }).then(function (res) {
@@ -1050,6 +1271,10 @@
     });
   }
   function applyPartyJson() {
+    if (!canReview()) {
+      if ($("arPartySaveNote")) $("arPartySaveNote").textContent = "仅组长或管理员可改名单。";
+      return;
+    }
     try {
       var data = JSON.parse($("arPartyJson").value);
       if (!data || typeof data !== "object") throw new Error("不是对象");
@@ -1066,6 +1291,7 @@
     }
   }
   function addReach() {
+    if (!canReview()) return;
     var name = ($("arReachIn").value || "").trim();
     if (!name) return;
     state.party.reachingAliases = state.party.reachingAliases || [];
@@ -1078,6 +1304,7 @@
     renderParty();
   }
   function addStaff() {
+    if (!canReview()) return;
     var name = ($("arPartyName").value || "").trim();
     var aliases = splitAliases($("arPartyAliases").value);
     if (!name) {
@@ -1130,9 +1357,12 @@
   }
   function loadBase() {
     if (!$("agentReviewHome")) return;
+    applyRoleGate();
     api("/api/auth/me").then(function (j) {
       var u = j && j.user;
       state.reviewer = (u && (u.realName || u.username)) || "";
+      state.role = (u && u.role) || "";
+      applyRoleGate();
     }).catch(function () {});
     api("/api/agent-review/intents").then(function (data) {
       state.intents = data.data || [];
@@ -1206,8 +1436,24 @@
       });
       $("arCandidateBox").addEventListener("change", function (ev) {
         var el = ev.target;
-        if (!el || el.name !== "ar-cand" || el.value !== "other") return;
-        syncOtherNote(!!el.checked);
+        if (!el) return;
+        if (el.id === "arShouldFilter") {
+          if (el.checked) {
+            document.querySelectorAll('input[name="ar-cand"]').forEach(function (x) { x.checked = false; });
+            syncOtherNote(false);
+            syncCustomIntent(false);
+          }
+          return;
+        }
+        if (el.id === "arCustomIntentOn") {
+          syncCustomIntent(!!el.checked);
+          if (el.checked && $("arShouldFilter")) $("arShouldFilter").checked = false;
+          return;
+        }
+        if (el.name === "ar-cand") {
+          if (el.checked && $("arShouldFilter")) $("arShouldFilter").checked = false;
+          if (el.value === "other") syncOtherNote(!!el.checked);
+        }
       });
     }
     $("arSaveReviewBtn").addEventListener("click", saveReview);
@@ -1220,6 +1466,40 @@
       if (ev.key === "Escape" && $("arReviewMask") && !$("arReviewMask").hidden) closeReview();
     });
     $("arLoadExamplesBtn").addEventListener("click", loadExamples);
+    var exBox = $("arExampleBox");
+    if (exBox) {
+      exBox.addEventListener("click", function (ev) {
+        var hd = ev.target.closest(".ar-fold-hd");
+        if (hd) {
+          var fold = hd.closest(".ar-fold");
+          if (!fold) return;
+          var open = fold.classList.contains("bd-collapsed");
+          fold.classList.toggle("bd-collapsed", !open);
+          hd.setAttribute("aria-expanded", open ? "true" : "false");
+          return;
+        }
+        var pg = ev.target.closest("[data-ar-pg]");
+        if (!pg || pg.disabled) return;
+        var fold = pg.closest(".ar-fold");
+        var key = fold && fold.getAttribute("data-ar-ex");
+        if (!key || !state.ex[key]) return;
+        state.ex[key].page += Number(pg.getAttribute("data-ar-pg") || 0);
+        paintExamplePanel(key);
+      });
+      [
+        ["arExIntentQ", "intent"],
+        ["arExFilterQ", "filter"],
+        ["arExReviewQ", "review"]
+      ].forEach(function (pair) {
+        var inp = $(pair[0]);
+        if (!inp) return;
+        inp.addEventListener("input", function () {
+          state.ex[pair[1]].q = inp.value || "";
+          state.ex[pair[1]].page = 1;
+          paintExamplePanel(pair[1]);
+        });
+      });
+    }
     $("arLoadPartyBtn").addEventListener("click", loadParty);
     $("arSavePartyBtn").addEventListener("click", saveParty);
     if ($("arApplyPartyJsonBtn")) $("arApplyPartyJsonBtn").addEventListener("click", applyPartyJson);

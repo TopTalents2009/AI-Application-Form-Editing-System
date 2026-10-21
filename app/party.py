@@ -21,6 +21,12 @@ PARTY_PATH = DATA_DIR / "data" / "party.json"
 _TITLE_RE = re.compile(r"申报.?组|匹配.?组|申报部门|申报部-|组长-|组员-|海归就业创业")
 
 
+_MAX_STAFF = 500
+_MAX_ALIASES = 24
+_MAX_REACHING = 80
+_MAX_TITLE_PAT = 80
+
+
 def normalize_party(data: dict | None) -> dict:
     src = data if isinstance(data, dict) else {}
     merged: dict[str, dict] = {}
@@ -39,27 +45,41 @@ def normalize_party(data: dict | None) -> dict:
             alias = str(raw).strip()
             if alias and alias != name and alias not in aliases:
                 aliases.append(alias)
+        aliases = aliases[:_MAX_ALIASES]
         if key in merged:
             seen = set(merged[key]["aliases"])
             for alias in aliases:
-                if alias not in seen:
+                if alias not in seen and len(merged[key]["aliases"]) < _MAX_ALIASES:
                     merged[key]["aliases"].append(alias)
                     seen.add(alias)
         else:
-            merged[key] = {"name": name, "aliases": aliases}
+            if len(order) >= _MAX_STAFF:
+                continue
+            merged[key] = {"name": name[:64], "aliases": aliases}
             order.append(key)
     staff = [merged[k] for k in sorted(order, key=lambda x: merged[x]["name"])]
     reaching: list[str] = []
     for raw in src.get("reachingAliases") or ["reaching"]:
-        alias = str(raw).strip()
+        alias = str(raw).strip()[:40]
         if alias and alias not in reaching:
             reaching.append(alias)
+        if len(reaching) >= _MAX_REACHING:
+            break
     if not reaching:
         reaching = ["reaching"]
+    pat = str(src.get("titleStaffPattern") or "").strip()[:_MAX_TITLE_PAT]
+    if pat:
+        if not _pattern_is_safe(pat):
+            pat = ""
+        else:
+            try:
+                re.compile(pat)
+            except re.error:
+                pat = ""
     return {
         "staff": staff,
         "reachingAliases": reaching,
-        "titleStaffPattern": str(src.get("titleStaffPattern") or "").strip(),
+        "titleStaffPattern": pat,
     }
 
 
@@ -80,13 +100,60 @@ def save_party(data: dict) -> None:
     _staff_index.cache_clear()
 
 
+_BAD_SENDER = {"", "null", "none", "undefined", "nil", "unknown", "未知"}
+
+
+def clean_sender(value) -> str:
+    """解析服务偶尔把没有备注的人写成字符串 null，不能当昵称。"""
+    s = str(value or "").strip()
+    if not s or s.lower() in _BAD_SENDER:
+        return ""
+    return s
+
+
+def sender_of(obj, fallback: str = "") -> str:
+    """从消息或字段取出可用昵称；脏值（null/none）当空。"""
+    if isinstance(obj, dict):
+        raw = obj.get("sender")
+    else:
+        raw = obj
+    return clean_sender(raw) or fallback
+
+
+def scrub_sender(message: dict) -> dict:
+    """就地去掉消息上的假昵称，给看板 / 拆案 / 入库共用。"""
+    if not isinstance(message, dict):
+        return message
+    got = clean_sender(message.get("sender"))
+    if message.get("sender") != got:
+        message["sender"] = got
+    return message
+
+
 def _norm(text: str) -> str:
     return re.sub(r"[\s()（）\-—_@·]+", "", (text or "")).lower()
+
+
+def _pattern_is_safe(text: str) -> bool:
+    s = str(text or "")
+    if not s or len(s) > _MAX_TITLE_PAT:
+        return False
+    if s.count("(") > 8 or s.count("+") + s.count("*") > 12:
+        return False
+    if s.count("{") > 4:
+        return False
+    if ")+" in s or ")*" in s or "){" in s:
+        return False
+    if any(tok in s for tok in ("(?P<", "(?=", "(?!", "(?<")):
+        return False
+    return True
 
 
 def _title_re(pattern: str) -> re.Pattern | None:
     text = str(pattern or "").strip()
     if not text:
+        return _TITLE_RE
+    if not _pattern_is_safe(text):
         return _TITLE_RE
     try:
         return re.compile(text)
@@ -178,7 +245,9 @@ def infer_platform(message: dict | None = None, session: dict | None = None) -> 
 
 
 def classify(sender: str, platform: str = "wecom", data: dict | None = None) -> dict:
-    sender = str(sender or "").strip()
+    sender = clean_sender(sender)
+    if isinstance(data, dict):
+        data = normalize_party(data)
     if is_reaching(sender, data):
         return {
             "party": "甲方",

@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from .agent_extract import filename_of, is_delivery_name, is_system, summary, text_of
 from .agent_review import review_map
 from .agent_router import route_with_session
-from .party import classify, infer_platform
+from .party import classify, infer_platform, sender_of
 
 _CACHE: dict[str, dict] = {}
 _CACHE_MAX = 8
@@ -22,7 +22,7 @@ def _key(source_id: str, session_id: str) -> str:
 def _slim(message: dict) -> dict:
     return {
         "time": message.get("time_text") or "",
-        "sender": message.get("sender") or "",
+        "sender": sender_of(message),
         "senderId": message.get("sender_id") or "",
         "text": text_of(message)[:500],
         "filename": filename_of(message),
@@ -46,7 +46,7 @@ def replay_messages(messages: list[dict], *, session: dict | None = None) -> dic
         if not isinstance(msg, dict):
             continue
         platform = infer_platform(msg, sess)
-        party = classify(str(msg.get("sender") or ""), platform)
+        party = classify(sender_of(msg), platform)
         party_stats[party["party"]] += 1
         routed = route_with_session(msg, context, sess)
         context.append(msg)
@@ -66,7 +66,7 @@ def replay_messages(messages: list[dict], *, session: dict | None = None) -> dic
             continue
         if is_system(msg) and not routed.get("triggers"):
             continue
-        sender_stats[str(msg.get("sender") or "")] += 1
+        sender_stats[sender_of(msg)] += 1
         for trig in routed.get("triggers") or []:
             agent_stats[trig["agentId"]] += 1
         hit = dict(item)

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from .config import DATA_DIR, atomic_replace, load_config, resolve_watch_llm
 from . import wecom_client as W
+from .party import sender_of
 from .wecom_cases import annotate_existing, cluster_messages, _has_file, _msg_kind
 from .wecom_locate import parse_time
 from .wecom_split_llm import assist_split_with_gemini
@@ -16,6 +17,7 @@ from .wecom_watch_llm import detect_opinions, rule_opinion_ids
 _STATE_PATH = DATA_DIR / "data" / "wecom_watch.json"
 _lock = asyncio.Lock()
 _running = False
+_fail_streak = 0
 _status = {
     "running": False,
     "lastRunAt": "",
@@ -25,6 +27,25 @@ _status = {
     "pending": [],
     "groups": {},
 }
+
+
+def _note_watch_fault(detail: str) -> None:
+    """连续两次值班/解析故障才告警，避免偶发超时刷屏。"""
+    global _fail_streak
+    _fail_streak += 1
+    _status["lastError"] = str(detail or "")[:200]
+    if _fail_streak < 2:
+        return
+    try:
+        from . import alert as AL
+        AL.ops_fault(kind="wecom_watch", title="企微值班异常", lines=[str(detail or "")[:200]])
+    except Exception:
+        pass
+
+
+def _clear_watch_fault() -> None:
+    global _fail_streak
+    _fail_streak = 0
 
 
 def _watch_cfg() -> dict:
@@ -78,7 +99,10 @@ async def _upload_fresh_talent_files(
     except (TypeError, ValueError):
         max_n = 10
     try:
-        _rows, summary = await auto_upload_files(files, session_id=session_id, max_n=max_n)
+        for f in files:
+            if not f.get("sessionName"):
+                f["sessionName"] = session_name
+        _rows, summary = await auto_upload_files(files, session_id=session_id, max_n=max_n, source="watch")
     except Exception as e:
         note = "材料入库失败：" + str(e)[:120]
         _push_event(state, session_name + " " + note, kind="error")
@@ -197,8 +221,8 @@ async def _loop():
             else:
                 _status["waitingSync"] = False
         except Exception as e:
-            _status["lastError"] = str(e)[:200]
             print("[wecom-watch] 循环异常：" + str(e)[:200], flush=True)
+            _note_watch_fault(str(e))
         await asyncio.sleep(15)
 
 
@@ -241,8 +265,8 @@ async def _scan_if_synced():
     try:
         listed = await W.list_merged_groups(kind="all", limit=1000, watch_only=True)
     except W.WecomError as e:
-        _status["lastError"] = e.message[:200]
         _status["waitingSync"] = True
+        _note_watch_fault(e.message)
         return
     items = listed.get("items") or []
     mark = _sync_mark(items)
@@ -253,11 +277,13 @@ async def _scan_if_synced():
     prev = str(state.get("syncMark") or "")
     if prev and prev == mark:
         _status["waitingSync"] = True
+        _clear_watch_fault()
         return
     _status["waitingSync"] = False
     result = await scan_once(trigger="sync")
     if not result.get("ok"):
         return
+    _clear_watch_fault()
     state = _load_state()
     state["syncMark"] = mark
     _save_state(state)
@@ -282,7 +308,7 @@ async def scan_once(*, force: bool = False, trigger: str = "") -> dict:
         health = await W.health()
         if not health.get("ok"):
             detail = "解析服务未就绪：" + str(health.get("error") or "")
-            _status["lastError"] = detail
+            _note_watch_fault(detail)
             return {"ok": False, "detail": detail}
         _running = True
         _status["running"] = True
@@ -466,7 +492,7 @@ def _case_snapshot(c: dict) -> dict:
             "kind": op.get("kind") or "file",
             "filename": op.get("filename") or "",
             "time": op.get("time") or "",
-            "sender": op.get("sender") or "",
+            "sender": sender_of(op),
             "message_id": op.get("message_id") or 0,
             "copies": op.get("copies") or [],
             "text": str(op.get("text") or "")[:4000],
@@ -479,7 +505,7 @@ def _case_snapshot(c: dict) -> dict:
             "filename": app.get("filename") or "",
             "message_id": app.get("message_id") or 0,
             "time": app.get("time") or "",
-            "sender": app.get("sender") or "",
+            "sender": sender_of(app),
             "copies": app.get("copies") or [],
             "cached": bool(app.get("copies")),
         },
@@ -638,6 +664,20 @@ def _norm_file(name: str) -> str:
     return re.sub(r"\s+", "", str(name or "")).lower()
 
 
+_COPY_PREFIX = re.compile(r"^(副本|拷贝|copy[_-]?)")
+_COPY_SUFFIX = re.compile(r"(?:\(\d+\)|_v?\d+|[-_]\d+)$", re.I)
+
+
+def _file_core(name: str) -> str:
+    n = _norm_file(name)
+    stem, _, ext = n.rpartition(".")
+    if not stem:
+        stem, ext = n, ""
+    stem = _COPY_PREFIX.sub("", stem)
+    stem = _COPY_SUFFIX.sub("", stem)
+    return stem + (("." + ext) if ext else "")
+
+
 def _opinion_key(op: dict) -> str:
     kind = str(op.get("kind") or "file")
     when = str(op.get("time") or "")[:16]
@@ -671,8 +711,7 @@ def _same_file(case: dict, other_name: str) -> bool:
         return False
     if a == b:
         return True
-    short, long = (a, b) if len(a) <= len(b) else (b, a)
-    return len(short) >= 6 and short in long
+    return _file_core(a) == _file_core(b)
 
 
 def _remember_uploaded(state: dict, case: dict, session_id: str):
@@ -792,7 +831,7 @@ def _app_origin(item: dict) -> dict:
         if lab and lab not in labels:
             labels.append(lab)
     return {
-        "sender": str(app.get("sender") or "").strip(),
+        "sender": sender_of(app),
         "messageTime": str(app.get("time") or "").strip(),
         "sources": labels[:6],
     }

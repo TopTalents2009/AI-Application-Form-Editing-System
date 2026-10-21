@@ -1,10 +1,16 @@
 """管理员：用户列表与账号管理。"""
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from urllib.parse import quote
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from ..config import STATIC_DIR
 from .. import auth
 
 router = APIRouter()
+
+ADMIN_PAGES = frozenset({
+    "overview", "newtask", "users", "feedback", "wecom", "ingest",
+    "chatinsight", "aireview", "openapi", "alert", "config", "system",
+})
 
 
 def _admin(request: Request) -> dict:
@@ -17,7 +23,12 @@ def _admin(request: Request) -> dict:
 
 
 @router.get("/admin")
-def admin_page():
+@router.get("/admin/{page}")
+def admin_page(page: str = ""):
+    if page == "files":
+        return RedirectResponse("/admin/wecom", status_code=302)
+    if page and page not in ADMIN_PAGES:
+        return RedirectResponse("/admin/overview", status_code=302)
     return FileResponse(STATIC_DIR / "admin.html", headers={"Cache-Control": "no-cache"})
 
 
@@ -257,6 +268,49 @@ def api_alert_logs_clear(request: Request):
     from .. import alert as AL
     AL.clear_logs()
     return {"ok": True}
+
+
+@router.get("/api/admin/talent-ingest")
+def api_talent_ingest(
+    request: Request,
+    q: str = Query(""),
+    source: str = Query(""),
+    ok: str = Query("1"),
+):
+    """入库看板：本地附件、值班 / 文件汇总材料，以及确认写入的申报书版本和对应修改意见。"""
+    _admin(request)
+    ok_only = str(ok or "1").strip() not in ("0", "all", "false", "no")
+    try:
+        from ..wecom_talent_db import list_board
+        return list_board(q=q, source=source, ok_only=ok_only)
+    except Exception as e:
+        raise HTTPException(503, "入库库不可用：" + str(e)[:160])
+
+
+@router.get("/api/admin/local-attach")
+def api_local_attach(request: Request, path: str = Query("")):
+    """按「附件/{编号}/…」相对路径下载本机对应文件。"""
+    _admin(request)
+    rel = str(path or "").replace("\\", "/").lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        raise HTTPException(400, "缺少文件路径")
+    from .. import attachments as A
+    from .. import papers as P
+    try:
+        fp = A._safe_local_file(str(A.LOCAL_ATTACH_ROOT / rel))
+    except P.PapersError as e:
+        raise HTTPException(404, e.message)
+    except Exception as e:
+        raise HTTPException(404, str(e)[:160])
+    name = fp.name
+    return FileResponse(
+        fp,
+        filename=name,
+        headers={
+            "Cache-Control": "no-cache",
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(name),
+        },
+    )
 
 
 @router.get("/api/admin/api-docs")

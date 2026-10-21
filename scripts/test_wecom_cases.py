@@ -11,6 +11,7 @@ from app.wecom_cases import (
     annotate_existing,
     classify_file,
     cluster_messages,
+    is_opinion_text,
     resolve_app_upload,
     strip_cache_prefix,
 )
@@ -109,6 +110,9 @@ def test_company_docx_without_shenbaoshu_word_is_app():
     assert classify_file("31009-QM-江门市安诺特炊具制造有限公司.wps") == "app"
     assert classify_file("仪征枣林湾修改意见总结.wps") == "opinion"
     assert classify_file("雨花对接-修改意见.docx") == "opinion"
+    assert classify_file("评审会议纪要.docx") == "ignore"
+    assert classify_file("辅导安排.docx") == "ignore"
+    assert classify_file("辅导.docx") == "ignore"
 
 
 def test_cue_pairs_company_app_with_wps_opinion():
@@ -145,6 +149,21 @@ def test_exported_form_pdf_and_not_stamp():
     assert classify_file("关于申报人工作年限不足的破格说明 杜垚.pdf") == "ignore"
 
 
+def test_opinion_text_needs_revision_ask():
+    assert is_opinion_text("请把护照号码改成 E1234567")
+    assert is_opinion_text("请改一版申报书日期")
+    assert is_opinion_text("护照有效期不够。")
+    assert is_opinion_text("另外再补目录和工资单")
+    assert not is_opinion_text("收到")
+    assert not is_opinion_text("好的收到")
+    assert not is_opinion_text("请查收申报书")
+    assert not is_opinion_text("申报书已发到群里")
+    assert not is_opinion_text("这个附件我发了，人才编号 51104")
+    assert not is_opinion_text("单位名称是某某科技有限公司")
+    assert not is_opinion_text("你通过张三分享的链接加入了此表格")
+    assert not is_opinion_text("这是护照扫描件，请归档")
+
+
 def test_two_char_name_locate():
     t = {"app": {"name": "69230_人才引进意向协议书-杜垚.pdf", "no": "69230"}}
     ident = identity_of(t)
@@ -166,5 +185,6 @@ if __name__ == "__main__":
     test_company_docx_without_shenbaoshu_word_is_app()
     test_cue_pairs_company_app_with_wps_opinion()
     test_exported_form_pdf_and_not_stamp()
+    test_opinion_text_needs_revision_ask()
     test_two_char_name_locate()
     print("ALL OK")

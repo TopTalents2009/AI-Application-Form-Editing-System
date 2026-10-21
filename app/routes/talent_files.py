@@ -14,6 +14,23 @@ def _user(request: Request) -> dict:
     return u
 
 
+def _app_text(row: dict) -> str:
+    tid = str((row or {}).get("task_id") or "")
+    if not tid:
+        return ""
+    try:
+        from ..main import runner
+        return T.app_text_for_task(runner.get(tid))
+    except Exception:
+        return ""
+
+
+def _export_for_user(user: dict, row: dict, export: dict) -> dict:
+    if str((user or {}).get("role") or "") != "admin":
+        return export
+    return T.unmask_export(export, _app_text(row))
+
+
 def _can_read(user: dict, row: dict) -> bool:
     if user.get("role") == "admin":
         return True
@@ -63,7 +80,18 @@ def api_get(fid: int, request: Request):
         export = T.load_export(row)
     except T.TalentFileError as e:
         raise HTTPException(e.status, e.message)
-    return JSONResponse({"ok": True, "item": T.public_row(row), "export": export})
+    export = _export_for_user(u, row, export)
+    task_opinions = T.opinions_of_task(
+        T.load_task_for_opinions(str(row.get("task_id") or "")),
+        snippet=4000,
+        clause_limit=24,
+    )
+    return JSONResponse({
+        "ok": True,
+        "item": T.public_row(row),
+        "export": export,
+        "taskOpinions": task_opinions,
+    })
 
 
 @router.get("/api/talent-files/{fid}/file")
@@ -78,7 +106,8 @@ def api_file(fid: int, request: Request):
     if not _can_read(u, row):
         raise HTTPException(404, "记录不存在")
     try:
-        data, mime, name = T.load_file_bytes(row)
+        export = _export_for_user(u, row, T.load_export(row))
+        data, mime, name = T.load_file_bytes(row, export)
     except T.TalentFileError as e:
         raise HTTPException(e.status, e.message)
     return Response(

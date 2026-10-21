@@ -131,6 +131,12 @@ def test_uploaded_book_stays_out_of_review_until_new_material():
         "similar": {"filename": "42616申报书.xlsm"},
         "opinions": [],
     }, "s1")
+    assert not _repeat_without_new(state, {
+        "id": "c-other",
+        "app": {"filename": "申报书.pdf", "time": "2026-09-23 09:00"},
+        "similar": {"filename": "张三申报书.pdf"},
+        "opinions": [],
+    }, "s1")
     _remember_uploaded(state, case, "s1")
     assert _repeat_without_new(state, case, "s1")
     newer = {

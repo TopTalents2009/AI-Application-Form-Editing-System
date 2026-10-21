@@ -73,7 +73,48 @@ def create_router(runner):
         t = _guard_task(request, runner.get(tid))
         plan = runner.load_plan(t)
         if plan is None: raise HTTPException(404, "尚未生成编辑计划")
+        t2 = _with_owner_name(t)
+        from ..ps_tickets import draft_for_task
+        items = plan.get("taskList") or t.get("taskList") or []
+        plan["psTicket"] = t.get("psTicket") or plan.get("psTicket") or {}
+        plan["psDraft"] = draft_for_task(t, items, actor_name=str(t2.get("ownerName") or ""), plan=plan)
         return plan
+
+    @router.post("/api/tasks/{tid}/ps-upload")
+    async def api_ps_upload(tid: str, body: dict, request: Request):
+        t = _guard_task(request, runner.get(tid))
+        if t.get("status") not in ("planned", "failed"):
+            raise HTTPException(400, "当前状态不能上传工单（仅待人工确认/失败重试可）")
+        note = str((body or {}).get("note") or "").strip()
+        actor = str((body or {}).get("actorName") or (body or {}).get("ownerName") or "").strip()
+        if not note:
+            raise HTTPException(400, "请填写需要修改的备注")
+        if not actor:
+            raise HTTPException(400, "请填写任务提交人姓名")
+        from ..ps_tickets import PsError, configured, preupload_task_list
+        if not configured():
+            raise HTTPException(400, "未配置 PS 工单")
+        plan = runner.load_plan(t) or {}
+        task_list = plan.get("taskList") or t.get("taskList") or []
+        if not task_list:
+            raise HTTPException(400, "没有需要上传的任务清单附件")
+        prev = t.get("psTicket") if isinstance(t.get("psTicket"), dict) else {}
+        t["psTicket"] = prev
+        try:
+            got = await preupload_task_list(t, task_list, note=note, actor_name=actor)
+        except PsError as e:
+            raise HTTPException(e.status if e.status >= 400 else 400, e.message)
+        t["psTicket"] = got
+        runner.persist(t)
+        if plan:
+            plan["psTicket"] = got
+            runner.save_plan(t, plan)
+        if got.get("ok"):
+            runner.log(t, "已上传 PS 工单 #" + str(got.get("id") or "") + "（提交人 " + actor + "）")
+        else:
+            runner.log(t, "PS 工单上传失败：" + str(got.get("error") or "")[:160])
+            raise HTTPException(502, str(got.get("error") or "上传失败"))
+        return {"ok": True, "psTicket": got}
 
     @router.post("/api/tasks/{tid}/apply")
     async def apply_plan(tid: str, body: dict, request: Request):
@@ -105,7 +146,11 @@ def create_router(runner):
             raise HTTPException(400, "没有可应用的编辑（请至少保留一条有效行）")
         u = _user(request)
         actor = str(u.get("realName") or u.get("real_name") or "").strip() or str(u.get("username") or "").strip()
-        await runner.apply_confirmed(t, edits, leftovers, actor=actor)
+        from ..runner import ApplyBusy
+        try:
+            await runner.apply_confirmed(t, edits, leftovers, actor=actor)
+        except ApplyBusy as e:
+            raise HTTPException(409, str(e))
         out = {
             "id": tid,
             "status": t["status"],

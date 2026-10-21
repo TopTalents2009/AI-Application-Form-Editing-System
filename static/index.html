@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py116">
+<link rel="stylesheet" href="/public/style.css?v=py130">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -33,6 +33,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         <button type="button" id="apiApplyBtn">API 申请</button>
         <a href="/api/openapi/guide" id="apiDocDl">下载 API 文档</a>
         <a id="adminLink" href="/admin" style="display:none">管理后台</a>
+        <a id="chatinsightLink" href="/chatinsight/" style="display:none">解析控制台</a>
         <div class="sep"></div>
         <button type="button" class="danger" id="logoutBtn">退出登录</button>
       </div>
@@ -179,7 +180,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 
 <section class="card wecom-home" id="wecomHome">
   <h2>会话记录</h2>
-  <p class="wecom-lead">同一会话在多台电脑上只显示一条，群聊和单聊都算。可在左侧点 ★ 加入「关注会话」供值班扫描。浏览消息时可勾选申报书与修改意见后上传；也可「AI 解读」「拆解任务」或「文件汇总」。任务停在待确认，确认后才会写入。</p>
+  <p class="wecom-lead">同一会话在多台电脑上只显示一条，群聊和单聊都算。可在左侧点 ★ 加入「关注会话」供值班扫描。浏览消息时可勾选申报书与修改意见后上传；也可「AI 解读」「拆解任务」或「文件汇总」。文件汇总里点文件名可跳到最新解读记录中的对应文件。任务停在待确认，确认后才会写入。</p>
   <div class="msg" id="wecomMsg"></div>
   <div class="wecom-status" id="wecomStatus">检测解析服务…</div>
   <div class="wecom-status" id="wecomWatchStatus" style="margin-top:6px"></div>
@@ -302,7 +303,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
       </div>
       <div id="arMain">
         <div class="ar-page" id="arPage-queue">
-          <p class="ar-note" id="arQueueNote">点开会话显示全部消息，并停在最新一条。点上方分类只看这一类，方便按意图审核。甲方走 Jev，乙方只展示原文。评分 ≥ 70 的甲方可点审核本条，意图可多选。</p>
+          <p class="ar-note" id="arQueueNote">点开会话显示全部消息，并停在最新一条。点上方分类只看这一类，方便按意图审核。已审过的会标「已审核」并离开待审。甲方走 Jev，乙方只展示原文。评分 ≥ 70 的甲方可点审核本条：可多选本次分析出的意图，也可手填更准确的名字，或标「应过滤」（下次分析会跳过）。</p>
           <div id="arProgress" class="ar-progress" hidden>
             <div class="ar-progress-row">
               <span class="ar-progress-spin"></span>
@@ -317,7 +318,7 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
           <div class="wecom-stream ar-stream" id="arHitList"><div class="wecom-empty">选择会话后点「分析本会话」。</div></div>
         </div>
         <div class="ar-page hidden" id="arPage-dropped">
-          <p class="ar-note">Jev 判为闲聊/确认，以及评分不到 70 的意图。点分类只看这一类。可点「审核本条」纠正，意图可多选；纠正结果会进入优化样本。</p>
+          <p class="ar-note">Jev 判为闲聊/确认，以及评分不到 70 的意图。点分类只看这一类。可点「审核本条」纠正或标「应过滤」；纠正结果会进入优化样本，应过滤的下次分析不再进入待审。</p>
           <div class="ar-filters">
             <select id="arDropView">
               <option value="dropped">闲聊 / 确认</option>
@@ -328,9 +329,64 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
           <div class="wecom-stream ar-stream" id="arDropList"><div class="wecom-empty">分析完成后在这里看过滤结果。</div></div>
         </div>
         <div class="ar-page hidden" id="arPage-examples">
-          <p class="ar-note">组长纠正过的样本。下一次分析会把意图样本送给 Jev 判断。</p>
+          <p class="ar-note">组长纠正过的样本。下一次分析会把意图样本送给 Jev 判断。三块均可折叠，每页 10 条，支持搜索。</p>
           <button type="button" class="mini" id="arLoadExamplesBtn" style="margin:0 12px 8px">刷新样本</button>
-          <div id="arExampleBox" class="ar-stream" style="padding:8px 12px"></div>
+          <div id="arExampleBox" class="ar-stream ar-example-wrap">
+            <div class="ar-fold" data-ar-ex="intent">
+              <button type="button" class="ar-fold-hd" aria-expanded="true">
+                <svg class="ar-fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                <span class="ar-fold-title">意图样本（Jev）</span>
+                <span class="ar-fold-count" id="arExIntentCount">—</span>
+              </button>
+              <div class="ar-fold-bd">
+                <div class="ar-fold-tools">
+                  <input type="search" id="arExIntentQ" placeholder="搜索意图、原文、审核人" autocomplete="off">
+                </div>
+                <div class="ar-fold-list" id="arExIntentList"><div class="ar-note">加载中…</div></div>
+                <div class="book-pager ar-fold-pager" id="arExIntentPager" hidden>
+                  <button type="button" class="ghost mini" data-ar-pg="-1">上一页</button>
+                  <div class="page-mid"><div class="page-sub" id="arExIntentPageInfo">第 1 / 1 页 · 共 0 条</div></div>
+                  <button type="button" class="ghost mini" data-ar-pg="1">下一页</button>
+                </div>
+              </div>
+            </div>
+            <div class="ar-fold" data-ar-ex="filter">
+              <button type="button" class="ar-fold-hd" aria-expanded="true">
+                <svg class="ar-fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                <span class="ar-fold-title">过滤样本（历史）</span>
+                <span class="ar-fold-count" id="arExFilterCount">—</span>
+              </button>
+              <div class="ar-fold-bd">
+                <div class="ar-fold-tools">
+                  <input type="search" id="arExFilterQ" placeholder="搜索标签、原文、审核人" autocomplete="off">
+                </div>
+                <div class="ar-fold-list" id="arExFilterList"><div class="ar-note">加载中…</div></div>
+                <div class="book-pager ar-fold-pager" id="arExFilterPager" hidden>
+                  <button type="button" class="ghost mini" data-ar-pg="-1">上一页</button>
+                  <div class="page-mid"><div class="page-sub" id="arExFilterPageInfo">第 1 / 1 页 · 共 0 条</div></div>
+                  <button type="button" class="ghost mini" data-ar-pg="1">下一页</button>
+                </div>
+              </div>
+            </div>
+            <div class="ar-fold" data-ar-ex="review">
+              <button type="button" class="ar-fold-hd" aria-expanded="true">
+                <svg class="ar-fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                <span class="ar-fold-title">最近审核</span>
+                <span class="ar-fold-count" id="arExReviewCount">—</span>
+              </button>
+              <div class="ar-fold-bd">
+                <div class="ar-fold-tools">
+                  <input type="search" id="arExReviewQ" placeholder="搜索会话、发送人、意图、审核人" autocomplete="off">
+                </div>
+                <div class="ar-fold-list" id="arExReviewList"><div class="ar-note">加载中…</div></div>
+                <div class="book-pager ar-fold-pager" id="arExReviewPager" hidden>
+                  <button type="button" class="ghost mini" data-ar-pg="-1">上一页</button>
+                  <div class="page-mid"><div class="page-sub" id="arExReviewPageInfo">第 1 / 1 页 · 共 0 条</div></div>
+                  <button type="button" class="ghost mini" data-ar-pg="1">下一页</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="ar-page hidden" id="arPage-party">
           <p class="ar-note">乙方是本公司人员，分析时只展示原文、不进 Jev。企业微信里不在名单中的人是甲方。个人微信里 reaching 永远是甲方，其他人默认乙方。</p>
@@ -458,14 +514,36 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
   </div>
 </div>
 
+<div id="psUploadMask" class="fb-mask" hidden>
+  <div class="fb-modal" role="dialog" aria-labelledby="psUploadTitle">
+    <div class="fb-head">
+      <h2 id="psUploadTitle">上传 PS 修图工单</h2>
+      <button type="button" class="ghost mini" id="psUploadClose">取消</button>
+    </div>
+    <p class="fb-hint">未确认不会上传到 p 图系统。请核对扫描件上具体要改的位置，并填写任务提交人姓名，填完后才能确认。</p>
+    <div class="f-row" style="margin-bottom:12px">
+      <label class="flabel" for="psNoteTa">需要修改的备注</label>
+      <textarea id="psNoteTa" class="fb-ta" rows="9" placeholder="写明扫描件上具体要改的位置，例如发文时间、职位、结束时间"></textarea>
+    </div>
+    <div class="f-row" style="margin-bottom:12px">
+      <label class="flabel" for="psActorIn">任务提交人姓名</label>
+      <input id="psActorIn" class="cred-in" type="text" autocomplete="off" placeholder="填写任务提交人真实姓名">
+    </div>
+    <div class="fb-actions">
+      <button type="button" class="primary" id="psUploadConfirm" disabled>确认上传</button>
+      <span id="psUploadErr" class="err"></span>
+    </div>
+  </div>
+</div>
+
 <div id="credMask" class="fb-mask" hidden>
   <div class="fb-modal cred-modal" role="dialog" aria-labelledby="credTitle">
     <div class="fb-head">
       <h2 id="credTitle">设置本系统账号</h2>
     </div>
-    <p class="fb-hint">已用协同中心的真实姓名和部门为你开通账号。请设置用户名和密码，以后也可在本系统登录页直接登录。</p>
+    <p class="fb-hint" id="credHint">已用协同中心的真实姓名和部门为你开通账号。请设置用户名和密码，以后也可在本系统登录页直接登录。</p>
     <p class="fb-hint" id="credWho"></p>
-    <div class="f-row" style="margin-bottom:12px">
+    <div class="f-row" id="credUserRow" style="margin-bottom:12px">
       <label class="flabel" for="credUser">用户名</label>
       <input id="credUser" class="cred-in" autocomplete="username" placeholder="3–32 位字母、数字或下划线">
     </div>
@@ -485,8 +563,8 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </div>
 
 <script src="/public/session.js?v=py55"></script>
-<script src="/public/wecom-board.js?v=py69"></script>
-<script src="/public/agent-review.js?v=py30"></script>
-<script src="/public/app.js?v=py74"></script>
+<script src="/public/wecom-board.js?v=py86"></script>
+<script src="/public/agent-review.js?v=py38"></script>
+<script src="/public/app.js?v=py83"></script>
 </body>
 </html>

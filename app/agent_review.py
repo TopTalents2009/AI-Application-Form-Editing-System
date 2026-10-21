@@ -7,7 +7,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import DATA_DIR
-from .wecom_intent import intent_label
+from .party import clean_sender
+from .wecom_intent import INTENTS, intent_label, is_skip_intent, normalize_intent, suggested_intent_labels
 
 DB_PATH = DATA_DIR / "data" / "agent_review.sqlite"
 SCORE_MIN = 70
@@ -24,8 +25,13 @@ FIELDS = [
 
 def connect() -> sqlite3.Connection:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA busy_timeout=30000")
+    except sqlite3.Error:
+        pass
     return con
 
 
@@ -125,6 +131,8 @@ def init_db() -> None:
             con.execute("ALTER TABLE intent_reviews ADD COLUMN selected_label TEXT")
         if "selected_intents" not in rcols:
             con.execute("ALTER TABLE intent_reviews ADD COLUMN selected_intents TEXT")
+        if "should_filter" not in rcols:
+            con.execute("ALTER TABLE intent_reviews ADD COLUMN should_filter INTEGER")
         run_cols = {r[1] for r in con.execute("PRAGMA table_info(pipeline_runs)").fetchall()}
         if "progress_done" not in run_cols:
             con.execute("ALTER TABLE pipeline_runs ADD COLUMN progress_done INTEGER")
@@ -160,12 +168,27 @@ def hit_shown(row: dict) -> bool:
         return False
     if not row.get("gemini_useful"):
         return False
-    if str(row.get("intent") or "") in SKIP_INTENTS:
+    if is_skip_intent(row.get("intent"), row.get("intent_label") or row.get("intentLabel")):
         return False
     try:
         return int(row.get("score") or 0) >= SCORE_MIN
     except (TypeError, ValueError):
         return False
+
+
+def hit_reviewed(review: dict | None) -> bool:
+    if not isinstance(review, dict) or not review:
+        return False
+    if review.get("id") not in (None, "", 0):
+        return True
+    if review.get("should_filter"):
+        return True
+    if str(review.get("selected_intent") or "").strip():
+        return True
+    items = review.get("selected_intents")
+    if isinstance(items, str) and items.strip():
+        return True
+    return bool(isinstance(items, list) and items)
 
 
 def save_hits(session_id: str, source_id: str, items: list[dict]) -> int:
@@ -186,7 +209,8 @@ def save_hits(session_id: str, source_id: str, items: list[dict]) -> int:
             skip_jev = 1 if it.get("skip_jev") else 0
             score = int(it.get("score") or 0)
             shown = 1 if hit_shown({**it, "gemini_useful": useful, "score": score, "skip_jev": skip_jev}) else 0
-            cands = it.get("candidates") if isinstance(it.get("candidates"), list) else []
+            raw_cands = it.get("candidates") if isinstance(it.get("candidates"), list) else []
+            cands = [c for c in raw_cands if isinstance(c, dict) and not c.get("fallback")]
             seq = it.get("seq")
             try:
                 seq = None if seq in (None, "") else int(seq)
@@ -196,7 +220,7 @@ def save_hits(session_id: str, source_id: str, items: list[dict]) -> int:
                 str(source_id or it.get("source_id") or "*"),
                 sid,
                 mid,
-                str(it.get("sender") or "")[:80],
+                (clean_sender(it.get("sender")) or "未知")[:80],
                 str(it.get("time_text") or it.get("time") or "")[:32],
                 str(it.get("text") or "")[:2000],
                 str(it.get("filename") or "")[:240],
@@ -363,10 +387,14 @@ def list_runs() -> dict[str, dict]:
         runs = {str(r["session_id"]): dict(r) for r in con.execute("SELECT * FROM pipeline_runs").fetchall()}
         counts = con.execute(
             """
-            SELECT session_id,
+            SELECT h.session_id,
                    COUNT(*) AS hits,
-                   SUM(CASE WHEN shown=1 THEN 1 ELSE 0 END) AS queue
-            FROM pipeline_hits GROUP BY session_id
+                   SUM(CASE WHEN h.shown=1 AND r.id IS NULL THEN 1 ELSE 0 END) AS queue,
+                   SUM(CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END) AS reviewed
+            FROM pipeline_hits h
+            LEFT JOIN intent_reviews r
+              ON r.session_id=h.session_id AND CAST(r.message_id AS TEXT)=CAST(h.message_id AS TEXT)
+            GROUP BY h.session_id
             """
         ).fetchall()
     for c in counts:
@@ -374,10 +402,12 @@ def list_runs() -> dict[str, dict]:
         row = runs.get(sid) or {"session_id": sid, "full_done": 0}
         row["hits"] = int(c["hits"] or 0)
         row["queue"] = int(c["queue"] or 0)
+        row["reviewed"] = int(c["reviewed"] or 0)
         runs[sid] = row
     for row in runs.values():
         row["hits"] = int(row.get("hits") or 0)
         row["queue"] = int(row.get("queue") or 0)
+        row["reviewed"] = int(row.get("reviewed") or 0)
         row["full_done"] = bool(int(row.get("full_done") or 0))
         row["incomplete"] = bool(row["hits"] and not row["full_done"])
         row["analyzed"] = bool(row["full_done"] or row["hits"])
@@ -463,7 +493,10 @@ def list_hits(session_id: str, view: str = "all", sender: str = "", party: str =
         sql += " AND IFNULL(skip_jev,0)=0 AND IFNULL(intent,'') NOT IN ('confirm','chat') AND (shown=0 OR score < ?)"
         args.append(SCORE_MIN)
     elif view == "queue":
-        sql += " AND shown=1"
+        sql += """ AND shown=1 AND CAST(message_id AS TEXT) NOT IN (
+            SELECT CAST(message_id AS TEXT) FROM intent_reviews WHERE session_id=?
+        )"""
+        args.append(session_id)
     if sender:
         sql += " AND sender=?"
         args.append(sender)
@@ -476,12 +509,15 @@ def list_hits(session_id: str, view: str = "all", sender: str = "", party: str =
             """
             SELECT
               COUNT(*) AS total,
-              SUM(CASE WHEN party='甲方' THEN 1 ELSE 0 END) AS jia,
-              SUM(CASE WHEN party='乙方' OR IFNULL(skip_jev,0)=1 THEN 1 ELSE 0 END) AS yi,
-              SUM(CASE WHEN IFNULL(skip_jev,0)=0 AND (gemini_useful=0 OR intent IN ('confirm','chat')) THEN 1 ELSE 0 END) AS dropped,
-              SUM(CASE WHEN gemini_useful=1 AND IFNULL(skip_jev,0)=0 THEN 1 ELSE 0 END) AS kept,
-              SUM(CASE WHEN shown=1 THEN 1 ELSE 0 END) AS queue
-            FROM pipeline_hits WHERE session_id=?
+              SUM(CASE WHEN h.party='甲方' THEN 1 ELSE 0 END) AS jia,
+              SUM(CASE WHEN h.party='乙方' OR IFNULL(h.skip_jev,0)=1 THEN 1 ELSE 0 END) AS yi,
+              SUM(CASE WHEN IFNULL(h.skip_jev,0)=0 AND (h.gemini_useful=0 OR h.intent IN ('confirm','chat')) THEN 1 ELSE 0 END) AS dropped,
+              SUM(CASE WHEN h.gemini_useful=1 AND IFNULL(h.skip_jev,0)=0 THEN 1 ELSE 0 END) AS kept,
+              SUM(CASE WHEN h.shown=1 AND r.id IS NULL THEN 1 ELSE 0 END) AS queue
+            FROM pipeline_hits h
+            LEFT JOIN intent_reviews r
+              ON r.session_id=h.session_id AND CAST(r.message_id AS TEXT)=CAST(h.message_id AS TEXT)
+            WHERE h.session_id=?
             """,
             (session_id,),
         ).fetchone()
@@ -504,7 +540,7 @@ def list_hits(session_id: str, view: str = "all", sender: str = "", party: str =
         has_earlier = False
         off = 0 if tail else off
     elif tail:
-        lim = max(1, min(lim_in, 10000))
+        lim = max(1, min(lim_in, 500))
         fe = off
         end = n - fe
         if end < 0:
@@ -515,7 +551,7 @@ def list_hits(session_id: str, view: str = "all", sender: str = "", party: str =
         from_end = n - end
         off = start
     else:
-        lim = max(1, min(lim_in, 10000))
+        lim = max(1, min(lim_in, 500))
         data = rows[off: off + lim]
         has_earlier = off + lim < n
         from_end = max(0, n - (off + len(data)))
@@ -555,19 +591,36 @@ def get_hit(session_id: str, message_id: str) -> dict:
 
 
 def fallback_candidates() -> list[dict]:
-    """Jev 没打出业务意图时，给组长完整意图列表纠正。"""
-    from .wecom_intent import INTENTS, _NEED_ACTION
-    out = []
-    for code, label in INTENTS.items():
-        need, action = _NEED_ACTION.get(code, ("", ""))
-        out.append({
-            "intent": code[:40],
-            "intentLabel": str(label)[:40],
-            "score": 0,
-            "need": str(need)[:80],
-            "action": str(action)[:80],
-            "fallback": True,
-        })
+    """不再把起步词表整表塞进审核弹窗。Jev 没结果时由组长手填。"""
+    return []
+
+
+def list_known_intents() -> list[dict]:
+    """起步词表 + 建议细分 + 样本/历史里出现过的意图，供筛选和编辑，不充当审核唯一选项。"""
+    seen: dict[str, str] = {}
+    out: list[dict] = []
+
+    def add(code, name="") -> None:
+        code, lab = normalize_intent(code, name)
+        if not code or code in seen:
+            return
+        seen[code] = lab
+        out.append({"id": code, "name": lab})
+
+    for k, v in INTENTS.items():
+        add(k, v)
+    for k, v in suggested_intent_labels().items():
+        add(k, v)
+    init_db()
+    with connect() as con:
+        for r in con.execute(
+            "SELECT DISTINCT label FROM prompt_examples WHERE kind='intent' AND IFNULL(label,'')!=''"
+        ):
+            add(r["label"], r["label"])
+        for r in con.execute(
+            "SELECT DISTINCT intent, intent_label FROM pipeline_hits WHERE IFNULL(intent,'')!=''"
+        ):
+            add(r["intent"], r["intent_label"] or "")
     return out
 
 
@@ -608,13 +661,14 @@ def candidates_of(hit: dict) -> list[dict]:
 
 
 def _dump_hit(row: dict, review: dict | None = None) -> dict:
+    row["sender"] = clean_sender(row.get("sender")) or "未知"
     row["gemini_useful"] = bool(row.get("gemini_useful"))
     row["shown"] = bool(row.get("shown"))
     row["skip_jev"] = bool(row.get("skip_jev"))
     row["candidates"] = candidates_of(row)
-    if not row["candidates"] and not row["skip_jev"] and str(row.get("party") or "") != "乙方":
-        row["candidates"] = fallback_candidates()
-    row["review"] = review or {}
+    rev = review or {}
+    row["review"] = rev
+    row["reviewed"] = hit_reviewed(rev)
     return row
 
 
@@ -678,22 +732,37 @@ def _selected_items(payload: dict) -> list[dict]:
 
 def upsert_review(payload: dict) -> dict:
     init_db()
-    session_id = str(payload.get("session_id") or "")
-    message_id = str(payload.get("message_id") or "")
+    session_id = str(payload.get("session_id") or "").strip()
+    message_id = str(payload.get("message_id") or "").strip()
     if not (session_id and message_id):
         raise ValueError("缺少 session_id / message_id")
     source_id = str(payload.get("source_id") or "*")
     now = _now()
-    items = _selected_items(payload)
-    if not items:
-        raise ValueError("请至少选择一条意图")
-    if any(x.get("intent") == "other" and not str(x.get("note") or "").strip() for x in items):
-        raise ValueError("选「其他」时请填写具体意图")
+    should_filter = _bool(payload.get("should_filter"))
+    if should_filter is None:
+        should_filter = 0
+    items = [] if should_filter else _selected_items(payload)
+    if not should_filter:
+        cleaned = []
+        for item in items:
+            code, lab = normalize_intent(item.get("intent"), item.get("label"))
+            if not code:
+                continue
+            if code == "other" and not str(item.get("note") or "").strip() and lab in ("", "其他"):
+                raise ValueError("选「其他」时请填写具体意图")
+            note = str(item.get("note") or "").strip()[:80]
+            if code == "other" and note:
+                code, lab = normalize_intent(note, note)
+            item = {**item, "intent": code, "label": lab or item.get("label") or code}
+            cleaned.append(item)
+        items = cleaned
+    if not should_filter and not items:
+        raise ValueError("请选择意图，或标记应过滤")
     selected_intent = ",".join(x["intent"] for x in items)
-    selected_label = "、".join(x["label"] for x in items)
+    selected_label = "应过滤" if should_filter else "、".join(x["label"] for x in items)
     scores = [x["score"] for x in items if x.get("score") is not None]
     selected_score = max(scores) if scores else None
-    chatter = all(x["intent"] in SKIP_INTENTS for x in items)
+    chatter = bool(should_filter) or (bool(items) and all(is_skip_intent(x.get("intent"), x.get("label")) for x in items))
     hit = get_hit(session_id, message_id)
     was_useful = payload.get("gemini_useful")
     if was_useful is None:
@@ -702,12 +771,14 @@ def upsert_review(payload: dict) -> dict:
     correct_useful = _bool(payload.get("correct_useful"))
     if correct_useful is None:
         correct_useful = 0 if chatter else 1
+    if should_filter:
+        correct_useful = 0
     filter_ok = _bool(payload.get("filter_ok"))
     if filter_ok is None:
         filter_ok = 1 if was_useful == bool(correct_useful) else 0
     process_ok = _bool(payload.get("process_ok"))
     if process_ok is None:
-        if chatter:
+        if chatter or should_filter:
             process_ok = 0
         elif not was_useful:
             process_ok = 1
@@ -720,14 +791,14 @@ def upsert_review(payload: dict) -> dict:
         "source_id": source_id,
         "session_id": session_id,
         "message_id": message_id,
-        "sender": str(payload.get("sender") or hit.get("sender") or "")[:80],
+        "sender": (clean_sender(payload.get("sender") or hit.get("sender")) or "未知")[:80],
         "time_text": str(payload.get("time_text") or hit.get("time_text") or "")[:32],
         "filter_ok": filter_ok,
         "filter_note": str(payload.get("filter_note") or "")[:500],
         "intent_ok": 1,
         "intent_note": (
             str(payload.get("intent_note") or "").strip()
-            or "；".join(str(x.get("note") or "").strip() for x in items if x.get("intent") == "other")
+            or "；".join(str(x.get("note") or "").strip() for x in items if x.get("note"))
         )[:500],
         "score_ok": _bool(payload.get("score_ok")),
         "score_note": str(payload.get("score_note") or "")[:500],
@@ -742,6 +813,7 @@ def upsert_review(payload: dict) -> dict:
         "selected_score": selected_score,
         "selected_label": selected_label,
         "selected_intents": json.dumps(items, ensure_ascii=False),
+        "should_filter": 1 if should_filter else 0,
         "reviewer": str(payload.get("reviewer") or "组长")[:40],
         "updated_at": now,
     }
@@ -759,6 +831,7 @@ def upsert_review(payload: dict) -> dict:
             con.execute("INSERT INTO intent_reviews (" + cols + ") VALUES (" + qs + ")", list(row.values()))
         con.commit()
     _learn_from_review(payload, row)
+    apply_review_to_hit(session_id, message_id, row)
     return get_review(source_id, session_id, message_id)
 
 
@@ -797,7 +870,7 @@ def review_map(session_id: str) -> dict[str, dict]:
 
 def _dump_review(row: object) -> dict:
     data = dict(row)
-    for key in ("filter_ok", "intent_ok", "score_ok", "process_ok", "passed", "correct_useful"):
+    for key in ("filter_ok", "intent_ok", "score_ok", "process_ok", "passed", "correct_useful", "should_filter"):
         val = data.get(key)
         data[key] = None if val is None else bool(val)
     parsed: list = []
@@ -817,6 +890,94 @@ def _dump_review(row: object) -> dict:
     return data
 
 
+def _norm_drop_key(text: str) -> str:
+    return " ".join(str(text or "").split())[:500]
+
+
+def filtered_message_ids(session_id: str) -> set[str]:
+    init_db()
+    sid = str(session_id or "").strip()
+    if not sid:
+        return set()
+    with connect() as con:
+        rows = con.execute(
+            "SELECT message_id FROM intent_reviews WHERE session_id=? AND IFNULL(should_filter,0)=1",
+            (sid,),
+        ).fetchall()
+    return {str(r["message_id"]) for r in rows if r["message_id"] not in (None, "")}
+
+
+def drop_text_keys() -> set[str]:
+    init_db()
+    keys: set[str] = set()
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT text FROM prompt_examples
+            WHERE kind='filter' AND label='drop' AND IFNULL(enabled,1)=1
+            """
+        ).fetchall()
+        revs = con.execute(
+            """
+            SELECT h.text FROM intent_reviews r
+            JOIN pipeline_hits h ON h.session_id=r.session_id AND h.message_id=r.message_id
+            WHERE IFNULL(r.should_filter,0)=1
+            """
+        ).fetchall()
+    for r in list(rows) + list(revs):
+        key = _norm_drop_key(r["text"] or "")
+        if key:
+            keys.add(key)
+    return keys
+
+
+def drop_match_reason(*, message_id: str = "", text: str = "", filtered_ids: set | None = None, drop_keys: set | None = None) -> str:
+    mid = str(message_id or "").strip()
+    if mid and filtered_ids is not None and mid in filtered_ids:
+        return "组长标记应过滤"
+    key = _norm_drop_key(text)
+    keys = drop_keys if drop_keys is not None else set()
+    if key and key in keys:
+        return "命中应过滤样本"
+    return ""
+
+
+def apply_review_to_hit(session_id: str, message_id: str, row: dict) -> None:
+    """审核结果立刻改写本条：应过滤退出待审；改回业务意图则重新进入。"""
+    hit = get_hit(session_id, message_id)
+    if not hit:
+        return
+    cands = hit.get("candidates") if isinstance(hit.get("candidates"), list) else []
+    hit["candidates"] = [c for c in cands if isinstance(c, dict) and not c.get("fallback")]
+    should_filter = bool(row.get("should_filter"))
+    items = row.get("selected_intents") if isinstance(row.get("selected_intents"), list) else _selected_items(row)
+    chatter = bool(items) and all(is_skip_intent(x.get("intent"), x.get("label")) for x in items)
+    if should_filter or chatter:
+        hit["gemini_useful"] = False
+        hit["gemini_reason"] = "组长标记应过滤" if should_filter else "组长改为闲聊/确认"
+        if should_filter:
+            hit["intent"] = "chat"
+            hit["intent_label"] = "应过滤"
+            hit["score"] = 0
+    else:
+        hit["gemini_useful"] = True
+        if str(hit.get("gemini_reason") or "").startswith("组长"):
+            hit["gemini_reason"] = ""
+        if items:
+            first = items[0]
+            hit["intent"] = str(first.get("intent") or hit.get("intent") or "")
+            hit["intent_label"] = str(first.get("label") or hit.get("intent_label") or "")
+            if first.get("score") is not None:
+                hit["score"] = first["score"]
+        try:
+            score = int(hit.get("score") or 0)
+        except (TypeError, ValueError):
+            score = 0
+        if score < SCORE_MIN:
+            hit["score"] = SCORE_MIN
+    save_hits(session_id, str(hit.get("source_id") or "*"), [hit])
+
+
 def _learn_from_review(payload: dict, row: dict) -> None:
     """把纠正过的样本写入 prompt_examples，后续分析会读进去。"""
     text = str(payload.get("text") or "")[:500]
@@ -830,6 +991,28 @@ def _learn_from_review(payload: dict, row: dict) -> None:
     reviewer = row.get("reviewer") or "组长"
     sid = row["session_id"]
     mid = row["message_id"]
+
+    if row.get("should_filter"):
+        add_example({
+            "kind": "filter",
+            "text": text,
+            "filename": filename,
+            "label": "drop",
+            "reviewer": reviewer,
+            "session_id": sid,
+            "message_id": mid,
+        })
+        return
+
+    with connect() as con:
+        con.execute(
+            """
+            DELETE FROM prompt_examples
+            WHERE kind='filter' AND label='drop' AND session_id=? AND message_id=? AND IFNULL(pinned,0)=0
+            """,
+            (sid, mid),
+        )
+        con.commit()
 
     if row.get("filter_ok") == 0 and row.get("correct_useful") is not None:
         add_example({
@@ -870,7 +1053,7 @@ def _learn_from_review(payload: dict, row: dict) -> None:
         for it in items:
             note = str(it.get("note") or "").strip()
             blob = text
-            if note and it.get("intent") == "other":
+            if note:
                 blob = (text + "\n（组长说明：" + note + "）")[:500]
             add_example({
                 "kind": "intent",
@@ -1000,16 +1183,74 @@ def list_examples(kind: str = "", *, limit: int = 400) -> list[dict]:
     return [_dump_example(r) for r in rows]
 
 
-def set_example(eid: int, *, enabled: bool | None = None, pinned: bool | None = None) -> dict:
+_UNSET = object()
+
+
+def set_example(
+    eid: int,
+    *,
+    enabled: bool | None = None,
+    pinned: bool | None = None,
+    text: str | None = None,
+    filename: str | None = None,
+    label: str | None = None,
+    score=_UNSET,
+) -> dict:
     init_db()
     with connect() as con:
         row = con.execute("SELECT * FROM prompt_examples WHERE id=?", (int(eid),)).fetchone()
         if not row:
             raise KeyError("样本不存在")
+        cur = dict(row)
+        if text is not None:
+            cur["text"] = str(text)[:500]
+        if filename is not None:
+            cur["filename"] = str(filename)[:240]
+        if label is not None:
+            lab = str(label or "").strip()[:40]
+            if not lab:
+                raise ValueError("意图或标签不能为空")
+            if str(cur.get("kind") or "") == "intent":
+                code, name = normalize_intent(lab, lab)
+                lab = code or name
+            elif str(cur.get("kind") or "") == "filter" and lab not in ("keep", "drop"):
+                raise ValueError("过滤标签只能是 keep 或 drop")
+            cur["label"] = lab
+        if score is not _UNSET:
+            if score in (None, ""):
+                cur["score"] = None
+            else:
+                try:
+                    cur["score"] = int(score)
+                except (TypeError, ValueError) as e:
+                    raise ValueError("评分须为整数") from e
+                if cur["score"] < 0 or cur["score"] > 100:
+                    raise ValueError("评分须在 0–100")
+        if not str(cur.get("text") or "").strip() and not str(cur.get("filename") or "").strip():
+            raise ValueError("原文和文件名不能都为空")
+        content_changed = text is not None or filename is not None or label is not None or score is not _UNSET
         if enabled is not None:
-            con.execute("UPDATE prompt_examples SET enabled=? WHERE id=?", (1 if enabled else 0, int(eid)))
+            cur["enabled"] = 1 if enabled else 0
         if pinned is not None:
-            con.execute("UPDATE prompt_examples SET pinned=? WHERE id=?", (1 if pinned else 0, int(eid)))
+            cur["pinned"] = 1 if pinned else 0
+        elif content_changed:
+            cur["pinned"] = 1
+        con.execute(
+            """
+            UPDATE prompt_examples
+            SET text=?, filename=?, label=?, score=?, enabled=?, pinned=?
+            WHERE id=?
+            """,
+            (
+                cur.get("text") or "",
+                cur.get("filename") or "",
+                cur.get("label") or "",
+                cur.get("score"),
+                1 if cur.get("enabled") else 0,
+                1 if cur.get("pinned") else 0,
+                int(eid),
+            ),
+        )
         con.commit()
         row = con.execute("SELECT * FROM prompt_examples WHERE id=?", (int(eid),)).fetchone()
     return _dump_example(row)

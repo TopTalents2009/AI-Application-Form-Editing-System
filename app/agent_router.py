@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from .agents import all_agents
 from .agent_extract import filename_of, is_ack_only, is_system, text_of
-from .party import classify, infer_platform
+from .party import classify, infer_platform, sender_of
 
 SKIP_ON_ACK = {"deadline", "revision", "talent_change", "match", "material", "question", "risk"}
 
 
 def route_message(message: dict, context: list[dict] | None = None, platform: str = "wecom") -> dict:
-    sender = str(message.get("sender") or "")
+    sender = sender_of(message)
     party = classify(sender, platform)
     if is_system(message):
         return {

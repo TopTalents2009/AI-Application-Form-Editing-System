@@ -514,6 +514,18 @@ def enforce_edit_limits(edits, app_text: str) -> list:
     return notes
 
 
+def hard_limit_notes(enforce_notes, edits, app_text: str) -> list:
+    """压缩后仍超印刷上限的说明；非空则不应落盘。"""
+    out = []
+    for msg in enforce_notes or []:
+        if "须人工精简" in str(msg):
+            out.append(str(msg))
+    for msg in check_replace_limits(edits, app_text):
+        if msg not in out:
+            out.append(msg)
+    return out
+
+
 def check_replace_limits(edits, app_text: str) -> list:
     """单条 replace 若自身已超过对应栏位上限，提前记遗留。"""
     issues = []

@@ -4,448 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py116">
-<style>
-:root{ --nav-w:216px; }
-*{box-sizing:border-box}
-.admin-shell{min-height:100vh;display:flex;flex-direction:column;background:
-  radial-gradient(900px 300px at 90% -60px, rgba(59,116,214,.10), transparent 60%), #f2f5fa;}
+<link rel="stylesheet" href="/public/style.css?v=py130">
+<link rel="stylesheet" href="/public/admin.css?v=py2">
 
-/* ===== 顶栏 ===== */
-.topbar{
-  display:flex;align-items:center;gap:16px;padding:14px 16px;color:#fff;
-  background:linear-gradient(120deg,#14264f,#1f3b73 55%,#2450a4);
-  box-shadow:0 2px 12px rgba(16,32,64,.18);
-}
-.topbar .tlogo{
-  width:38px;height:38px;border-radius:11px;font-size:19px;
-  background:rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.25);
-}
-.topbar h1{margin:0;font-size:17px;letter-spacing:1px}
-.topbar .tsub{font-size:11.5px;opacity:.65;margin-top:2px}
-.topbar .grow{flex:1}
-.topbar .tuser{
-  font-size:13px;background:rgba(255,255,255,.12);padding:7px 14px;border-radius:999px;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22);
-  max-width:min(280px, 36vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.topbar a.tbtn,.topbar button.tbtn{
-  color:#fff;text-decoration:none;font-size:13px;font-family:inherit;cursor:pointer;
-  background:rgba(255,255,255,.12);padding:7px 14px;border:none;border-radius:999px;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22);transition:background .15s;
-}
-.topbar a.tbtn:hover,.topbar button.tbtn:hover{background:rgba(255,255,255,.22)}
-
-/* ===== 主体：内容 + 右侧菜单 ===== */
-.admin-body{flex:1;display:flex;gap:16px;align-items:flex-start;
-  width:100%;max-width:none;margin:0;padding:16px 12px 32px;}
-.content{flex:1;min-width:0}
-.content-sec{margin-bottom:34px;scroll-margin-top:20px}
-.sec-title{display:flex;align-items:center;gap:10px;margin:0 0 4px;font-size:20px;font-weight:700;color:var(--ink)}
-.sec-desc{margin:0 0 20px;font-size:13px;color:var(--sub)}
-.leader-row{display:grid;grid-template-columns:1.1fr 1fr 1.2fr auto;gap:8px;align-items:end;margin-bottom:8px}
-.leader-row input{width:100%;height:38px;border:1px solid #e2e8f2;border-radius:8px;padding:0 10px;font:inherit}
-.alert-kind{font-size:11px;color:#8a93a6;margin-top:2px}
-.alert-body{font-size:12px;color:#5b6577;line-height:1.5;white-space:pre-wrap;max-width:none}
-#alertLogBody td{vertical-align:top}
-
-/* ===== 右侧菜单 ===== */
-.sidenav{
-  width:var(--nav-w);flex-shrink:0;position:sticky;top:24px;
-  background:#fff;border:1px solid #e6ebf4;border-radius:16px;padding:12px;
-  box-shadow:0 1px 2px rgba(16,32,64,.05),0 10px 26px -14px rgba(16,32,64,.2);
-}
-.sidenav .nav-cap{font-size:11px;font-weight:700;letter-spacing:2px;color:#98a2b6;padding:8px 12px 6px}
-.nav-item{
-  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
-  padding:11px 12px;margin-bottom:4px;border:none;border-radius:11px;cursor:pointer;
-  font-size:13.5px;font-weight:600;color:#46506a;background:none;font-family:inherit;
-  transition:background .15s,color .15s;
-}
-.nav-item .ni{width:17px;height:17px;flex-shrink:0}
-.nav-item:hover{background:#f0f5fd;color:var(--brand)}
-.nav-item.active{
-  background:linear-gradient(120deg,#2450a4,#3b74d6);color:#fff;
-  box-shadow:0 8px 18px -8px rgba(36,80,164,.55);
-}
-.nav-item.active .ni{filter:brightness(1.2)}
-.sidenav .nav-foot{margin-top:10px;padding:10px 12px 6px;border-top:1px dashed #e4e9f2;font-size:11.5px;color:#9aa4b8;line-height:1.7}
-
-/* ===== 通用卡片 ===== */
-.acard{background:#fff;border:1px solid #e9edf5;border-radius:16px;padding:20px 22px;margin-bottom:18px;
-  box-shadow:0 1px 2px rgba(16,32,64,.05),0 10px 26px -14px rgba(16,32,64,.18);
-  min-width:0}
-.acard h3{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 14px;font-size:14.5px;color:var(--ink);min-width:0}
-
-/* ===== 任务总览 ===== */
-.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:14px;margin-bottom:18px}
-.stat{
-  background:#fff;border:1px solid #e9edf5;border-radius:14px;padding:16px 18px;position:relative;overflow:hidden;
-  box-shadow:0 1px 2px rgba(16,32,64,.05),0 8px 22px -14px rgba(16,32,64,.18);
-}
-.stat::after{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--sc,#c9d4ea)}
-.stat .sn{font-size:26px;font-weight:800;color:var(--ink);line-height:1.1}
-.stat .sl{font-size:12px;color:var(--sub);margin-top:4px}
-.tbl-wrap{width:100%;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
-table.tbl{width:100%;border-collapse:collapse;font-size:13px}
-table.tbl th,table.tbl td{padding:9px 12px;border-bottom:1px solid #eef1f6;text-align:left;vertical-align:middle;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-table.tbl th{background:#f6f8fc;color:#5a6577;font-weight:600}
-table.tbl tr:last-child td{border-bottom:none}
-table.tbl.tbl-tasks{table-layout:fixed}
-table.tbl td.td-name{white-space:normal;word-break:break-all;line-height:1.45;overflow:hidden}
-table.tbl td.td-clip{overflow:hidden;text-overflow:ellipsis}
-table.tbl td.ops{overflow:visible;white-space:nowrap}
-.badge{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:600}
-.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
-.st-done{color:#188038;background:#e7f5ec}
-.st-planned{color:#2450a4;background:#e9f0fc}
-.st-running{color:#b26a00;background:#fdf3e2}
-.st-failed{color:#c5221f;background:#fdecea}
-.st-pending{color:#6b4fa0;background:#f1ebfb}
-.mono{font-family:Consolas,monospace}
-.mini{font-size:12px;padding:4px 10px;border:1px solid #d7deea;background:#fff;border-radius:8px;cursor:pointer;font-family:inherit}
-.mini:hover{border-color:var(--brand2);background:#f0f6ff}
-.mini.bad{color:#c5221f}
-.ar-admin-txt{white-space:normal !important;max-width:460px;line-height:1.45;word-break:break-word}
-.ar-admin-pin{color:#b54708;font-size:11px;font-weight:700}
-.mini.active{border-color:var(--brand2);background:#e9f0fc;color:var(--brand);font-weight:700}
-.fb-item .fb-meta{align-items:center}
-.fb-item .fb-imgs a{cursor:zoom-in}
-#fbAdminList{display:flex;flex-direction:column;gap:8px}
-#fbAdminList .fb-item{margin:0;padding:0;overflow:hidden}
-.fb-item-hd{
-  display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;
-  user-select:none;transition:background .12s;
-}
-.fb-item-hd:hover{background:#f6f8fc}
-.fb-item-hd .fb-chev{
-  width:16px;height:16px;flex-shrink:0;color:#98a2b6;transition:transform .18s;
-}
-.fb-item:not(.bd-collapsed) .fb-item-hd .fb-chev{transform:rotate(90deg)}
-.fb-item-hd .fb-meta{margin:0;flex-shrink:0;flex-wrap:nowrap;white-space:nowrap}
-.fb-item-hd .fb-sum{
-  flex:1;min-width:0;font-size:13px;color:var(--ink);line-height:1.45;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.fb-item-hd .fb-sum.muted{color:#98a2b6}
-.fb-item-bd{padding:0 12px 12px 36px;border-top:1px solid #eef1f6}
-.fb-item.bd-collapsed .fb-item-bd{display:none}
-.fb-item-bd .fb-body{margin-top:10px}
-.fb-item-bd .fb-ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-.fb-preview{position:fixed;inset:0;z-index:220;background:rgba(12,18,32,.86);overflow:hidden}
-.fb-preview[hidden]{display:none!important}
-.fb-preview-stage{position:absolute;inset:52px 64px 56px;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
-.fb-preview-stage.zoomed{cursor:grab}
-.fb-preview-stage.dragging{cursor:grabbing}
-.fb-preview img{max-width:100%;max-height:100%;object-fit:contain;border-radius:10px;box-shadow:0 24px 64px rgba(0,0,0,.5);background:#0c1220;transform-origin:center center;user-select:none;-webkit-user-drag:none;will-change:transform}
-.fb-preview-close{position:absolute;top:14px;right:18px;z-index:3;width:40px;height:40px;border:none;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:24px;cursor:pointer;font-family:inherit;line-height:1}
-.fb-preview-close:hover,.fb-preview-nav:hover,.fb-preview-tools button:hover{background:rgba(255,255,255,.28)}
-.fb-preview-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:3;width:44px;height:44px;border:none;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font-size:28px;cursor:pointer;line-height:1;font-family:inherit}
-.fb-preview-nav.prev{left:16px}
-.fb-preview-nav.next{right:16px}
-.fb-preview-tools{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:3;display:flex;align-items:center;gap:6px;background:rgba(12,18,32,.55);border-radius:999px;padding:4px 8px}
-.fb-preview-tools button{width:32px;height:32px;border:none;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;cursor:pointer;font-size:20px;font-family:inherit;line-height:1}
-.fb-preview-tools .fb-preview-fit{width:auto;padding:0 12px;border-radius:999px;font-size:12px;font-weight:700}
-.fb-preview-zoom-pct{min-width:52px;text-align:center;color:#fff;font-size:12.5px;font-weight:700}
-.fb-preview-cap{position:absolute;bottom:18px;left:16px;right:16px;z-index:3;text-align:center;color:rgba(255,255,255,.82);font-size:13px;word-break:break-all}
-
-/* ===== 新建任务 ===== */
-.newtask-hero{
-  border-radius:16px;color:#fff;padding:30px 32px;margin-bottom:18px;position:relative;overflow:hidden;
-  background:linear-gradient(130deg,#14264f,#1f3b73 55%,#2450a4);
-}
-.newtask-hero::before{content:"";position:absolute;width:340px;height:340px;border-radius:50%;
-  background:#3b74d6;filter:blur(70px);opacity:.45;top:-140px;right:-80px}
-.newtask-hero>*{position:relative}
-.newtask-hero h3{margin:0 0 8px;font-size:20px}
-.newtask-hero p{margin:0 0 18px;font-size:13.5px;color:rgba(255,255,255,.75);max-width:560px;line-height:1.8}
-.btn-open{
-  display:inline-block;text-decoration:none;color:#fff;font-size:14px;font-weight:700;font-family:inherit;
-  padding:11px 26px;border-radius:11px;border:none;cursor:pointer;letter-spacing:2px;
-  background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.3);
-  transition:background .15s,transform .15s;
-}
-.btn-open:hover{background:rgba(255,255,255,.26);transform:translateY(-1px)}
-.btn-save{
-  padding:10px 22px;border:none;border-radius:11px;cursor:pointer;
-  font-size:14px;font-weight:700;font-family:inherit;color:#fff;letter-spacing:2px;
-  background:linear-gradient(120deg,#2450a4,#3b74d6);
-  box-shadow:0 10px 22px -8px rgba(36,80,164,.55);transition:transform .15s,filter .2s;
-}
-.btn-save:hover{transform:translateY(-1px);filter:saturate(1.08)}
-.btn-save:disabled{opacity:.6;cursor:wait;transform:none}
-.cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;min-width:0}
-.cfg-grid .span2{grid-column:1 / -1}
-.f-row{margin-bottom:14px;min-width:0}
-.f-row label{display:block;font-size:13px;font-weight:600;color:#3c465a;margin-bottom:6px}
-.inp input,.inp select,.inp textarea{
-  width:100%;max-width:100%;padding:0 12px;border:1px solid #d7deea;border-radius:10px;
-  font-family:inherit;font-size:13px;background:#fff;min-width:0;box-sizing:border-box;
-}
-.inp input,.inp select{height:42px}
-.inp textarea{padding:10px 12px;min-height:72px;resize:vertical;line-height:1.5}
-.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:#3c465a;padding-top:8px}
-.due-preview{white-space:pre-wrap;font-size:12px;line-height:1.55;background:#f6f7fb;border:1px solid var(--line);border-radius:8px;padding:10px 12px;max-height:240px;overflow:auto;color:#3a4152;margin:0}
-.cfg-tag{
-  font-size:11px;padding:2px 9px;border-radius:6px;background:#e9f0fc;color:var(--brand);font-weight:700;
-  max-width:min(320px, 100%);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-table.tbl tr.task-row{cursor:pointer}
-table.tbl tr.task-row:hover{background:#f6f9ff}
-table.tbl tr.task-row.open{background:#eef4ff}
-table.tbl tr.task-files td{background:#f7f9fd;padding:0;white-space:normal;overflow:visible}
-.files-box{padding:12px 16px 14px 18px}
-.files-box .fh{font-size:12.5px;font-weight:700;color:#33415e;margin-bottom:8px}
-.files-box ul{margin:0;padding:0;list-style:none}
-.files-box li{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px dashed #e4eaf3;font-size:13px}
-.files-box li:last-child{border-bottom:none}
-.files-box .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1c2333}
-.files-box .fs{color:#8291ad;font-size:12px;flex-shrink:0}
-.files-box a.dl{flex-shrink:0;padding:3px 12px;border-radius:8px;background:#eef4ff;color:var(--brand);
-  font-size:12px;font-weight:600;text-decoration:none}
-.files-box a.dl:hover{background:#e0ecff}
-.files-muted{color:#98a2b6;font-size:13px;padding:4px 0}
-.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
-.step{background:#fff;border:1px solid #e9edf5;border-radius:14px;padding:16px 18px;
-  box-shadow:0 1px 2px rgba(16,32,64,.05),0 8px 22px -14px rgba(16,32,64,.18)}
-.step .si{width:34px;height:34px;border-radius:10px;background:#eef4ff;display:flex;align-items:center;justify-content:center;font-size:16px;margin-bottom:10px}
-.step b{display:block;font-size:13.5px;margin-bottom:4px}
-.step span{font-size:12.5px;color:var(--sub);line-height:1.6}
-
-/* ===== 人员信息 ===== */
-.me-tag{color:var(--brand);font-size:11px;font-weight:700;margin-left:4px}
-.role-sel,.status-sel,.dept-sel{padding:4px 6px;font-size:12.5px;border-radius:7px;border:1px solid #d7deea;background:#fff;font-family:inherit}
-.reset-pw{width:120px;padding:5px 8px;font-size:12.5px;border:1px solid #d7deea;border-radius:7px;font-family:inherit}
-td.ops{white-space:nowrap;display:flex;gap:6px;align-items:center;overflow:visible}
-.msg{font-size:13px;margin:0 0 12px;min-height:16px}
-.msg.ok{color:var(--ok)}
-.msg.bad{color:var(--bad)}
-.cfg-save-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;padding-top:12px;border-top:1px dashed #e4eaf3}
-.cfg-save-msg{font-size:12.5px;font-weight:600;min-width:0}
-.cfg-save-msg.ok{color:var(--ok)}
-.cfg-save-msg.bad{color:var(--bad)}
-
-/* ===== 系统信息 ===== */
-.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-@media (max-width:760px){
-  .info-grid{grid-template-columns:1fr}
-  .cfg-grid{grid-template-columns:1fr}
-}
-.kv{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:9px 2px;border-bottom:1px dashed #eef1f6;font-size:13px;min-width:0}
-.kv:last-child{border-bottom:none}
-.kv .k{color:var(--sub);flex-shrink:0}
-.kv .v{font-weight:600;color:var(--ink);text-align:right;min-width:0;overflow-wrap:anywhere;word-break:break-word}
-.kv .v select{max-width:min(360px, 100%)}
-.dot-ok{color:var(--ok)}
-.dot-bad{color:var(--bad)}
-.model-row{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px dashed #eef1f6;font-size:13px;min-width:0}
-.model-row:last-child{border-bottom:none}
-.model-row .mn{font-weight:700;flex-shrink:0;max-width:8em}
-.model-row .mid{font-family:Consolas,monospace;font-size:12px;color:var(--sub);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.model-row span:last-child{flex-shrink:0}
-
-/* ===== 各群记录看板 ===== */
-.wecom-status{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-bottom:14px;font-size:13px}
-.wecom-board{display:grid;grid-template-columns:280px 1fr;gap:0;align-items:start;border:1px solid #e6ebf4;border-radius:14px;overflow:hidden;background:#fff;--wecom-rail-w:420px}
-.wecom-board.has-rail{grid-template-columns:280px minmax(0,1fr) var(--wecom-rail-w)}
-.wecom-rail{position:relative;border-left:1px solid #e6ebf4;background:#f7f9fc;display:flex;flex-direction:column;min-width:0;width:100%;height:640px;max-height:640px;overflow:hidden;align-self:start;box-sizing:border-box}
-.wecom-rail[hidden]{display:none !important}
-.wecom-rail-resizer{position:absolute;left:0;top:0;bottom:0;width:8px;margin-left:-4px;cursor:col-resize;z-index:3;touch-action:none}
-.wecom-rail-resizer:hover,.wecom-board.is-resizing-rail .wecom-rail-resizer{background:rgba(36,80,164,.18)}
-.wecom-board.is-resizing-rail{cursor:col-resize;user-select:none}
-.wecom-board.is-resizing-rail .wecom-rail,.wecom-board.is-resizing-rail .wecom-chat{pointer-events:none}
-.wecom-rail-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid #e6ebf4;background:#fff}
-.wecom-rail-tabs{display:flex;gap:6px;flex-wrap:wrap}
-.wecom-rail-tab{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer;color:#5b6577;font-family:inherit}
-.wecom-rail-tab.on{background:#2450a4;border-color:#2450a4;color:#fff}
-.wecom-rail-pane{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
-.wecom-rail-pane[hidden]{display:none !important}
-.wecom-ai-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid #e6ebf4;background:#fff}
-.wecom-ai-hd .grow{flex:1;min-width:0}
-.wecom-ai-title{font-size:14px;font-weight:700;color:var(--ink)}
-.wecom-ai-sub{font-size:11.5px;color:#8a93a6;margin-top:2px;line-height:1.5}
-.wecom-ai-tabs{display:flex;gap:6px;margin-top:8px}
-.wecom-ai-tab{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:3px 10px;font-size:11.5px;cursor:pointer;color:#5b6577;font-family:inherit}
-.wecom-ai-tab.on{background:#2450a4;border-color:#2450a4;color:#fff}
-.wecom-ai-log-item{width:100%;text-align:left;border:1px solid #e6ebf4;background:#fff;border-radius:10px;padding:8px 10px;margin-bottom:8px;cursor:pointer;font:inherit}
-.wecom-ai-log-item:hover{border-color:#b7c9ea;background:#f7faff}
-.wecom-ai-log-item .ttl{font-size:12.5px;font-weight:700;color:var(--ink)}
-.wecom-ai-log-item .meta{font-size:11px;color:#8a93a6;margin-top:4px;line-height:1.5}
-.wecom-ai-log-item .snip{font-size:12px;color:#46506a;margin-top:6px;line-height:1.55}
-.wecom-ai-body{flex:1;overflow:auto;padding:12px 14px;font-size:13px;line-height:1.65;color:#46506a}
-.wecom-ai-card{background:#fff;border:1px solid #e6ebf4;border-radius:12px;padding:10px 12px;margin-bottom:10px}
-.wecom-ai-card h5{margin:0 0 6px;font-size:12.5px;color:#2450a4}
-.wecom-ai-card p{margin:0}
-.wecom-ai-list{margin:0;padding-left:18px}
-.wecom-ai-list li{margin:4px 0}
-.wecom-ai-stat{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
-.wecom-ai-tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#eef2f8;color:#5b6577}
-.wecom-ai-tag.ok{background:#e5f7ee;color:var(--ok)}
-.wecom-ai-tag.warn{background:#fff6e5;color:var(--warn)}
-.wecom-ai-tag.bad{background:#fdecee;color:var(--bad)}
-.wecom-ai-case{font-size:12.5px;padding:8px 0;border-bottom:1px dashed #e6ebf4}
-.wecom-ai-case:last-child{border-bottom:none}
-.wecom-ai-files-sec{margin-top:8px;padding-top:6px;border-top:1px dashed #e6ebf4}
-.wecom-ai-files-sec b{display:block;font-size:12.5px;color:#1d5cc0;margin-bottom:4px}
-.wecom-ai-file{font-size:12.5px;padding:5px 0;border-bottom:1px dashed #eef1f6}
-.wecom-ai-file .nm{font-weight:600;overflow-wrap:anywhere;word-break:break-word}
-.wecom-ai-file .why{color:#8a93a6;font-size:11.5px;margin-top:2px;line-height:1.45}
-.wecom-side{border-right:1px solid #e6ebf4;display:flex;flex-direction:column;min-width:0;height:640px;max-height:640px;overflow:hidden;background:#f7f9fc}
-.wecom-side-hd,.wecom-chat-hd{padding:12px 14px;border-bottom:1px solid #e6ebf4;background:#fff}
-.wecom-side-hd input[type="search"],.wecom-chat-hd input[type="text"],.wecom-chat-hd input[type="date"]{
-  width:100%;border:1px solid #e1e6ef;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;background:#fff
-}
-.wecom-src{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
-.wecom-chip{border:1px solid #d7deea;background:#fff;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;color:#46506a}
-.wecom-chip.on{background:#2450a4;border-color:#2450a4;color:#fff}
-.wecom-list{flex:1 1 0;height:0;min-height:0;overflow:auto}
-.wecom-item-wrap{display:flex;align-items:stretch;border-bottom:1px solid #eef1f6}
-.wecom-item-wrap.on{background:#e8f0fb}
-.wecom-star{
-  flex:0 0 36px;border:none;background:none;cursor:pointer;font-size:16px;color:#c5cad6;
-  padding:0;display:flex;align-items:center;justify-content:center
-}
-.wecom-star.on{color:#e6a700}
-.wecom-star:hover{color:#e6a700}
-.wecom-star[disabled]{cursor:not-allowed;opacity:.45}
-.wecom-item{display:block;flex:1;min-width:0;text-align:left;border:none;background:none;padding:10px 14px 10px 0;cursor:pointer;font:inherit}
-.wecom-item-wrap:hover{background:#eef4fd}
-.wecom-item-wrap.on .wecom-item{background:transparent}
-.wecom-side-filters{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
-.wecom-filter-chip{display:flex;align-items:center;justify-content:center;gap:4px;margin:0;min-width:0;padding:6px 4px;border:1px solid #e1e6ef;border-radius:8px;background:#f7f9fc;font-size:12px;line-height:1.2;color:#5b6577;cursor:pointer;white-space:nowrap}
-.wecom-filter-chip input{margin:0;flex:0 0 auto}
-.wecom-filter-chip:has(input:checked){border-color:#2450a4;background:#eef4ff;color:#2450a4}
-.wecom-watch-hint{font-size:11px;color:#8a93a6;margin-top:6px;line-height:1.4}
-.wecom-item b{display:block;font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wecom-item span{display:block;font-size:11.5px;color:#8a93a6;margin-top:3px}
-.wecom-chat{display:flex;flex-direction:column;min-width:0;height:640px;max-height:640px;overflow:hidden;align-self:start}
-.wecom-chat-hd{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.wecom-chat-hd .grow{flex:1;min-width:140px}
-.wecom-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.wecom-filters input[type="date"]{width:138px}
-.wecom-stream{flex:1 1 0;height:0;min-height:0;overflow:auto;padding:14px 16px;background:#f4f6fa;display:flex;flex-direction:column}
-.wecom-stream-list{margin-top:auto;display:flex;flex-direction:column;width:100%}
-.wecom-earlier-hint{flex:0 0 auto;text-align:center;font-size:12px;color:#8a93a6;padding:6px 0 12px;line-height:1.4}
-.wecom-empty{color:#8a93a6;font-size:13.5px;padding:40px 16px;text-align:center;line-height:1.7}
-.wecom-msg{background:#fff;border:1px solid #e9edf5;border-radius:12px;padding:10px 12px;margin:0 0 10px;box-shadow:0 1px 2px rgba(16,32,64,.04)}
-.wecom-msg.hit{border-color:#2450a4;box-shadow:0 0 0 3px rgba(36,80,164,.22);background:#f4f8ff}
-.wecom-msg .meta{display:flex;gap:10px;align-items:baseline;font-size:12px;color:#8a93a6;margin-bottom:4px}
-.wecom-msg .who{font-weight:700;color:#2450a4}
-.wecom-msg .body{font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
-.wecom-msg .file{margin-top:6px;font-size:12px;color:#5b6577;background:#f0f4fb;display:inline-block;padding:3px 8px;border-radius:6px}
-.wecom-msg img.wecom-thumb{max-width:min(280px,100%);max-height:200px;border-radius:8px;display:block;margin-top:8px;border:1px solid #e6ebf4;background:#fff;cursor:zoom-in}
-.wecom-file{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-top:8px;padding:8px 10px;border:1px solid #e6ebf4;border-radius:12px;background:#f7f9fc;max-width:420px}
-.wecom-file .ext{width:36px;height:36px;border-radius:8px;background:#fff;border:1px solid #e6ebf4;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#5b6577;flex-shrink:0}
-.wecom-file .nm{flex:1;min-width:0;font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wecom-file .st{flex:1 1 100%;font-size:11.5px;color:#8a93a6;line-height:1.55;margin:0}
-.wecom-file .st.ok{color:var(--ok)}
-.wecom-file .st.bad{color:var(--bad)}
-.wecom-file .st.wait{color:var(--warn)}
-.wecom-pcs{display:flex;flex-wrap:wrap;gap:4px;flex:1 1 100%}
-.wecom-pc{font-size:10.5px;padding:1px 7px;border-radius:999px;background:#eef2f8;color:#5b6577}
-.wecom-pc.hit{background:#e5f7ee;color:var(--ok)}
-.wecom-pc.miss{background:#fdecee;color:var(--bad)}
-.wecom-pc.wait{background:#fff6e5;color:var(--warn)}
-.wecom-orig{border:none;background:none;padding:0;font:inherit;font-size:12px;color:#2450a4;cursor:pointer;text-decoration:underline}
-.wecom-preview{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:24px}
-.wecom-preview[hidden]{display:none !important}
-.wecom-preview img{max-width:92vw;max-height:92vh;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
-.wecom-chip .tag{font-size:10px;opacity:.8;margin-left:3px}
-.wecom-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:0 0 44px;height:44px;max-height:44px;overflow:hidden;padding:0 14px;border-top:1px solid #e6ebf4;background:#fff;font-size:12.5px;color:#5b6577;box-sizing:border-box}
-.wecom-pager[hidden]{display:none !important}
-#taskPager[hidden]{display:none !important}
-#taskPager{align-items:center}
-#taskPager button{height:32px;max-height:32px;line-height:30px;padding:0 14px;flex:0 0 auto}
-.wecom-pager button{align-self:center;height:32px !important;max-height:32px !important;min-height:0 !important;line-height:30px;padding:0 14px;flex:0 0 auto}
-.wecom-locate{position:fixed;inset:0;z-index:85;background:rgba(16,32,64,.38);display:flex;align-items:flex-start;justify-content:center;padding:48px 16px 24px}
-.wecom-locate[hidden]{display:none !important}
-.wecom-locate-card{width:min(720px,100%);max-height:86vh;overflow:auto;background:#fff;border-radius:16px;box-shadow:0 18px 50px -18px rgba(16,32,64,.45);border:1px solid #e6ebf4}
-.wecom-locate-hd{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #e6ebf4}
-.wecom-locate-hd h3{margin:0;font-size:16px}
-.wecom-locate-keys{padding:10px 16px;font-size:12.5px;color:#5b6577;line-height:1.7;background:#f7f9fc}
-.wecom-locate-item{padding:12px 16px;border-bottom:1px solid #eef1f6}
-.wecom-locate-item:last-child{border-bottom:none}
-.wecom-locate-item .ttl{font-weight:700;font-size:13.5px}
-.wecom-locate-item .meta{font-size:12px;color:#8a93a6;margin-top:4px}
-.wecom-locate-item .why{font-size:12px;color:#46506a;margin-top:6px}
-.wecom-locate-item .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.wecom-locate-item .acts a.mini{text-decoration:none;color:inherit;display:inline-block}
-.wecom-locate-item .acts a.mini.primary{background:#2450a4;color:#fff;border-color:#2450a4}
-.wecom-split-check{margin-right:8px}
-.wecom-locate-win{display:flex;gap:6px;align-items:center;font-size:12px;color:#5b6577}
-.wecom-conf{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;margin-left:6px}
-.wecom-conf.high{background:#e5f7ee;color:var(--ok)}
-.wecom-conf.medium{background:#fff6e5;color:var(--warn)}
-.wecom-conf.low{background:#eef2f8;color:#5b6577}
-
-/* ===== 开放 API ===== */
-.api-docs{font-size:13.5px;line-height:1.75;color:#3c465a}
-.api-docs h1{margin:0 0 10px;font-size:20px;color:var(--ink);font-weight:800}
-.api-docs h2{margin:22px 0 10px;font-size:16px;color:var(--ink);padding-bottom:6px;border-bottom:1px solid #eef1f6}
-.api-docs h3{margin:16px 0 8px;font-size:14px;color:var(--ink)}
-.api-docs p{margin:0 0 10px}
-.api-docs ul,.api-docs ol{margin:0 0 12px;padding-left:1.3em}
-.api-docs li{margin:3px 0}
-.api-docs hr{border:none;border-top:1px dashed #e4eaf3;margin:16px 0}
-.api-docs table{width:100%;border-collapse:collapse;margin:0 0 14px;font-size:13px}
-.api-docs th,.api-docs td{border:1px solid #e6ebf4;padding:7px 10px;text-align:left;vertical-align:top}
-.api-docs th{background:#f6f8fc;color:#5a6577;font-weight:600}
-.api-docs code,.api-secret{
-  font-family:Consolas,ui-monospace,monospace;font-size:12.5px;
-  background:#f4f6fb;border:1px solid #e6ebf4;border-radius:6px;padding:1px 6px
-}
-.api-docs pre{
-  margin:8px 0 14px;padding:12px 14px;background:#0f1a30;color:#e8eef8;border-radius:10px;
-  overflow:auto;font-size:12px;line-height:1.55;font-family:Consolas,ui-monospace,monospace
-}
-.api-docs pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit}
-.api-create{display:grid;grid-template-columns:1.2fr 1fr 1fr auto auto;gap:10px;align-items:end;margin-bottom:14px}
-.api-create .f-row{margin:0}
-.api-secret-box{
-  display:flex;gap:8px;align-items:center;flex-wrap:wrap;
-  padding:12px 14px;border-radius:10px;background:#eef7f1;border:1px solid #cce7d4;margin-bottom:12px
-}
-.api-secret-box .api-secret{flex:1;min-width:180px;word-break:break-all;background:#fff}
-table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-all;line-height:1.45}
-.api-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.api-filters input,.api-filters select{height:34px;padding:0 10px;border:1px solid #d7deea;border-radius:8px;font:inherit;font-size:12.5px;background:#fff}
-.api-filters input[type="search"]{min-width:160px}
-.api-modal{position:fixed;inset:0;z-index:90;background:rgba(16,32,64,.38);display:flex;align-items:flex-start;justify-content:center;padding:72px 16px 24px}
-.api-modal[hidden]{display:none!important}
-.api-modal-card{width:min(560px,100%);background:#fff;border-radius:16px;border:1px solid #e6ebf4;box-shadow:0 18px 50px -18px rgba(16,32,64,.45);padding:20px 22px}
-.api-modal-card h3{margin:0 0 8px;font-size:16px}
-.api-modal-card p{margin:0 0 14px;font-size:13px;color:var(--sub);line-height:1.7}
-.st-2xx{color:#188038;background:#e7f5ec}
-.st-4xx{color:#b26a00;background:#fdf3e2}
-.st-5xx{color:#c5221f;background:#fdecea}
-.user-create{display:grid;grid-template-columns:1.1fr 1fr 1fr 1fr .8fr auto;gap:10px;align-items:end;margin-bottom:16px}
-.user-create .f-row{margin:0}
-@media (max-width:1100px){
-  .user-create{grid-template-columns:1fr 1fr}
-}
-@media (max-width:980px){
-  .api-create{grid-template-columns:1fr 1fr}
-  .user-create{grid-template-columns:1fr 1fr}
-  .wecom-board,.wecom-board.has-rail{grid-template-columns:1fr}
-  .wecom-side{border-right:none;border-bottom:1px solid #e6ebf4}
-  .wecom-rail{border-left:none;border-top:1px solid #e6ebf4;max-height:360px}
-  .wecom-list,.wecom-stream{max-height:320px}
-}
-
-/* ===== 响应式 ===== */
-@media (max-width:860px){
-  .admin-body{flex-direction:column-reverse;padding:12px 10px 28px}
-  .sidenav{position:static;width:100%;display:flex;flex-wrap:wrap;gap:6px;padding:8px}
-  .sidenav .nav-cap,.sidenav .nav-foot{display:none}
-  .nav-item{width:auto;margin:0}
-  .info-grid{grid-template-columns:1fr}
-  .cfg-grid{grid-template-columns:1fr}
-  .topbar{flex-wrap:wrap;gap:10px}
-  .topbar .tuser{max-width:100%}
-}
-</style>
 </head>
 <body>
 <div class="admin-shell">
@@ -464,11 +25,42 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
 
   <div class="admin-body">
 
-    <!-- 左侧内容 -->
+    <nav class="sidenav">
+      <div class="nav-cap">工作</div>
+      <a class="nav-item active" href="/admin/overview" data-sec="overview"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>任务总览</a>
+      <a class="nav-item" href="/admin/newtask" data-sec="newtask"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>新建任务</a>
+      <a class="nav-item" href="/admin/users" data-sec="users"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>人员信息</a>
+      <a class="nav-item" href="/admin/feedback" data-sec="feedback"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>用户反馈<span class="nav-count" id="fbBadge" hidden></span></a>
+      <div class="nav-cap">会话</div>
+      <a class="nav-item" href="/admin/wecom" data-sec="wecom"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>会话记录</a>
+      <a class="nav-item" href="/admin/ingest" data-sec="ingest"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>入库看板</a>
+      <a class="nav-item" href="/admin/chatinsight" data-sec="chatinsight"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></svg>解析控制台</a>
+      <a class="nav-item" href="/admin/aireview" data-sec="aireview"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>AI 审核</a>
+      <div class="nav-cap">系统</div>
+      <a class="nav-item" href="/admin/openapi" data-sec="openapi"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>开放 API<span class="nav-count" id="apiReqBadge" hidden></span></a>
+      <a class="nav-item" href="/admin/alert" data-sec="alert"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>告警通知</a>
+      <a class="nav-item" href="/admin/config" data-sec="config"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型配置</a>
+      <a class="nav-item" href="/admin/system" data-sec="system"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>系统信息</a>
+      <div class="nav-foot">
+        <div id="arBar" class="ar-dock">
+          <span id="arDot" style="width:7px;height:7px;border-radius:50%;background:#188038;flex-shrink:0"></span>
+          <select id="arSec" title="自动刷新间隔" class="role-sel" style="padding:1px 2px;font-size:11.5px">
+            <option value="15">15s</option>
+            <option value="30" selected>30s</option>
+            <option value="60">1m</option>
+            <option value="120">2m</option>
+          </select>
+          <span id="arLeft" style="color:#2450a4;font-weight:700;flex:1;text-align:right">30s 后刷新</span>
+          <button type="button" class="mini" id="arPause" style="font-size:11.5px;padding:2px 7px">暂停</button>
+        </div>
+        <div class="nav-note">控制台菜单 · 本地单机<br>原件只读 · 严禁编造数据</div>
+      </div>
+    </nav>
+
     <div class="content">
 
       <!-- 任务总览 -->
-      <section class="content-sec" id="sec-overview">
+      <section class="content-sec is-on" id="sec-overview">
         <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>任务总览</h2>
         <p class="sec-desc">全部任务与批次的运行情况（管理员可见全部数据）</p>
         <div class="stat-grid" id="statGrid">
@@ -479,7 +71,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
           <div class="stat" style="--sc:#c5221f"><div class="sn" id="stFailed">—</div><div class="sl">失败</div></div>
         </div>
         <div class="acard">
-          <h3>最近任务 <span style="font-size:12px;font-weight:500;color:var(--sub)">每页 20 条，点击一行查看并下载产出</span></h3>
+          <h3>最近任务 <span style="font-size:12px;font-weight:500;color:var(--sub)">每页 20 条；点申报书名称打开任务，点其余位置查看产出</span></h3>
           <div class="tbl-wrap">
             <table class="tbl tbl-tasks">
               <colgroup>
@@ -544,7 +136,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         <div class="acard">
           <h3>部门</h3>
           <p class="sec-desc" style="margin:0 0 12px">添加后可在账号与注册页下拉选择。仍有人占用的部门不能删除。</p>
-          <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;max-width:480px;margin-bottom:12px">
+          <div class="toolbar" style="max-width:520px">
             <div class="f-row inp" style="flex:1;min-width:200px;margin:0"><label>新部门</label><input id="deptNewName" maxlength="64" placeholder="1–64 字" autocomplete="off"></div>
             <button type="button" class="btn-save" id="deptCreate" style="letter-spacing:1px;padding:10px 16px">添加</button>
             <span class="msg" id="deptMsg" style="margin:0"></span>
@@ -565,12 +157,12 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>用户反馈</h2>
         <p class="sec-desc">普通用户在主页面提交的意见与截图，可标为已读 / 已处理</p>
         <div class="acard">
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+          <div class="toolbar">
             <button type="button" class="mini fb-filter active" data-st="">全部</button>
             <button type="button" class="mini fb-filter" data-st="new">待处理</button>
             <button type="button" class="mini fb-filter" data-st="read">已读</button>
             <button type="button" class="mini fb-filter" data-st="done">已处理</button>
-            <span style="flex:1"></span>
+            <span class="grow"></span>
             <button type="button" class="mini" id="fbExpandAll">全部展开</button>
             <button type="button" class="mini" id="fbCollapseAll">全部折叠</button>
             <span class="msg" id="fbAdminMsg" style="margin:0"></span>
@@ -589,11 +181,11 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       <!-- 各群记录 -->
       <section class="content-sec" id="sec-wecom">
         <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>会话记录</h2>
-        <p class="sec-desc">同一会话在多台电脑上只显示一条，群聊和单聊都算。浏览消息时可勾选「申报书」和修改意见（聊天文本或文件）后点底部「上传任务」；也可按日期窗「拆解任务」自动识别。生成计划后仍需人工确认才会写入。</p>
+        <p class="sec-desc">同一会话在多台电脑上只显示一条，群聊和单聊都算。浏览消息时可勾选「申报书」和修改意见（聊天文本或文件）后点底部「上传任务」；也可按日期窗「拆解任务」自动识别。生成计划后仍需人工确认才会写入。新材料入库改到「入库看板」。</p>
         <div class="msg" id="wecomMsg"></div>
         <details class="wecom-watch-panel acard" id="wecomWatchPanel" open>
           <summary class="wecom-watch-panel-sum">AI 值班扫描配置</summary>
-          <p class="wecom-watch-panel-desc">聊天记录同步过来后，自动对已关注会话做一次增量扫描（只处理水位之后的新消息），不再按固定间隔扫描。用 Gemini 识别修改意见并匹配申报书，提交到「待确认」任务（不自动写入正文）。模型与出计划相同。</p>
+          <p class="wecom-watch-panel-desc">聊天记录同步过来后，自动对已关注会话做一次增量扫描（只处理水位之后的新消息），不再按固定间隔扫描。用 Gemini 识别修改意见并匹配申报书，提交到「待确认」任务（不自动写入正文）。模型与出计划相同。护照、学历等新材料入库改到「入库看板」。</p>
           <div class="wecom-watch-panel-status" id="wecomWatchPanelStatus">加载配置…</div>
           <div class="cfg-grid wecom-watch-grid">
             <div class="f-row"><label>开启值班</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwEnabled"> 聊天同步后增量扫描已关注会话</div></div>
@@ -609,8 +201,6 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
             <div class="f-row"><label>任务归属账号</label><div class="inp"><input type="text" id="wwOwner" placeholder="用户名，可空"></div></div>
             <div class="f-row span2"><label>无独立意见时</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwAllowNoOpinion"> 允许仅凭申报书标注栏提交（无群聊意见文档/文本）</div></div>
             <div class="f-row span2"><label>不上传之后</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwSkipDismissed" checked> 点过「不上传」的申报书不再进入待审</div></div>
-            <div class="f-row span2"><label>新材料入库</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="wwTalentUpload" checked> 值班扫到护照/学历等新文件且能匹配人才编号时，自动上传到人才库附件</div></div>
-            <div class="f-row"><label>每会话每轮最多</label><div class="inp"><input type="number" id="wwTalentUploadMax" min="1" max="50" placeholder="10"><div style="font-size:11px;color:#8a93a6;margin-top:4px">上传接口在「人才库」配置里填写；未填则走人才库 Base URL</div></div></div>
           </div>
           <div class="wecom-watch-events" id="wecomWatchPanelEvents" hidden></div>
           <div class="wecom-watch-pending" id="wecomWatchPending" hidden></div>
@@ -697,10 +287,63 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         </div>
       </section>
 
+      <section class="content-sec" id="sec-ingest">
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>入库看板</h2>
+        <p class="sec-desc">按申报书编号一一对应查看文件：确认写入后的申报书版本（v1 / v2…）及其对应修改意见、本机「附件/{编号}/」护照与工作证明，以及值班扫描、文件汇总上传的材料。会话扫描仍在「会话记录」。</p>
+        <details class="wecom-watch-panel acard" id="ingestTalentPanel" open>
+          <summary class="wecom-watch-panel-sum">文件入库</summary>
+          <p class="wecom-watch-panel-desc">值班扫到护照、学历等新文件且能匹配人才编号时，自动上传到人才库附件。扫描开关、待人审和扫描日志仍在「会话记录」。</p>
+          <div class="wecom-watch-panel-status" id="ingestTalentStatus">加载配置…</div>
+          <div class="cfg-grid wecom-watch-grid">
+            <div class="f-row span2"><label>新材料入库</label><div class="chk" style="padding-top:10px"><input type="checkbox" id="igTalentUpload" checked> 扫到护照/学历等新文件且能匹配人才编号时，自动上传到人才库附件</div></div>
+            <div class="f-row"><label>每会话每轮最多</label><div class="inp"><input type="number" id="igTalentUploadMax" min="1" max="50" placeholder="10"><div style="font-size:11px;color:#8a93a6;margin-top:4px">上传接口在「人才库」配置里填写；未填则走人才库 Base URL</div></div></div>
+          </div>
+          <div class="wecom-watch-panel-actions">
+            <button type="button" class="mini primary" id="igTalentSave">保存入库配置</button>
+            <span class="wecom-watch-panel-msg" id="ingestTalentMsg"></span>
+          </div>
+        </details>
+        <div class="stat-grid">
+          <div class="stat" style="--sc:#2450a4"><div class="sn" id="igStGroups">—</div><div class="sl">人才编号</div></div>
+          <div class="stat" style="--sc:#188038"><div class="sn" id="igStApps">—</div><div class="sl">申报书版本</div></div>
+          <div class="stat" style="--sc:#b26a00"><div class="sn" id="igStWatch">—</div><div class="sl">值班入库</div></div>
+          <div class="stat" style="--sc:#6b4fa0"><div class="sn" id="igStSummary">—</div><div class="sl">文件汇总入库</div></div>
+          <div class="stat" style="--sc:#0f766e"><div class="sn" id="igStLocal">—</div><div class="sl">本地附件</div></div>
+        </div>
+        <div class="acard">
+          <h3>按编号查看
+            <button type="button" class="mini" id="igReload">刷新</button>
+          </h3>
+          <div class="ingest-bar">
+            <label>人才编号 / 文件名 / 会话<input type="search" id="igQ" placeholder="例如 51104" autocomplete="off"></label>
+            <label>来源<select id="igSource">
+              <option value="">全部来源</option>
+              <option value="app_edit">确认写入</option>
+              <option value="local">本地附件</option>
+              <option value="watch">值班</option>
+              <option value="file_summary">文件汇总</option>
+            </select></label>
+            <label>状态<select id="igOk">
+              <option value="1">仅已入库</option>
+              <option value="all">含失败记录</option>
+            </select></label>
+            <div class="ingest-bar-act"><button type="button" class="mini primary" id="igSearch">查询</button></div>
+          </div>
+          <div id="ingestBoard"><div class="wecom-empty">加载入库记录…</div></div>
+          <div id="igPager" class="book-pager" hidden style="margin-top:12px">
+            <button type="button" class="ghost mini" id="igPagePrev">上一页</button>
+            <div class="page-mid">
+              <div class="page-sub" id="igPageInfo">第 1 / 1 页 · 共 0 个编号</div>
+            </div>
+            <button type="button" class="ghost mini" id="igPageNext">下一页</button>
+          </div>
+        </div>
+      </section>
+
       <!-- AI 审核样本 -->
       <section class="content-sec" id="sec-aireview">
         <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>AI 审核</h2>
-        <p class="sec-desc" id="arAdminHint">主界面保存的审核结果会写入样本库。下次分析时，启用中的意图样本会写进 Jev 题目，用来校正同类消息。</p>
+        <p class="sec-desc" id="arAdminHint">主界面保存的审核结果会写入样本库。下次分析时，启用中的意图样本会写进 Jev 题目；手填的新意图也会进入题目，不限于起步的几类。</p>
         <div class="msg" id="arAdminMsg"></div>
         <div class="stat-grid">
           <div class="stat" style="--sc:#2450a4"><div class="sn" id="arStReviews">—</div><div class="sl">审核记录</div></div>
@@ -713,38 +356,104 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
             <button type="button" class="mini" id="arAdminReload">刷新</button>
             <button type="button" class="mini primary" id="arAdminRebuild">按审核记录重建</button>
           </h3>
-          <p class="sec-desc" style="margin-bottom:12px">置顶会优先进入 Jev；停用后下次分析不再使用。重建会按全部审核重写未置顶样本，已置顶和停用状态会保留。</p>
-          <h3 style="margin-top:4px">意图样本（Jev）</h3>
-          <div class="tbl-wrap">
-            <table class="tbl">
-              <thead>
-                <tr><th style="width:160px">意图</th><th>原文</th><th style="width:88px">审核人</th><th style="width:120px">时间</th><th style="width:72px">状态</th><th style="width:210px">操作</th></tr>
-              </thead>
-              <tbody id="arAdminIntentBody"><tr><td colspan="6">加载中…</td></tr></tbody>
-            </table>
+          <p class="sec-desc" style="margin-bottom:12px">可预览全文并编辑意图、原文、评分。编辑后会自动置顶，避免「按审核记录重建」覆盖。停用后下次分析不再使用。三块均可折叠，可按分类筛选，每页 10 条，支持搜索。</p>
+          <div class="ar-fold" data-ar-fold="intent">
+            <button type="button" class="ar-fold-hd" aria-expanded="true">
+              <svg class="ar-fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="ar-fold-title">意图样本（Jev）</span>
+              <span class="ar-fold-count" id="arIntentCount">—</span>
+            </button>
+            <div class="ar-fold-bd">
+              <div class="ar-fold-tools">
+                <input type="search" id="arIntentQ" placeholder="搜索意图、原文、审核人" autocomplete="off">
+              </div>
+              <div class="ar-intent-nav" id="arIntentCats"></div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead>
+                    <tr><th style="width:160px">意图</th><th>原文</th><th style="width:88px">审核人</th><th style="width:120px">时间</th><th style="width:72px">状态</th><th style="width:280px">操作</th></tr>
+                  </thead>
+                  <tbody id="arAdminIntentBody"><tr><td colspan="6">加载中…</td></tr></tbody>
+                </table>
+              </div>
+              <div class="book-pager ar-fold-pager" id="arIntentPager" hidden>
+                <button type="button" class="ghost mini" data-ar-pg="-1">上一页</button>
+                <div class="page-mid"><div class="page-sub" id="arIntentPageInfo">第 1 / 1 页 · 共 0 条</div></div>
+                <button type="button" class="ghost mini" data-ar-pg="1">下一页</button>
+              </div>
+            </div>
           </div>
-          <h3 style="margin-top:18px">过滤样本（历史）</h3>
-          <div class="tbl-wrap">
-            <table class="tbl">
-              <thead>
-                <tr><th style="width:160px">标签</th><th>原文</th><th style="width:88px">审核人</th><th style="width:120px">时间</th><th style="width:72px">状态</th><th style="width:210px">操作</th></tr>
-              </thead>
-              <tbody id="arAdminFilterBody"><tr><td colspan="6">加载中…</td></tr></tbody>
-            </table>
+          <div class="ar-fold" data-ar-fold="filter">
+            <button type="button" class="ar-fold-hd" aria-expanded="true">
+              <svg class="ar-fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="ar-fold-title">过滤样本（历史）</span>
+              <span class="ar-fold-count" id="arFilterCount">—</span>
+            </button>
+            <div class="ar-fold-bd">
+              <div class="ar-fold-tools">
+                <input type="search" id="arFilterQ" placeholder="搜索标签、原文、审核人" autocomplete="off">
+              </div>
+              <div class="ar-intent-nav" id="arFilterCats"></div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead>
+                    <tr><th style="width:160px">标签</th><th>原文</th><th style="width:88px">审核人</th><th style="width:120px">时间</th><th style="width:72px">状态</th><th style="width:280px">操作</th></tr>
+                  </thead>
+                  <tbody id="arAdminFilterBody"><tr><td colspan="6">加载中…</td></tr></tbody>
+                </table>
+              </div>
+              <div class="book-pager ar-fold-pager" id="arFilterPager" hidden>
+                <button type="button" class="ghost mini" data-ar-pg="-1">上一页</button>
+                <div class="page-mid"><div class="page-sub" id="arFilterPageInfo">第 1 / 1 页 · 共 0 条</div></div>
+                <button type="button" class="ghost mini" data-ar-pg="1">下一页</button>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="acard" style="margin-bottom:0">
-          <h3>最近审核</h3>
-          <div class="tbl-wrap">
-            <table class="tbl">
-              <thead>
-                <tr><th style="width:130px">时间</th><th>会话</th><th style="width:88px">发送人</th><th>选定意图</th><th style="width:88px">审核人</th><th style="width:96px">过滤</th></tr>
-              </thead>
-              <tbody id="arAdminReviewBody"><tr><td colspan="6">加载中…</td></tr></tbody>
-            </table>
+          <div class="ar-fold" data-ar-fold="review" style="margin-bottom:0">
+            <button type="button" class="ar-fold-hd" aria-expanded="true">
+              <svg class="ar-fold-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="ar-fold-title">最近审核</span>
+              <span class="ar-fold-count" id="arReviewCount">—</span>
+            </button>
+            <div class="ar-fold-bd">
+              <div class="ar-fold-tools">
+                <input type="search" id="arReviewQ" placeholder="搜索会话、发送人、意图、审核人" autocomplete="off">
+              </div>
+              <div class="ar-intent-nav" id="arReviewCats"></div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead>
+                    <tr><th style="width:130px">时间</th><th>会话</th><th style="width:88px">发送人</th><th>选定意图</th><th style="width:88px">审核人</th><th style="width:96px">过滤</th></tr>
+                  </thead>
+                  <tbody id="arAdminReviewBody"><tr><td colspan="6">加载中…</td></tr></tbody>
+                </table>
+              </div>
+              <div class="book-pager ar-fold-pager" id="arReviewPager" hidden>
+                <button type="button" class="ghost mini" data-ar-pg="-1">上一页</button>
+                <div class="page-mid"><div class="page-sub" id="arReviewPageInfo">第 1 / 1 页 · 共 0 条</div></div>
+                <button type="button" class="ghost mini" data-ar-pg="1">下一页</button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
+      <div id="arExMask" class="ar-pop-mask" hidden>
+        <div class="ar-pop ar-ex-pop" id="arExPop" role="dialog" aria-labelledby="arExTitle">
+          <div class="ar-pop-hd">
+            <div class="grow">
+              <div id="arExTitle">意图样本</div>
+              <div class="ar-pop-who" id="arExSub"></div>
+            </div>
+            <button type="button" class="ghost mini" id="arExClose">关闭</button>
+          </div>
+          <div class="ar-pop-body" id="arExBody"></div>
+          <div class="ar-pop-ft">
+            <button type="button" class="mini" id="arExEditBtn">编辑</button>
+            <button type="button" class="mini primary" id="arExSaveBtn" hidden>保存</button>
+            <span class="ar-note" id="arExNote"></span>
+          </div>
+        </div>
+      </div>
 
       <!-- 开放 API -->
       <section class="content-sec" id="sec-openapi">
@@ -913,8 +622,22 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
       <!-- 模型配置 -->
       <section class="content-sec" id="sec-config">
         <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;color:var(--brand)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>模型配置</h2>
-        <p class="sec-desc">每张卡片可单独保存（只改该卡）；顶部「保存全部配置」一次保存全部模型、人才库、论文、项目证明与默认采用模型；密钥留空表示不修改</p>
-        <div class="acard">
+        <p class="sec-desc">系统全部可配项都在这一页。每张卡片可单独保存；顶部「保存全部配置」一次写入。密钥、密码、Webhook 留空表示不修改。</p>
+        <div class="cfg-jump" id="cfgJump">
+          <a href="#cfgDefault">默认模型</a>
+          <a href="#cfgCards">大模型</a>
+          <a href="#poolCfgCard">人才库</a>
+          <a href="#papersCfgCard">论文</a>
+          <a href="#psCfgCard">PS 工单</a>
+          <a href="#projectProofCfgCard">项目证明</a>
+          <a href="#wecomCfgCard">企微 / 值班</a>
+          <a href="#alertCfgCard">告警</a>
+          <a href="#scanPdfCfgCard">扫描 PDF</a>
+          <a href="#portalCfgCard">协同门户</a>
+          <a href="#mysqlCfgCard">数据库</a>
+          <a href="#inboxCfgCard">收件箱</a>
+        </div>
+        <div class="acard" id="cfgDefault">
           <h3>默认采用</h3>
           <div class="kv"><span class="k">分类与「修改后」默认模型（改这里需点顶部「保存全部配置」生效）</span>
             <span class="v"><select id="classifyModel" class="role-sel" style="min-width:220px"></select></span>
@@ -923,8 +646,14 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         <div id="cfgCards"></div>
         <div id="poolCfgCard"></div>
         <div id="papersCfgCard"></div>
+        <div id="psCfgCard"></div>
         <div id="projectProofCfgCard"></div>
         <div id="wecomCfgCard"></div>
+        <div id="alertCfgCard"></div>
+        <div id="scanPdfCfgCard"></div>
+        <div id="portalCfgCard"></div>
+        <div id="mysqlCfgCard"></div>
+        <div id="inboxCfgCard"></div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <button type="button" class="btn-save" id="cfgSave">保存全部配置</button>
           <button type="button" class="mini" id="cfgRestore">恢复默认配置</button>
@@ -954,24 +683,13 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
         </div>
       </section>
 
-    </div>
+      <section class="content-sec" id="sec-chatinsight">
+        <h2 class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></svg>解析控制台</h2>
+        <p class="sec-desc">按电脑源查看解析助手的同步、检索与入库令牌，也可下载最新客户端发给其它电脑。不替代「会话记录」看板。</p>
+        <iframe id="chatinsightFrame" title="解析控制台" src="about:blank"></iframe>
+      </section>
 
-    <!-- 右侧菜单 -->
-    <nav class="sidenav">
-      <div class="nav-cap">控制台菜单</div>
-      <button type="button" class="nav-item active" data-sec="overview"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>任务总览</button>
-      <button type="button" class="nav-item" data-sec="newtask"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>新建任务</button>
-      <button type="button" class="nav-item" data-sec="users"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>人员信息</button>
-      <button type="button" class="nav-item" data-sec="feedback"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>用户反馈<span class="nav-count" id="fbBadge" hidden></span></button>
-      <button type="button" class="nav-item" data-sec="wecom"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>会话记录</button>
-      <button type="button" class="nav-item" data-sec="files"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8"/></svg>文件汇总</button>
-      <button type="button" class="nav-item" data-sec="aireview"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>AI 审核</button>
-      <button type="button" class="nav-item" data-sec="openapi"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>开放 API<span class="nav-count" id="apiReqBadge" hidden></span></button>
-      <button type="button" class="nav-item" data-sec="alert"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>告警通知</button>
-      <button type="button" class="nav-item" data-sec="config"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>模型配置</button>
-      <button type="button" class="nav-item" data-sec="system"><svg class="ni" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>系统信息</button>
-      <div class="nav-foot">本地单机服务<br>原件只读 · 严禁编造数据</div>
-    </nav>
+    </div>
 
   </div>
 </div>
@@ -1004,22 +722,44 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     </div>
   </div>
 
-  <!-- 自动刷新控件：按当前查看区块定时局部刷新，模型配置页不会自动刷新 -->
-  <div id="arBar" style="position:fixed;right:10px;bottom:10px;z-index:70;display:flex;gap:6px;align-items:center;background:#fff;border:1px solid #e9edf5;border-radius:10px;padding:5px 9px;box-shadow:0 8px 20px -12px rgba(16,32,64,.35);font-size:11.5px;color:#5b6577">
-    <span id="arDot" style="width:7px;height:7px;border-radius:50%;background:#188038;flex-shrink:0"></span>
-    <select id="arSec" title="自动刷新间隔" class="role-sel" style="padding:1px 2px;font-size:11.5px;max-width:64px">
-      <option value="15">15s</option>
-      <option value="30" selected>30s</option>
-      <option value="60">1m</option>
-      <option value="120">2m</option>
-    </select>
-    <span id="arLeft" style="color:#2450a4;font-weight:700;text-align:right">30s 后刷新</span>
-    <button type="button" class="mini" id="arPause" style="font-size:11.5px;padding:2px 7px">暂停</button>
+  <div class="api-modal" id="apiKeyEditModal" hidden>
+    <div class="api-modal-card">
+      <h3>编辑密钥</h3>
+      <p>可改名称、备注、任务归属和过期日期。不会更换 API Key 本身，对接方仍用原密钥调用。</p>
+      <input type="hidden" id="apiKeyEditId">
+      <div class="f-row inp"><label>名称</label><input id="apiKeyEditName" placeholder="如：合作方 A" maxlength="64" autocomplete="off"></div>
+      <div class="f-row inp"><label>备注</label><input id="apiKeyEditNote" placeholder="可选" maxlength="255" autocomplete="off"></div>
+      <div class="f-row inp"><label>绑定用户（任务归属）</label><select id="apiKeyEditOwner"><option value="">自动（api:名称）</option></select></div>
+      <div class="f-row inp"><label>过期日期</label><input id="apiKeyEditExpire" type="date"><div style="font-size:11px;color:#8a93a6;margin-top:4px">留空表示永久有效</div></div>
+      <div class="msg" id="apiKeyEditMsg"></div>
+      <div class="api-modal-acts">
+        <button type="button" class="btn-save" id="apiKeyEditSave" style="letter-spacing:1px">保存</button>
+        <button type="button" class="mini" id="apiKeyEditCancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="api-modal" id="igPreviewModal" hidden>
+    <div class="api-modal-card ig-preview-card">
+      <div class="ig-preview-hd">
+        <h3 id="igPreviewTitle">申报书预览</h3>
+        <button type="button" class="mini" id="igPreviewClose">关闭</button>
+      </div>
+      <div class="ig-preview-meta" id="igPreviewMeta"></div>
+      <div id="igPreviewBody">加载中…</div>
+    </div>
   </div>
 
 <script src="/public/session.js?v=py54"></script>
-<script src="/public/wecom-board.js?v=py69"></script>
-<script src="/public/admin-agent-review.js?v=py3"></script>
+<script src="/public/wecom-board.js?v=py86"></script>
+<script src="/public/admin-agent-review.js?v=py10"></script>
+<script src="/public/admin-ingest.js?v=py2"></script>
+<script src="/public/admin-overview.js?v=py1"></script>
+<script src="/public/admin-users.js?v=py2"></script>
+<script src="/public/admin-openapi.js?v=py2"></script>
+<script src="/public/admin-system.js?v=py1"></script>
+<script src="/public/admin-feedback.js?v=py1"></script>
+<script src="/public/admin-config.js?v=py3"></script>
 <script>
 (function () {
   var me = null;
@@ -1088,19 +828,23 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
   var arLeft = 30;
   var arCount = null;
   var arItems = [
-    { key: 'overview', sec: document.getElementById('sec-overview'), load: function () { loadOverview(); } },
-    { key: 'users', sec: document.getElementById('sec-users'), load: function () { loadUsers(); } },
-    { key: 'feedback', sec: document.getElementById('sec-feedback'), load: function () { loadFeedback(); } },
+    { key: 'overview', sec: document.getElementById('sec-overview'), load: function () { if (window.loadOverview) window.loadOverview(); } },
+    { key: 'users', sec: document.getElementById('sec-users'), load: function () { if (window.loadUsers) window.loadUsers(); } },
+    { key: 'feedback', sec: document.getElementById('sec-feedback'), load: function () { if (window.loadFeedback) window.loadFeedback(); } },
     { key: 'wecom', sec: document.getElementById('sec-wecom'), load: function () {
       if (window.loadWecomBoard) window.loadWecomBoard(true);
       if (window.loadWecomWatchPanel) window.loadWecomWatchPanel();
     } },
+    { key: 'ingest', sec: document.getElementById('sec-ingest'), load: function () {
+      if (window.loadIngestBoard) window.loadIngestBoard(true);
+      if (window.loadIngestTalent) window.loadIngestTalent(true);
+    } },
     { key: 'aireview', sec: document.getElementById('sec-aireview'), load: function () {
       if (window.loadAgentReviewAdmin) window.loadAgentReviewAdmin();
     } },
-    { key: 'openapi', sec: document.getElementById('sec-openapi'), load: function () { loadOpenApi(true); } },
-    { key: 'alert', sec: document.getElementById('sec-alert'), load: function () { loadAlertPanel(true); } },
-    { key: 'system', sec: document.getElementById('sec-system'), load: function () { loadSystem(); } }
+    { key: 'openapi', sec: document.getElementById('sec-openapi'), load: function () { if (window.loadOpenApi) window.loadOpenApi(true); } },
+    { key: 'alert', sec: document.getElementById('sec-alert'), load: function () { if (window.loadAlertPanel) window.loadAlertPanel(true); } },
+    { key: 'system', sec: document.getElementById('sec-system'), load: function () { if (window.loadSystem) window.loadSystem(); } }
   ];
   function arInView(el) {
     if (!el) return false;
@@ -1138,13 +882,15 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     if (note && (note.value || '').trim()) return true;
     if (q && document.activeElement === q) return true;
     var modal = document.getElementById('apiKeyModal');
-    return !!(modal && !modal.hidden);
+    if (modal && !modal.hidden) return true;
+    var edit = document.getElementById('apiKeyEditModal');
+    return !!(edit && !edit.hidden);
   }
   function refreshFbBadge() {
     fetch('/api/feedback/unread', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (res) {
-      setFbBadge(res && res.ok ? (res.unread || 0) : 0);
+      if (window.setFbBadge) window.setFbBadge(res && res.ok ? (res.unread || 0) : 0);
     }).catch(function () {});
-    refreshApiReqBadge();
+    if (window.refreshApiReqBadge) window.refreshApiReqBadge();
   }
   function arWecomBusy() {
     var box = document.getElementById('wecomPreview');
@@ -1214,35 +960,117 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     arStartCount();
   }
 
-  /* ===== 菜单：锚点滚动 + 滚动高亮 ===== */
+  /* ===== 一菜单一页 ===== */
+  var ADMIN_PAGES = {
+    overview: { title: '任务总览' },
+    newtask: { title: '新建任务' },
+    users: { title: '人员信息' },
+    feedback: { title: '用户反馈' },
+    wecom: { title: '会话记录' },
+    ingest: { title: '入库看板' },
+    chatinsight: { title: '解析控制台' },
+    aireview: { title: 'AI 审核' },
+    openapi: { title: '开放 API' },
+    alert: { title: '告警通知' },
+    config: { title: '模型配置' },
+    system: { title: '系统信息' }
+  };
+  var HASH_PAGE = {
+    'sec-overview': 'overview', 'sec-newtask': 'newtask', 'sec-users': 'users',
+    'sec-feedback': 'feedback', 'sec-wecom': 'wecom', 'sec-ingest': 'ingest',
+    'sec-aireview': 'aireview', 'sec-openapi': 'openapi', 'sec-alert': 'alert',
+    'sec-config': 'config', 'sec-system': 'system', 'sec-chatinsight': 'chatinsight'
+  };
+  var pageLoaded = {};
+  var currentAdminPage = 'overview';
+  function pageFromPath() {
+    var m = (location.pathname || '').match(/^\/admin\/?([a-z]+)?\/?$/);
+    var key = (m && m[1]) || '';
+    var h = (location.hash || '').replace(/^#/, '');
+    if (!key && HASH_PAGE[h]) key = HASH_PAGE[h];
+    return ADMIN_PAGES[key] ? key : 'overview';
+  }
+  function ensurePage(key) {
+    if (key === 'chatinsight') {
+      var fr = document.getElementById('chatinsightFrame');
+      if (fr && !fr.getAttribute('data-src')) {
+        fr.setAttribute('data-src', '1');
+        fr.src = '/chatinsight/?embed=1&v=ui2';
+      }
+      return;
+    }
+    if (key === 'newtask') return;
+    if (pageLoaded[key]) return;
+    pageLoaded[key] = true;
+    if (key === 'overview') { if (window.loadOverview) window.loadOverview(); }
+    else if (key === 'users') { if (window.loadUsers) window.loadUsers(); }
+    else if (key === 'feedback') { if (window.loadFeedback) window.loadFeedback(); }
+    else if (key === 'wecom') {
+      if (window.loadWecomBoard) window.loadWecomBoard();
+    } else if (key === 'ingest') {
+      if (window.loadIngestBoard) window.loadIngestBoard();
+      if (window.loadIngestTalent) window.loadIngestTalent();
+    } else if (key === 'aireview') {
+      if (window.loadAgentReviewAdmin) window.loadAgentReviewAdmin();
+    } else if (key === 'openapi') { if (window.loadOpenApi) window.loadOpenApi(); }
+    else if (key === 'alert') { if (window.loadAlertPanel) window.loadAlertPanel(); }
+    else if (key === 'config') { if (window.loadConfig) window.loadConfig(); }
+    else if (key === 'system') { if (window.loadSystem) window.loadSystem(); }
+  }
+  function showAdminPage(key, replace) {
+    if (!ADMIN_PAGES[key]) key = 'overview';
+    currentAdminPage = key;
+    var meta = ADMIN_PAGES[key];
+    var secId = 'sec-' + (meta.sec || key);
+    var secs = document.querySelectorAll('.content-sec');
+    for (var i = 0; i < secs.length; i++) secs[i].classList.toggle('is-on', secs[i].id === secId);
+    var navs = document.querySelectorAll('.nav-item');
+    for (var n = 0; n < navs.length; n++) navs[n].classList.toggle('active', navs[n].getAttribute('data-sec') === key);
+    var body = document.querySelector('.admin-body');
+    if (body) body.classList.toggle('is-fill', key === 'chatinsight');
+    document.title = meta.title + ' · 管理控制台';
+    var tsub = document.querySelector('.topbar .tsub');
+    if (tsub) tsub.textContent = meta.title;
+    var url = '/admin/' + key;
+    var cur = (location.pathname || '').replace(/\/$/, '') || '/';
+    if (replace || cur !== url) {
+      var st = { page: key };
+      if (replace) history.replaceState(st, '', url);
+      else if (cur !== url) history.pushState(st, '', url);
+    }
+    var pane = document.querySelector('.content');
+    if (pane) pane.scrollTop = 0;
+    window.scrollTo(0, 0);
+    ensurePage(key);
+  }
+  window.showAdminPage = showAdminPage;
   var items = Array.prototype.slice.call(document.querySelectorAll('.nav-item'));
   items.forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var sec = document.getElementById('sec-' + btn.getAttribute('data-sec'));
-      if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    btn.addEventListener('click', function (ev) {
+      var key = btn.getAttribute('data-sec');
+      if (!ADMIN_PAGES[key]) return;
+      ev.preventDefault();
+      showAdminPage(key, false);
     });
   });
-  var sections = items.map(function (btn) {
-    return document.getElementById('sec-' + btn.getAttribute('data-sec'));
+  window.addEventListener('popstate', function () {
+    showAdminPage(pageFromPath(), true);
   });
-  function spyNav() {
-    var y = window.scrollY + 120, idx = 0;
-    sections.forEach(function (s, i) { if (s && s.offsetTop <= y) idx = i; });
-    items.forEach(function (b, i) { b.classList.toggle('active', i === idx); });
-  }
-  window.addEventListener('scroll', spyNav, { passive: true });
-  spyNav();
-  if (location.hash) {
-    var hsec = document.getElementById(location.hash.replace(/^#/, ''));
-    if (hsec) setTimeout(function () { hsec.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80);
-  }
 
   /* ===== 登录校验 ===== */
   fetch('/api/auth/me').then(function (r) {
-    if (!r.ok) { location.href = '/login'; throw new Error('unauth'); }
+    if (!r.ok) {
+      location.href = '/login?next=' + encodeURIComponent(location.pathname || '/admin');
+      throw new Error('unauth');
+    }
     return r.json();
   }).then(function (j) {
     me = j.user || {};
+    window.adminMe = me;
+    if (me.mustSetCredentials) {
+      location.href = '/';
+      return;
+    }
     if (me.role !== 'admin') {
       document.body.innerHTML = '<div style="max-width:420px;margin:80px auto;text-align:center;font-family:inherit">' +
         '<div style="font-size:44px;font-weight:700">权限受限</div><h2 style="margin:12px 0">需要管理员权限</h2>' +
@@ -1254,15 +1082,7 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     var whoEl = document.getElementById('whoami');
     whoEl.textContent = who;
     whoEl.title = who;
-    loadOverview();
-    loadUsers();
-    loadFeedback();
-    if (window.loadWecomBoard) window.loadWecomBoard();
-    if (window.loadAgentReviewAdmin) window.loadAgentReviewAdmin();
-    loadOpenApi();
-    loadSystem();
-    loadAlertPanel();
-    loadConfig();
+    showAdminPage(pageFromPath(), true);
     initAutoRefresh();
   setInterval(function () {
     var nodes = document.querySelectorAll('[data-run-since]');
@@ -1275,2040 +1095,6 @@ table.tbl td .api-secret{display:inline-block;max-width:100%;word-break:break-al
     }
   }, 1000);
   }).catch(function () {});
-
-  /* ===== 任务总览 ===== */
-  var TASK_PAGE_SIZE = 20;
-  var taskPage = 1;
-  var taskCache = [];
-  function renderTaskTable() {
-    var tb = document.getElementById('taskBody');
-    var pager = document.getElementById('taskPager');
-    var info = document.getElementById('taskPageInfo');
-    var prev = document.getElementById('taskPagePrev');
-    var next = document.getElementById('taskPageNext');
-    var total = taskCache.length;
-    var pages = Math.max(1, Math.ceil(total / TASK_PAGE_SIZE));
-    if (taskPage > pages) taskPage = pages;
-    if (taskPage < 1) taskPage = 1;
-    var start = (taskPage - 1) * TASK_PAGE_SIZE;
-    var slice = taskCache.slice(start, start + TASK_PAGE_SIZE);
-    tb.innerHTML = '';
-    var openId = tb.getAttribute('data-open') || '';
-    if (openId) {
-      var openIdx = -1;
-      for (var i = 0; i < taskCache.length; i++) {
-        if (taskCache[i].id === openId) { openIdx = i; break; }
-      }
-      if (openIdx >= 0) {
-        var openPage = Math.floor(openIdx / TASK_PAGE_SIZE) + 1;
-        if (openPage !== taskPage) {
-          taskPage = openPage;
-          start = (taskPage - 1) * TASK_PAGE_SIZE;
-          slice = taskCache.slice(start, start + TASK_PAGE_SIZE);
-        }
-      }
-    }
-    slice.forEach(function (t) {
-      var tr = document.createElement('tr');
-      tr.className = 'task-row' + (t.id === openId ? ' open' : '');
-      tr.setAttribute('data-id', t.id);
-      var nOut = (t.deliverables || t.outputs || []).length;
-      tr.innerHTML =
-        '<td class="td-clip" title="' + esc(t.createdAt) + '">' + esc(t.createdAt) + '</td>' +
-        '<td class="td-name" title="' + esc(t.app && t.app.name) + '">' + (function () {
-          var m = String(t.app && t.app.mode || '').toUpperCase();
-          var tag = (m === 'QM' || m === 'HJ') ? '<span class="mode-tag mode-' + m + '">' + m + '</span> ' : '';
-          return tag + esc(t.app && t.app.name);
-        })() + '</td>' +
-        '<td class="td-clip" title="' + esc(taskOrigin(t)) + '">' + esc(taskOrigin(t)) + '</td>' +
-        '<td class="mono td-clip" title="' + esc(t.app && t.app.no) + '">' + esc(t.app && t.app.no) + '</td>' +
-        '<td class="td-clip" title="' + esc(t.owner || '（历史）') + '">' + esc(t.owner || '（历史）') + '</td>' +
-        '<td>' + badge(t.status, t.status === 'running' ? (t.runningSince || t.startedAt || '') : '') + '</td>' +
-        '<td class="mono">' + (t.batchId ? '√' : '—') + '</td>' +
-        '<td><button type="button" class="mini" data-open="' + esc(t.id) + '">' + (t.id === openId ? '收起' : (nOut ? '查看产出 · ' + nOut : '查看产出')) + '</button></td>';
-      tb.appendChild(tr);
-      if (t.id === openId) {
-        var fr = document.createElement('tr');
-        fr.className = 'task-files';
-        fr.setAttribute('data-for', t.id);
-        fr.innerHTML = '<td colspan="8"><div class="files-box"><div class="files-muted">加载产出…</div></div></td>';
-        tb.appendChild(fr);
-        fillTaskFiles(fr, t.id);
-      }
-    });
-    if (!slice.length) tb.innerHTML = '<tr><td colspan="8" style="color:#98a2b6">暂无任务</td></tr>';
-    if (pager) {
-      pager.hidden = total <= TASK_PAGE_SIZE;
-      if (info) info.textContent = '第 ' + taskPage + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
-      if (prev) prev.disabled = taskPage <= 1;
-      if (next) next.disabled = taskPage >= pages;
-    }
-  }
-  function loadOverview() {
-    Promise.all([
-      fetch('/api/tasks').then(function (r) { return r.json(); }),
-      fetch('/api/batches').then(function (r) { return r.json(); })
-    ]).then(function (res) {
-      var tasks = res[0].tasks || [];
-      var batches = res[1].batches || [];
-      var done = 0, failed = 0, running = 0;
-      tasks.forEach(function (t) {
-        if (t.status === 'done') done++;
-        else if (t.status === 'failed') failed++;
-        else running++;
-      });
-      document.getElementById('stTotal').textContent = tasks.length;
-      document.getElementById('stBatch').textContent = batches.length;
-      document.getElementById('stRunning').textContent = running;
-      document.getElementById('stDone').textContent = done;
-      document.getElementById('stFailed').textContent = failed;
-      totals.tasks = tasks.length;
-      totals.batches = batches.length;
-      renderDataCard();
-      taskCache = tasks;
-      renderTaskTable();
-    }).catch(function (e) { console.warn('overview', e); });
-  }
-
-  function fmtSize(n) {
-    n = Number(n) || 0;
-    if (n < 1024) return n + ' B';
-    if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
-    return (n / 1024 / 1024).toFixed(1) + ' MB';
-  }
-  function fillTaskFiles(fr, tid) {
-    fetch('/api/tasks/' + encodeURIComponent(tid)).then(function (r) { return r.json(); }).then(function (t) {
-      var files = t.outputs || t.deliverables || [];
-      var box = fr.querySelector('.files-box');
-      if (!box) return;
-      if (!files.length) {
-        box.innerHTML = '<div class="fh">产出文件</div><div class="files-muted">该任务尚无产出（未完成写入或校验未通过）</div>';
-        return;
-      }
-      var lis = files.map(function (o) {
-        var href = '/api/tasks/' + encodeURIComponent(tid) + '/files?dir=output&name=' + encodeURIComponent(o.name);
-        return '<li><span class="fn" title="' + esc(o.name) + '">' + esc(o.name) + '</span>' +
-          '<span class="fs">' + fmtSize(o.size) + '</span>' +
-          '<a class="dl" href="' + href + '" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;vertical-align:-2px;margin-right:3px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>下载</a></li>';
-      }).join('');
-      var tf = t.talentAppFile || {};
-      var extra = '';
-      if (tf.id && tf.version) {
-        extra = '<div class="files-muted" style="margin-top:8px">已入库人才库字段 JSON ' +
-          esc(tf.attachId || '') + ' · <b>' + esc(tf.version) + '</b>' +
-          ' <a class="dl" href="/api/talent-files/' + encodeURIComponent(tf.id) + '/file">下载 JSON</a></div>';
-      }
-      box.innerHTML = '<div class="fh">产出文件 · ' + files.length + ' 个</div><ul>' + lis + '</ul>' + extra;
-    }).catch(function (e) {
-      var box = fr.querySelector('.files-box');
-      if (box) box.innerHTML = '<div class="files-muted">读取失败：' + esc(e.message || '') + '</div>';
-    });
-  }
-  function toggleTaskOpen(tid) {
-    var tb = document.getElementById('taskBody');
-    var cur = tb.getAttribute('data-open') || '';
-    tb.setAttribute('data-open', cur === tid ? '' : tid);
-    renderTaskTable();
-  }
-  document.getElementById('taskPagePrev').addEventListener('click', function () {
-    if (taskPage <= 1) return;
-    taskPage--;
-    var tb = document.getElementById('taskBody');
-    if (tb) tb.setAttribute('data-open', '');
-    renderTaskTable();
-  });
-  document.getElementById('taskPageNext').addEventListener('click', function () {
-    var pages = Math.max(1, Math.ceil(taskCache.length / TASK_PAGE_SIZE));
-    if (taskPage >= pages) return;
-    taskPage++;
-    var tb = document.getElementById('taskBody');
-    if (tb) tb.setAttribute('data-open', '');
-    renderTaskTable();
-  });
-  document.getElementById('taskBody').addEventListener('click', function (e) {
-    if (e.target.closest && e.target.closest('a.dl')) return;
-    var btn = e.target.closest ? e.target.closest('button[data-open]') : null;
-    if (btn) {
-      e.preventDefault();
-      toggleTaskOpen(btn.getAttribute('data-open'));
-      return;
-    }
-    var tr = e.target.closest ? e.target.closest('tr.task-row') : null;
-    if (tr) toggleTaskOpen(tr.getAttribute('data-id'));
-  });
-
-  /* ===== 人员信息 ===== */
-  var userCount = 0;
-  var totals = { tasks: '—', batches: '—' };
-  var deptCache = [];
-  function deptOptions(cur) {
-    var names = deptCache.map(function (d) { return d.name; });
-    if (cur && names.indexOf(cur) < 0) names.unshift(cur);
-    var html = '<option value="">请选择部门</option>';
-    names.forEach(function (n) {
-      html += '<option value="' + escAttr(n) + '"' + (cur === n ? ' selected' : '') + '>' + esc(n) + '</option>';
-    });
-    return html;
-  }
-  function fillNewDeptSelect() {
-    var sel = document.getElementById('newDept');
-    if (!sel) return;
-    var cur = sel.value;
-    sel.innerHTML = deptOptions(cur);
-    if (cur) sel.value = cur;
-  }
-  function sayDept(ok, t) {
-    var el = document.getElementById('deptMsg');
-    if (!el) return;
-    el.className = 'msg ' + (ok ? 'ok' : 'bad');
-    el.textContent = t;
-    setTimeout(function () { if (el.textContent === t) el.textContent = ''; }, 4000);
-  }
-  function renderDeptTable() {
-    var body = document.getElementById('deptBody');
-    if (!body) return;
-    if (!deptCache.length) {
-      body.innerHTML = '<tr><td colspan="3" style="color:#8a93a6">暂无部门，请先添加</td></tr>';
-      return;
-    }
-    body.innerHTML = deptCache.map(function (d) {
-      return '<tr><td>' + esc(d.name) + '</td><td>' + (d.userCount || 0) + '</td><td class="ops">' +
-        '<button type="button" class="mini" data-dept-del="' + d.id + '">删除</button></td></tr>';
-    }).join('');
-  }
-  function loadUsers() {
-    Promise.all([
-      fetch('/api/admin/users', { cache: 'no-store' }).then(function (r) { return r.json(); }),
-      fetch('/api/admin/departments', { cache: 'no-store' }).then(function (r) { return r.json(); })
-    ]).then(function (pair) {
-      var j = pair[0], dj = pair[1];
-      if (dj && dj.ok) deptCache = dj.items || [];
-      fillNewDeptSelect();
-      renderDeptTable();
-      if (!j.ok) { say(false, j.detail || '加载失败'); return; }
-      userCount = (j.users || []).length;
-      renderUsers(j.users || []);
-      renderDataCard();
-    }).catch(function (e) { say(false, '加载失败：' + e.message); });
-  }
-  function renderUsers(users) {
-    var tbody = document.getElementById('tbody');
-    tbody.innerHTML = '';
-    users.forEach(function (u) {
-      var tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td>' + u.id + '</td>' +
-        '<td class="td-clip" title="' + esc(u.username) + '">' + esc(u.username) + '</td>' +
-        '<td class="td-name" title="' + esc(u.realName) + '">' + esc(u.realName) + '</td>' +
-        '<td><select class="dept-sel" data-id="' + u.id + '">' + deptOptions(u.department) + '</select></td>' +
-        '<td><select class="role-sel" data-id="' + u.id + '">' + roleOptions(u.role) + '</select></td>' +
-        '<td><select class="status-sel" data-id="' + u.id + '">' +
-          '<option value="active"' + (u.status === 'active' ? ' selected' : '') + '>启用</option>' +
-          '<option value="disabled"' + (u.status === 'disabled' ? ' selected' : '') + '>停用</option>' +
-        '</select></td>' +
-        '<td>' + esc(u.createdAt) + '</td>' +
-        '<td>' + esc(u.lastLoginAt || '—') + '</td>' +
-        '<td class="ops">' +
-          '<input type="password" class="reset-pw" placeholder="新密码" data-id="' + u.id + '">' +
-          '<button type="button" class="mini" data-act="pw" data-id="' + u.id + '">重置</button>' +
-          '<button type="button" class="mini" data-act="del" data-id="' + u.id + '">删除</button>' +
-        '</td>';
-      if (me && u.id === me.id) {
-        var tag = document.createElement('span');
-        tag.className = 'me-tag';
-        tag.textContent = '(我)';
-        tr.children[1].appendChild(tag);
-      }
-      tbody.appendChild(tr);
-    });
-    fillApiOwnerSelect(users);
-  }
-  document.getElementById('userCreate').addEventListener('click', function () {
-    var btn = document.getElementById('userCreate');
-    var body = {
-      username: (document.getElementById('newUserName').value || '').trim(),
-      realName: (document.getElementById('newRealName').value || '').trim(),
-      department: (document.getElementById('newDept').value || '').trim(),
-      password: document.getElementById('newPassword').value || '',
-      role: document.getElementById('newRole').value || 'user'
-    };
-    btn.disabled = true;
-    fetch('/api/admin/users', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-    .then(function (res) {
-      btn.disabled = false;
-      if (res.ok && res.data.ok) {
-        say(true, '已添加账号 ' + ((res.data.user && res.data.user.username) || ''));
-        document.getElementById('newUserName').value = '';
-        document.getElementById('newRealName').value = '';
-        document.getElementById('newDept').value = '';
-        document.getElementById('newPassword').value = '';
-        document.getElementById('newRole').value = 'user';
-        loadUsers();
-      } else say(false, (res.data && res.data.detail) || '添加失败');
-    }).catch(function (e) {
-      btn.disabled = false;
-      say(false, '添加失败：' + (e.message || ''));
-    });
-  });
-  document.getElementById('tbody').addEventListener('change', function (e) {
-    var sel = e.target;
-    if (!sel.classList.contains('role-sel') && !sel.classList.contains('status-sel') && !sel.classList.contains('dept-sel')) return;
-    var id = sel.getAttribute('data-id');
-    var body = sel.classList.contains('role-sel') ? { role: sel.value }
-      : (sel.classList.contains('dept-sel') ? { department: sel.value } : { status: sel.value });
-    fetch('/api/admin/users/' + id, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-    .then(function (res) {
-      if (res.ok && res.data.ok) { say(true, '已更新'); loadUsers(); }
-      else { say(false, (res.data.detail) || '更新失败'); loadUsers(); }
-    });
-  });
-  document.getElementById('tbody').addEventListener('click', function (e) {
-    var btn = e.target.closest('button');
-    if (!btn) return;
-    var id = btn.getAttribute('data-id');
-    var act = btn.getAttribute('data-act');
-    if (act === 'pw') {
-      var input = document.querySelector('input.reset-pw[data-id="' + id + '"]');
-      var pw = (input && input.value) || '';
-      if (!pw) { say(false, '请先输入新密码'); return; }
-      fetch('/api/admin/users/' + id, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw })
-      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-      .then(function (res) {
-        if (res.ok && res.data.ok) { say(true, '密码已重置'); input.value = ''; }
-        else say(false, (res.data.detail) || '重置失败');
-      });
-    } else if (act === 'del') {
-      if (!confirm('确定删除该用户？此操作不可恢复。')) return;
-      fetch('/api/admin/users/' + id, { method: 'DELETE' })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-      .then(function (res) {
-        if (res.ok && res.data.ok) { say(true, '已删除'); loadUsers(); }
-        else say(false, (res.data.detail) || '删除失败');
-      });
-    }
-  });
-  var deptCreateBtn = document.getElementById('deptCreate');
-  if (deptCreateBtn) {
-    deptCreateBtn.addEventListener('click', function () {
-      var inp = document.getElementById('deptNewName');
-      var name = ((inp && inp.value) || '').trim();
-      if (!name) { sayDept(false, '请填写部门名称'); return; }
-      deptCreateBtn.disabled = true;
-      fetch('/api/admin/departments', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name })
-      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-      .then(function (res) {
-        if (res.ok && res.data.ok) {
-          sayDept(true, '已添加');
-          if (inp) inp.value = '';
-          loadUsers();
-        } else sayDept(false, (res.data && res.data.detail) || '添加失败');
-      }).catch(function (e) {
-        sayDept(false, e.message || '添加失败');
-      }).finally(function () { deptCreateBtn.disabled = false; });
-    });
-  }
-  var deptBody = document.getElementById('deptBody');
-  if (deptBody) {
-    deptBody.addEventListener('click', function (e) {
-      var btn = e.target && e.target.closest ? e.target.closest('[data-dept-del]') : null;
-      if (!btn) return;
-      if (!confirm('确定删除该部门？')) return;
-      fetch('/api/admin/departments/' + btn.getAttribute('data-dept-del'), { method: 'DELETE' })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-        .then(function (res) {
-          if (res.ok && res.data.ok) { sayDept(true, '已删除'); loadUsers(); }
-          else sayDept(false, (res.data && res.data.detail) || '删除失败');
-        });
-    });
-  }
-
-  /* ===== 开放 API ===== */
-  var apiKeysCache = [];
-  var apiLogPage = 1;
-  var API_LOG_PAGE = 50;
-  var apiKeyMsg = document.getElementById('apiKeyMsg');
-  function sayApi(ok, t) {
-    if (!apiKeyMsg) return;
-    apiKeyMsg.className = 'msg ' + (ok ? 'ok' : 'bad');
-    apiKeyMsg.textContent = t;
-    setTimeout(function () { if (apiKeyMsg.textContent === t) apiKeyMsg.textContent = ''; }, 5000);
-  }
-  function apiHttp(path, opt) {
-    return fetch(path, opt || {}).then(function (r) {
-      return r.json().then(function (j) { return { ok: r.ok, status: r.status, data: j }; });
-    });
-  }
-  function fillApiOwnerSelect(users) {
-    var sel = document.getElementById('apiKeyOwner');
-    if (!sel) return;
-    var cur = sel.value;
-    var html = '<option value="">自动（api:名称）</option>';
-    (users || []).forEach(function (u) {
-      html += '<option value="' + esc(u.username) + '">' + esc(u.realName || u.username) + '（' + esc(u.username) + '）</option>';
-    });
-    sel.innerHTML = html;
-    if (cur) sel.value = cur;
-  }
-  function mdInline(s) {
-    s = esc(s);
-    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
-    return s;
-  }
-  function splitRow(line) {
-    var t = String(line || '').trim();
-    if (t.charAt(0) === '|') t = t.slice(1);
-    if (t.charAt(t.length - 1) === '|') t = t.slice(0, -1);
-    return t.split('|').map(function (c) { return c.trim(); });
-  }
-  function isSepRow(line) {
-    return /^\s*\|?\s*:?-{3,}/.test(line || '');
-  }
-  function mdToHtml(src) {
-    src = String(src || '').replace(/\r\n/g, '\n');
-    var lines = src.split('\n');
-    var out = [];
-    var i = 0;
-    while (i < lines.length) {
-      var line = lines[i];
-      if (/^```/.test(line)) {
-        var buf = [];
-        i++;
-        while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
-        if (i < lines.length) i++;
-        out.push('<pre><code>' + esc(buf.join('\n')) + '</code></pre>');
-        continue;
-      }
-      if (/^\s*\|/.test(line) && i + 1 < lines.length && isSepRow(lines[i + 1])) {
-        var heads = splitRow(line);
-        i += 2;
-        var rows = [];
-        while (i < lines.length && /^\s*\|/.test(lines[i]) && !isSepRow(lines[i])) {
-          rows.push(splitRow(lines[i]));
-          i++;
-        }
-        var h = '<table><thead><tr>' + heads.map(function (c) { return '<th>' + mdInline(c) + '</th>'; }).join('') + '</tr></thead><tbody>';
-        rows.forEach(function (r) {
-          h += '<tr>' + r.map(function (c) { return '<td>' + mdInline(c) + '</td>'; }).join('') + '</tr>';
-        });
-        out.push(h + '</tbody></table>');
-        continue;
-      }
-      if (/^\s*---+\s*$/.test(line)) { out.push('<hr>'); i++; continue; }
-      var hm = /^(#{1,3})\s+(.+)$/.exec(line);
-      if (hm) {
-        out.push('<h' + hm[1].length + '>' + mdInline(hm[2]) + '</h' + hm[1].length + '>');
-        i++; continue;
-      }
-      if (/^\s*[-*]\s+/.test(line)) {
-        var items = [];
-        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-          items.push('<li>' + mdInline(lines[i].replace(/^\s*[-*]\s+/, '')) + '</li>');
-          i++;
-        }
-        out.push('<ul>' + items.join('') + '</ul>');
-        continue;
-      }
-      if (!String(line).trim()) { i++; continue; }
-      var para = [line];
-      i++;
-      while (i < lines.length && String(lines[i]).trim() && !/^(#{1,3}\s|```|\s*\||\s*---+\s*$|\s*[-*]\s+)/.test(lines[i])) {
-        para.push(lines[i]);
-        i++;
-      }
-      out.push('<p>' + mdInline(para.join(' ')) + '</p>');
-    }
-    return out.join('');
-  }
-  var apiDocMd = '';
-  function paintApiDocs(md) {
-    var el = document.getElementById('apiDocs');
-    if (!el) return;
-    var live = location.origin;
-    var text = String(md || '').replace(/http:\/\/127\.0\.0\.1:3777/g, live);
-    el.innerHTML =
-      '<div class="kv"><span class="k">当前 Base URL</span><span class="v"><code>' + esc(live) + '/api/v1</code></span></div>' +
-      mdToHtml(text);
-  }
-  function renderApiDocs() {
-    var el = document.getElementById('apiDocs');
-    if (!el) return;
-    if (apiDocMd) { paintApiDocs(apiDocMd); return; }
-    fetch('/api/admin/api-docs').then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-      .then(function (res) {
-        if (!res.ok || !res.data || !res.data.markdown) {
-          el.innerHTML = '<p>' + esc((res.data && res.data.detail) || '文档加载失败') + '</p>';
-          return;
-        }
-        apiDocMd = res.data.markdown;
-        paintApiDocs(apiDocMd);
-      }).catch(function (e) {
-        el.innerHTML = '<p>' + esc(e.message || '文档加载失败') + '</p>';
-      });
-  }
-  function showApiSecret(secret) {
-    var modal = document.getElementById('apiKeyModal');
-    var text = document.getElementById('apiKeySecretText');
-    if (text) text.textContent = secret || '';
-    if (modal) modal.hidden = false;
-  }
-  function hideApiSecret() {
-    var modal = document.getElementById('apiKeyModal');
-    if (modal) modal.hidden = true;
-  }
-  function renderApiKeys(keys) {
-    apiKeysCache = keys || [];
-    var tbody = document.getElementById('apiKeyBody');
-    var logSel = document.getElementById('apiLogKey');
-    var logCur = logSel ? logSel.value : '';
-    if (logSel) {
-      var oh = '<option value="">全部密钥</option>';
-      apiKeysCache.forEach(function (k) {
-        oh += '<option value="' + k.id + '">' + esc(k.name) + '（' + esc(k.display) + '）</option>';
-      });
-      logSel.innerHTML = oh;
-      logSel.value = logCur;
-    }
-    if (!tbody) return;
-    if (!apiKeysCache.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="files-muted">还没有密钥。填写名称后点「生成密钥」。</td></tr>';
-      return;
-    }
-    tbody.innerHTML = '';
-    apiKeysCache.forEach(function (k) {
-      var tr = document.createElement('tr');
-      var st = k.status === 'active' ? '<span class="badge st-done">启用</span>' : '<span class="badge st-failed">停用</span>';
-      var toggle = k.status === 'active' ? '停用' : '启用';
-      var toggleTo = k.status === 'active' ? 'disabled' : 'active';
-      var keyCell = k.secret
-        ? '<code class="api-secret" title="' + esc(k.secret) + '">' + esc(k.secret) + '</code>' +
-          '<button type="button" class="mini" data-api-act="copy" data-id="' + k.id + '" style="margin-left:6px">复制</button>'
-        : '<span class="mono">' + esc(k.display) + '</span><div style="font-size:11.5px;color:#98a2b6;margin-top:2px">旧密钥未保存明文，请删除后重新生成</div>';
-      tr.innerHTML =
-        '<td class="td-name" title="' + esc(k.note || k.name) + '">' + esc(k.name) +
-          (k.note ? '<div style="font-size:11.5px;color:#98a2b6;margin-top:2px">' + esc(k.note) + '</div>' : '') + '</td>' +
-        '<td class="td-name">' + keyCell + '</td>' +
-        '<td>' + esc(k.ownerUsername || 'api:' + k.name) + '</td>' +
-        '<td>' + st + '</td>' +
-        '<td>' + (k.callCount || 0) + '</td>' +
-        '<td>' + esc(k.lastUsedAt || '—') + '</td>' +
-        '<td>' + esc((k.expireAt || '').slice(0, 10) || '永久') + '</td>' +
-        '<td class="ops">' +
-          '<button type="button" class="mini" data-api-act="toggle" data-id="' + k.id + '" data-to="' + toggleTo + '">' + toggle + '</button>' +
-          '<button type="button" class="mini" data-api-act="del" data-id="' + k.id + '">删除</button>' +
-        '</td>';
-      tbody.appendChild(tr);
-    });
-  }
-  function httpBadge(code) {
-    var n = parseInt(code, 10) || 0;
-    var cls = n >= 500 ? 'st-5xx' : (n >= 400 ? 'st-4xx' : 'st-2xx');
-    return '<span class="badge ' + cls + '">' + n + '</span>';
-  }
-  function renderApiLogs(j) {
-    var tbody = document.getElementById('apiLogBody');
-    var items = (j && j.items) || [];
-    var st = (j && j.stats) || {};
-    var keysEl = document.getElementById('apiStKeys');
-    var todayEl = document.getElementById('apiStToday');
-    var errEl = document.getElementById('apiStErr');
-    if (keysEl) keysEl.textContent = st.keysActive != null ? st.keysActive : '—';
-    if (todayEl) todayEl.textContent = st.today != null ? st.today : '—';
-    if (errEl) errEl.textContent = st.errorsToday != null ? st.errorsToday : '—';
-    setApiReqBadge(st.pendingRequests);
-    if (!tbody) return;
-    if (!items.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="files-muted">暂无调用记录</td></tr>';
-    } else {
-      tbody.innerHTML = items.map(function (it) {
-        var tid = it.taskId
-          ? '<a href="/t/' + encodeURIComponent(it.taskId) + '" target="_blank" rel="noopener">' + esc(it.taskId) + '</a>'
-          : '—';
-        return '<tr>' +
-          '<td>' + esc(it.createdAt) + '</td>' +
-          '<td title="' + esc(it.keyPrefix) + '">' + esc(it.keyName || it.keyPrefix || '—') + '</td>' +
-          '<td class="mono">' + esc(it.method) + '</td>' +
-          '<td class="td-clip" title="' + esc(it.path) + '">' + esc(it.path) + '</td>' +
-          '<td>' + httpBadge(it.statusCode) + '</td>' +
-          '<td>' + (it.durationMs || 0) + 'ms</td>' +
-          '<td class="mono">' + esc(it.ip || '—') + '</td>' +
-          '<td class="td-clip">' + tid + '</td>' +
-          '<td class="td-clip" title="' + esc(it.error) + '">' + esc(it.error || '') + '</td>' +
-        '</tr>';
-      }).join('');
-    }
-    var total = (j && j.total) || 0;
-    var pages = Math.max(1, Math.ceil(total / API_LOG_PAGE));
-    if (apiLogPage > pages) apiLogPage = pages;
-    var pager = document.getElementById('apiLogPager');
-    var info = document.getElementById('apiLogInfo');
-    var prev = document.getElementById('apiLogPrev');
-    var next = document.getElementById('apiLogNext');
-    if (pager) pager.hidden = pages <= 1 && total <= API_LOG_PAGE;
-    if (info) info.textContent = '第 ' + apiLogPage + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
-    if (prev) prev.disabled = apiLogPage <= 1;
-    if (next) next.disabled = apiLogPage >= pages;
-  }
-  function loadApiRequests() {
-    return apiHttp('/api/admin/api-requests').then(function (res) {
-      var box = document.getElementById('apiReqList');
-      if (!res.ok) {
-        if (box) box.innerHTML = '<div class="files-muted">' + esc((res.data && res.data.detail) || '加载失败') + '</div>';
-        return;
-      }
-      setApiReqBadge(res.data.pending);
-      var items = res.data.requests || [];
-      if (!box) return;
-      if (!items.length) {
-        box.innerHTML = '<div class="files-muted">暂无用户申请。用户可在主界面用户名下拉菜单中提交。</div>';
-        return;
-      }
-      box.innerHTML = items.map(function (it) {
-        var st = it.status === 'approved' ? '<span class="badge st-done">已通过</span>'
-          : (it.status === 'rejected' ? '<span class="badge st-failed">已拒绝</span>'
-            : (it.status === 'revoked' ? '<span class="badge st-failed">密钥已停用</span>' : '<span class="badge st-planned">待审核</span>'));
-        var ops = it.status === 'pending'
-          ? '<button type="button" class="mini" data-req-act="approve" data-id="' + it.id + '">通过</button>' +
-            '<button type="button" class="mini" data-req-act="reject" data-id="' + it.id + '">拒绝</button>'
-          : '';
-        var extra = it.rejectReason ? '<div style="font-size:12px;color:#c5221f;margin-top:4px">拒绝：' + esc(it.rejectReason) + '</div>' : '';
-        return '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px dashed #eef1f6">' +
-          '<div style="flex:1;min-width:0"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">' +
-          st + '<b>' + esc(it.realName || it.username) + '</b><span style="font-size:12px;color:#8a93a6">' +
-          esc(it.department || '') + (it.username ? ' · ' + esc(it.username) : '') + ' · ' + esc(it.createdAt) + '</span></div>' +
-          '<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">' + esc(it.purpose) + '</div>' + extra + '</div>' +
-          '<div class="ops">' + ops + '</div></div>';
-      }).join('');
-    }).catch(function (e) {
-      var box = document.getElementById('apiReqList');
-      if (box) box.innerHTML = '<div class="files-muted">' + esc(e.message || '加载失败') + '</div>';
-    });
-  }
-  function setApiReqBadge(n) {
-    var b = document.getElementById('apiReqBadge');
-    if (!b) return;
-    n = parseInt(n, 10) || 0;
-    if (n > 0) { b.hidden = false; b.textContent = n > 99 ? '99+' : String(n); }
-    else { b.hidden = true; b.textContent = ''; }
-  }
-  function refreshApiReqBadge() {
-    fetch('/api/admin/api-requests').then(function (r) { return r.json(); }).then(function (j) {
-      if (j && j.ok) setApiReqBadge(j.pending);
-    }).catch(function () {});
-  }
-  function loadApiKeys() {
-    return apiHttp('/api/admin/apikeys').then(function (res) {
-      if (!res.ok) { sayApi(false, (res.data && res.data.detail) || '密钥列表加载失败'); return; }
-      renderApiKeys(res.data.keys || []);
-    }).catch(function (e) { sayApi(false, '密钥列表加载失败：' + e.message); });
-  }
-  function loadApiLogs() {
-    var keyId = (document.getElementById('apiLogKey') || {}).value || '';
-    var status = (document.getElementById('apiLogStatus') || {}).value || '';
-    var q = (document.getElementById('apiLogQ') || {}).value || '';
-    var since = (document.getElementById('apiLogSince') || {}).value || '';
-    var until = (document.getElementById('apiLogUntil') || {}).value || '';
-    var qs = 'limit=' + API_LOG_PAGE + '&offset=' + ((apiLogPage - 1) * API_LOG_PAGE);
-    if (keyId) qs += '&keyId=' + encodeURIComponent(keyId);
-    if (status) qs += '&status=' + encodeURIComponent(status);
-    if (q) qs += '&q=' + encodeURIComponent(q);
-    if (since) qs += '&since=' + encodeURIComponent(since);
-    if (until) qs += '&until=' + encodeURIComponent(until);
-    return apiHttp('/api/admin/api-logs?' + qs).then(function (res) {
-      if (!res.ok) {
-        document.getElementById('apiLogBody').innerHTML = '<tr><td colspan="9">' + esc((res.data && res.data.detail) || '加载失败') + '</td></tr>';
-        return;
-      }
-      renderApiLogs(res.data);
-    }).catch(function (e) {
-      var tbody = document.getElementById('apiLogBody');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="9">' + esc(e.message || '加载失败') + '</td></tr>';
-    });
-  }
-  function loadOpenApi(quiet) {
-    renderApiDocs();
-    fetch('/api/admin/users').then(function (r) { return r.json(); }).then(function (j) {
-      if (j && j.ok) fillApiOwnerSelect(j.users || []);
-    }).catch(function () {});
-    loadApiKeys();
-    loadApiRequests();
-    if (!quiet) apiLogPage = apiLogPage || 1;
-    loadApiLogs();
-  }
-  document.getElementById('apiKeyCreate').addEventListener('click', function () {
-    var name = (document.getElementById('apiKeyName').value || '').trim();
-    if (!name) { sayApi(false, '请填写密钥名称'); return; }
-    var btn = document.getElementById('apiKeyCreate');
-    btn.disabled = true;
-    apiHttp('/api/admin/apikeys', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: name,
-        note: (document.getElementById('apiKeyNote').value || '').trim(),
-        ownerUsername: document.getElementById('apiKeyOwner').value || '',
-        expireAt: document.getElementById('apiKeyExpire').value || ''
-      })
-    }).then(function (res) {
-      if (res.ok && res.data.ok) {
-        sayApi(true, '已生成密钥');
-        document.getElementById('apiKeyName').value = '';
-        document.getElementById('apiKeyNote').value = '';
-        document.getElementById('apiKeyExpire').value = '';
-        showApiSecret((res.data.key || {}).secret || '');
-        loadApiKeys();
-      } else sayApi(false, (res.data && res.data.detail) || '创建失败');
-    }).catch(function (e) { sayApi(false, e.message); })
-    .finally(function () { btn.disabled = false; });
-  });
-  document.getElementById('apiKeyBody').addEventListener('click', function (e) {
-    var btn = e.target.closest ? e.target.closest('button[data-api-act]') : null;
-    if (!btn) return;
-    var id = btn.getAttribute('data-id');
-    var act = btn.getAttribute('data-api-act');
-    if (act === 'toggle') {
-      var to = btn.getAttribute('data-to');
-      apiHttp('/api/admin/apikeys/' + id, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: to })
-      }).then(function (res) {
-        if (res.ok && res.data.ok) { sayApi(true, to === 'active' ? '已启用' : '已停用'); loadApiKeys(); loadApiLogs(); }
-        else sayApi(false, (res.data && res.data.detail) || '更新失败');
-      });
-    } else if (act === 'copy') {
-      var secret = '';
-      (apiKeysCache || []).forEach(function (k) {
-        if (String(k.id) === String(id)) secret = k.secret || '';
-      });
-      if (!secret) { sayApi(false, '没有可复制的明文'); return; }
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(secret).then(function () { sayApi(true, '已复制 API Key'); }).catch(function () {});
-      }
-    } else if (act === 'del') {
-      if (!confirm('删除该密钥后，使用它的调用将立即失败。确定删除？')) return;
-      apiHttp('/api/admin/apikeys/' + id, { method: 'DELETE' }).then(function (res) {
-        if (res.ok && res.data.ok) { sayApi(true, '已删除'); loadApiKeys(); }
-        else sayApi(false, (res.data && res.data.detail) || '删除失败');
-      });
-    }
-  });
-  document.getElementById('apiLogReload').addEventListener('click', function () { apiLogPage = 1; loadApiLogs(); });
-  document.getElementById('apiLogKey').addEventListener('change', function () { apiLogPage = 1; loadApiLogs(); });
-  document.getElementById('apiLogStatus').addEventListener('change', function () { apiLogPage = 1; loadApiLogs(); });
-  document.getElementById('apiLogQ').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { apiLogPage = 1; loadApiLogs(); }
-  });
-  document.getElementById('apiLogPrev').addEventListener('click', function () { if (apiLogPage > 1) { apiLogPage--; loadApiLogs(); } });
-  document.getElementById('apiLogNext').addEventListener('click', function () { apiLogPage++; loadApiLogs(); });
-  document.getElementById('apiLogPurge').addEventListener('click', function () {
-    if (!confirm('清除 30 天前的调用历史？此操作不可恢复。')) return;
-    apiHttp('/api/admin/api-logs?days=30', { method: 'DELETE' }).then(function (res) {
-      if (res.ok && res.data.ok) { sayApi(true, '已删除 ' + (res.data.deleted || 0) + ' 条'); apiLogPage = 1; loadApiLogs(); }
-      else sayApi(false, (res.data && res.data.detail) || '清理失败');
-    });
-  });
-  document.getElementById('apiKeyCopy').addEventListener('click', function () {
-    var t = (document.getElementById('apiKeySecretText') || {}).textContent || '';
-    if (!t) return;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(t).then(function () { sayApi(true, '已复制到剪贴板'); }).catch(function () {});
-    }
-  });
-  var apiDocDl = document.getElementById('apiDocDownload');
-  if (apiDocDl) apiDocDl.addEventListener('click', function (e) {
-    e.preventDefault();
-    fetch('/api/openapi/guide').then(function (r) {
-      if (!r.ok) throw new Error('下载失败');
-      return r.blob();
-    }).then(function (blob) {
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = '申报书开放API文档.md';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
-    }).catch(function (err) { sayApi(false, err.message || '下载失败'); });
-  });
-  document.getElementById('apiKeyModalClose').addEventListener('click', hideApiSecret);
-  document.getElementById('apiKeyModal').addEventListener('click', function (e) {
-    if (e.target === this) hideApiSecret();
-  });
-  document.getElementById('apiReqList').addEventListener('click', function (e) {
-    var btn = e.target.closest ? e.target.closest('button[data-req-act]') : null;
-    if (!btn) return;
-    var id = btn.getAttribute('data-id');
-    var act = btn.getAttribute('data-req-act');
-    var body = { action: act };
-    if (act === 'reject') {
-      var reason = window.prompt('拒绝原因（可留空）', '') || '';
-      body.reason = reason;
-    } else if (!confirm('通过后将生成 API Key，并在密钥列表中可见。确定通过？')) {
-      return;
-    }
-    apiHttp('/api/admin/api-requests/' + id + '/review', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }).then(function (res) {
-      if (!res.ok) { sayApi(false, (res.data && res.data.detail) || '处理失败'); return; }
-      sayApi(true, act === 'approve' ? '已通过并生成密钥' : '已拒绝');
-      if (act === 'approve' && res.data.key && res.data.key.secret) showApiSecret(res.data.key.secret);
-      loadApiRequests();
-      loadApiKeys();
-    });
-  });
-
-  /* 各群记录看板已抽到 /public/wecom-board.js */
-
-  /* ===== 系统信息 ===== */
-  function kv(k, v) { return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>'; }
-  function loadSystem() {
-    fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
-      var ed = cfg.edit || {};
-      var okCnt = ['grok', 'gemini', 'doubao'].filter(function (f) { return ed[f] && ed[f].hasKey; }).length;
-      document.getElementById('sysBasic').innerHTML =
-        kv('系统版本', 'v' + esc(cfg.version || '')) +
-        kv('部署方式', '本地单机 · 端口 3777') +
-        kv('模型接入', '<span class="' + (okCnt ? 'dot-ok' : 'dot-bad') + '">●</span> ' + okCnt + ' / 3 已配置') +
-        kv('配置状态', cfg.configured ? '<span class="dot-ok">●</span> 正常' : '<span class="dot-bad">●</span> 未配置');
-      var rows = '';
-      ['grok', 'gemini', 'doubao'].forEach(function (f) {
-        var m = ed[f] || {};
-        rows += '<div class="model-row">' +
-          '<span class="mn">' + esc(m.label || f) + '</span>' +
-          '<span class="mid" title="' + esc(m.id || '') + '">' + esc(m.id || '') + '</span>' +
-          '<span class="' + (m.hasKey ? 'dot-ok' : 'dot-bad') + '">● ' + (m.hasKey ? '密钥已配置' : '未配置密钥') + '</span>' +
-        '</div>';
-      });
-      document.getElementById('sysModels').innerHTML = rows;
-      renderDataCard();
-    }).catch(function (e) {
-      document.getElementById('sysBasic').innerHTML = '<div class="kv"><span class="k">加载失败</span><span class="v">' + esc(e.message || '') + '</span></div>';
-    });
-  }
-
-  function renderDataCard() {
-    var el = document.getElementById('sysData');
-    if (!el) return;
-    el.innerHTML =
-      kv('用户数据库', '<span class="dot-ok">●</span> MySQL 已连接') +
-      kv('账号总数', userCount + ' 人') +
-      kv('任务存储', totals.tasks + ' 个任务') +
-      kv('批次存储', totals.batches + ' 个批次');
-  }
-
-  var alertLogFilter = '';
-  function alertKindLabel(k) {
-    return ({ task_failed: '任务失败', feedback: '用户反馈', watch_pending: '值班待审', group_issue: '群内重要问题', test: '试发' }[k] || k || '');
-  }
-  function alertFormDirty() {
-    var w = document.getElementById('alertWebhook');
-    if (w && (w.value || '').trim()) return true;
-    var sec = document.getElementById('sec-alert');
-    var a = document.activeElement;
-    return !!(sec && a && sec.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName || ''));
-  }
-  function renderAlertLeaders(rows) {
-    var box = document.getElementById('alertLeaders');
-    if (!box) return;
-    var list = (rows && rows.length) ? rows : [{ department: '*', name: '', userid: '' }];
-    box.innerHTML = list.map(function (row) {
-      return '<div class="leader-row">' +
-        '<div class="f-row" style="margin:0"><label>部门</label><div class="inp"><input data-k="department" value="' + escAttr(row.department || '') + '" placeholder="如 申报部 或 *"></div></div>' +
-        '<div class="f-row" style="margin:0"><label>姓名</label><div class="inp"><input data-k="name" value="' + escAttr(row.name || '') + '" placeholder="显示用"></div></div>' +
-        '<div class="f-row" style="margin:0"><label>userid</label><div class="inp"><input data-k="userid" value="' + escAttr(row.userid || '') + '" placeholder="企微账号"></div></div>' +
-        '<button type="button" class="mini alert-leader-del">删除</button>' +
-        '</div>';
-    }).join('');
-  }
-  var ISSUE_WATCH_DEFAULTS = ['低级错误','怎么回事','什么时候','？','到底','尽快','急','人呢？','今天能交/给我吗','涉嫌造假','重复','效率差'];
-  function fillIssueWatch(d) {
-    d = d || {};
-    var en = document.getElementById('issueWatchEnabled');
-    var ta = document.getElementById('issueWatchKeywords');
-    if (en) en.checked = d.enabled !== false;
-    if (ta) {
-      var kws = (d.keywords && d.keywords.length) ? d.keywords : (d.defaults || ISSUE_WATCH_DEFAULTS);
-      ta.value = kws.join('\n');
-    }
-  }
-  function collectIssueWatch() {
-    return {
-      enabled: !!(document.getElementById('issueWatchEnabled') || {}).checked,
-      level: 'P0',
-      keywords: ((document.getElementById('issueWatchKeywords') || {}).value || '').trim()
-    };
-  }
-  function collectAlertLeaders() {
-    var box = document.getElementById('alertLeaders');
-    var out = [];
-    if (!box) return out;
-    box.querySelectorAll('.leader-row').forEach(function (row) {
-      out.push({
-        department: ((row.querySelector('[data-k="department"]') || {}).value || '').trim(),
-        name: ((row.querySelector('[data-k="name"]') || {}).value || '').trim(),
-        userid: ((row.querySelector('[data-k="userid"]') || {}).value || '').trim()
-      });
-    });
-    return out;
-  }
-  function setDueBcDot(d, parent) {
-    var el = document.getElementById('dueBcDot');
-    if (!el) return;
-    var hookOk = !!(d && d.webhookReady) || !!(parent && (parent.hasWebhook || parent.configured));
-    if (!hookOk) { el.style.color = 'var(--bad)'; el.textContent = '● 未配置 Webhook'; return; }
-    if (!d || !d.enabled) { el.style.color = '#d97706'; el.textContent = '● 已关闭（Webhook 可用）'; return; }
-    el.style.color = 'var(--ok)'; el.textContent = '● 定时开启 · ' + ((d.times || []).join('、') || '—');
-  }
-  function fillDueBroadcast(d, quiet, parent) {
-    d = d || {};
-    if (parent && (parent.hasWebhook || parent.configured)) d.webhookReady = true;
-    setDueBcDot(d, parent);
-    var en = document.getElementById('dueBcEnabled');
-    var tm = document.getElementById('dueBcTimes');
-    var sla = document.getElementById('dueBcSla');
-    var rec = document.getElementById('dueBcRecent');
-    var mx = document.getElementById('dueBcMax');
-    var wk = document.getElementById('dueBcSkipWeekend');
-    var wo = document.getElementById('dueBcWecomOnly');
-    var em = document.getElementById('dueBcSendEmpty');
-    var pre = document.getElementById('dueBcPreview');
-    var hint = document.getElementById('dueBcHint');
-    if (!quiet) {
-      if (en) en.checked = !!d.enabled;
-      if (tm) tm.value = (d.times || []).join(',');
-      if (sla) sla.value = d.slaWorkdays == null ? 1 : d.slaWorkdays;
-      if (rec) rec.value = d.recentDays == null ? 14 : d.recentDays;
-      if (mx) mx.value = d.maxLines == null ? 20 : d.maxLines;
-      if (wk) wk.checked = d.skipWeekend !== false;
-      if (wo) wo.checked = !!d.wecomOnly;
-      if (em) em.checked = !!d.sendIfEmpty;
-    }
-    if (pre) pre.textContent = d.preview || '（暂无预览）';
-    if (hint) {
-      var bits = [];
-      if (d.lastRunAt) bits.push('上次 ' + d.lastRunAt);
-      if (d.lastNote) bits.push(d.lastNote);
-      if (d.lastError) bits.push('错误：' + d.lastError);
-      bits.push('待交付 ' + (d.pending || 0) + ' 份');
-      hint.textContent = bits.join(' · ');
-    }
-  }
-  function collectDueBroadcast() {
-    return {
-      enabled: !!(document.getElementById('dueBcEnabled') || {}).checked,
-      times: ((document.getElementById('dueBcTimes') || {}).value || '').trim(),
-      slaWorkdays: Number((document.getElementById('dueBcSla') || {}).value || 1),
-      recentDays: Number((document.getElementById('dueBcRecent') || {}).value || 14),
-      maxLines: Number((document.getElementById('dueBcMax') || {}).value || 20),
-      skipWeekend: !!(document.getElementById('dueBcSkipWeekend') || {}).checked,
-      wecomOnly: !!(document.getElementById('dueBcWecomOnly') || {}).checked,
-      sendIfEmpty: !!(document.getElementById('dueBcSendEmpty') || {}).checked
-    };
-  }
-  function setAlertDot(j) {
-    var el = document.getElementById('alertStatusDot');
-    if (!el) return;
-    if (!j || !j.configured) { el.style.color = 'var(--bad)'; el.textContent = '● 未配置 Webhook'; return; }
-    if (!j.enabled) { el.style.color = '#d97706'; el.textContent = '● 已配置但关闭'; return; }
-    el.style.color = 'var(--ok)'; el.textContent = '● 推送开启';
-  }
-  function renderAlertLogs(logs) {
-    var body = document.getElementById('alertLogBody');
-    if (!body) return;
-    if (!logs || !logs.length) {
-      body.innerHTML = '<tr><td colspan="5" style="color:#8a93a6">尚无发送记录</td></tr>';
-      return;
-    }
-    body.innerHTML = logs.map(function (row) {
-      var ok = !!row.ok;
-      var tags = [];
-      if (row.mentionedMobile && row.mentionedMobile.length) {
-        tags = tags.concat(row.mentionedMobile.map(function (m) { return '@' + m; }));
-      }
-      if (row.mentioned && row.mentioned.length) {
-        tags = tags.concat(row.mentioned.map(function (m) { return '@' + m; }));
-      }
-      var extra = ok ? (tags.length ? tags.join(' ') : '—') : esc(row.error || '失败');
-      var bodyTxt = esc(row.body || '');
-      return '<tr>' +
-        '<td>' + esc(row.at || '') + '</td>' +
-        '<td><strong>' + esc(row.level || '') + '</strong><div class="alert-kind">' + esc(alertKindLabel(row.kind)) + '</div></td>' +
-        '<td><div>' + esc(row.title || '') + '</div>' + (bodyTxt ? '<div class="alert-body">' + bodyTxt + '</div>' : '') + '</td>' +
-        '<td>' + (ok ? '<span class="dot-ok">成功</span>' : '<span class="dot-bad">失败</span>') + '</td>' +
-        '<td>' + extra + '</td>' +
-        '</tr>';
-    }).join('');
-  }
-  function loadAlertPanel(quiet) {
-    fetch('/api/admin/alert', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
-      if (!j || !j.ok) throw new Error((j && j.detail) || '无法读取告警配置');
-      setAlertDot(j);
-      if (!quiet || !alertFormDirty()) {
-        var en = document.getElementById('alertEnabled');
-        var lv = document.getElementById('alertMinLevel');
-        var du = document.getElementById('alertDedupe');
-        var pb = document.getElementById('alertPublicBase');
-        var hint = document.getElementById('alertWebhookHint');
-        var hook = document.getElementById('alertWebhook');
-        if (en) en.checked = !!j.enabled;
-        if (lv) lv.value = j.minLevel || 'P1';
-        if (du) du.value = j.dedupeMinutes == null ? 15 : j.dedupeMinutes;
-        if (pb) pb.value = j.publicBaseUrl || '';
-        if (hint) hint.textContent = j.configured
-          ? ('当前密钥尾号 ' + (j.webhookHint || '已配置') + ' · 留空保存不修改')
-          : '群「… → 消息推送」里复制地址';
-        if (hook) hook.placeholder = j.configured ? '已配置，留空不修改' : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…';
-        renderAlertLeaders(j.leaders);
-      }
-      if (!quiet || !alertFormDirty()) fillIssueWatch(j.issueWatch);
-      fillDueBroadcast(j.dueBroadcast, quiet, j);
-      var logs = j.logs || [];
-      if (alertLogFilter === 'ok') logs = logs.filter(function (x) { return x.ok; });
-      if (alertLogFilter === 'fail') logs = logs.filter(function (x) { return !x.ok; });
-      renderAlertLogs(logs);
-    }).catch(function (e) {
-      setAlertDot({ configured: false });
-      var body = document.getElementById('alertLogBody');
-      if (body && !quiet) body.innerHTML = '<tr><td colspan="5" class="dot-bad">' + esc(e.message || '加载失败') + '</td></tr>';
-    });
-  }
-  var alertSaveBtn = document.getElementById('alertSaveBtn');
-  if (alertSaveBtn) {
-    alertSaveBtn.addEventListener('click', function () {
-      var msg = document.getElementById('alertMsg');
-      var payload = {
-        enabled: !!(document.getElementById('alertEnabled') || {}).checked,
-        minLevel: (document.getElementById('alertMinLevel') || {}).value || 'P1',
-        dedupeMinutes: Number((document.getElementById('alertDedupe') || {}).value || 15),
-        publicBaseUrl: ((document.getElementById('alertPublicBase') || {}).value || '').trim(),
-        leaders: collectAlertLeaders(),
-        issueWatch: collectIssueWatch()
-      };
-      var hook = ((document.getElementById('alertWebhook') || {}).value || '').trim();
-      if (hook) payload.webhook = hook;
-      alertSaveBtn.disabled = true;
-      postConfig({ alert: payload }).then(function (res) {
-        if (msg) {
-          msg.className = 'msg ' + (res.ok ? 'ok' : 'bad');
-          msg.textContent = res.ok ? '已保存' : ((res.data && res.data.detail) || '保存失败');
-        }
-        if (res.ok) {
-          var w = document.getElementById('alertWebhook');
-          if (w) w.value = '';
-          loadAlertPanel();
-        }
-      }).catch(function (e) {
-        if (msg) { msg.className = 'msg bad'; msg.textContent = e.message || '保存失败'; }
-      }).finally(function () { alertSaveBtn.disabled = false; });
-    });
-  }
-  var alertTestBtn = document.getElementById('alertTestBtn');
-  if (alertTestBtn) {
-    alertTestBtn.addEventListener('click', function () {
-      var msg = document.getElementById('alertMsg');
-      alertTestBtn.disabled = true;
-      fetch('/api/admin/alert/test', { method: 'POST' })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-        .then(function (res) {
-          if (msg) {
-            msg.className = 'msg ' + (res.ok ? 'ok' : 'bad');
-            msg.textContent = res.ok ? '已发到告警群' : ((res.data && res.data.detail) || '发送失败');
-          }
-          loadAlertPanel(true);
-        })
-        .catch(function (e) {
-          if (msg) { msg.className = 'msg bad'; msg.textContent = e.message || '发送失败'; }
-        })
-        .finally(function () { alertTestBtn.disabled = false; });
-    });
-  }
-  var issueWatchReset = document.getElementById('issueWatchReset');
-  if (issueWatchReset) {
-    issueWatchReset.addEventListener('click', function () {
-      var ta = document.getElementById('issueWatchKeywords');
-      var en = document.getElementById('issueWatchEnabled');
-      if (ta) ta.value = ISSUE_WATCH_DEFAULTS.join('\n');
-      if (en) en.checked = true;
-    });
-  }
-  var dueBcSaveBtn = document.getElementById('dueBcSaveBtn');
-  if (dueBcSaveBtn) {
-    dueBcSaveBtn.addEventListener('click', function () {
-      var msg = document.getElementById('dueBcMsg');
-      dueBcSaveBtn.disabled = true;
-      postConfig({ alert: { dueBroadcast: collectDueBroadcast() } }).then(function (res) {
-        if (msg) {
-          msg.className = 'msg ' + (res.ok ? 'ok' : 'bad');
-          msg.textContent = res.ok ? '已保存' : ((res.data && res.data.detail) || '保存失败');
-        }
-        if (res.ok) loadAlertPanel();
-      }).catch(function (e) {
-        if (msg) { msg.className = 'msg bad'; msg.textContent = e.message || '保存失败'; }
-      }).finally(function () { dueBcSaveBtn.disabled = false; });
-    });
-  }
-  function dueBcPost(url, btn, okText) {
-    var msg = document.getElementById('dueBcMsg');
-    if (btn) btn.disabled = true;
-    fetch(url, { method: 'POST' })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-      .then(function (res) {
-        if (msg) {
-          msg.className = 'msg ' + (res.ok ? 'ok' : 'bad');
-          msg.textContent = res.ok
-            ? (okText + (res.data && res.data.skipped === 'empty' ? '（列表为空未发送）' : ''))
-            : ((res.data && res.data.detail) || '发送失败');
-        }
-        loadAlertPanel(true);
-      })
-      .catch(function (e) {
-        if (msg) { msg.className = 'msg bad'; msg.textContent = e.message || '发送失败'; }
-      })
-      .finally(function () { if (btn) btn.disabled = false; });
-  }
-  var dueBcTestBtn = document.getElementById('dueBcTestBtn');
-  if (dueBcTestBtn) dueBcTestBtn.addEventListener('click', function () {
-    dueBcPost('/api/admin/due-broadcast/test', dueBcTestBtn, '已试发到告警群');
-  });
-  var dueBcRunBtn = document.getElementById('dueBcRunBtn');
-  if (dueBcRunBtn) dueBcRunBtn.addEventListener('click', function () {
-    if (!confirm('按当前规则立即发一条正式播报到告警群？')) return;
-    dueBcPost('/api/admin/due-broadcast/run', dueBcRunBtn, '已播报到告警群');
-  });
-  var alertLeaderBox = document.getElementById('alertLeaders');
-  if (alertLeaderBox) {
-    alertLeaderBox.addEventListener('click', function (ev) {
-      var btn = ev.target && ev.target.closest ? ev.target.closest('.alert-leader-del') : null;
-      if (!btn) return;
-      var row = btn.closest('.leader-row');
-      if (row) row.remove();
-      if (!alertLeaderBox.querySelector('.leader-row')) renderAlertLeaders([]);
-    });
-  }
-  var alertLeaderAdd = document.getElementById('alertLeaderAdd');
-  if (alertLeaderAdd) {
-    alertLeaderAdd.addEventListener('click', function () {
-      var box = document.getElementById('alertLeaders');
-      if (!box) return;
-      var wrap = document.createElement('div');
-      wrap.innerHTML = '<div class="leader-row">' +
-        '<div class="f-row" style="margin:0"><label>部门</label><div class="inp"><input data-k="department" placeholder="如 申报部 或 *"></div></div>' +
-        '<div class="f-row" style="margin:0"><label>姓名</label><div class="inp"><input data-k="name" placeholder="显示用"></div></div>' +
-        '<div class="f-row" style="margin:0"><label>userid</label><div class="inp"><input data-k="userid" placeholder="企微账号"></div></div>' +
-        '<button type="button" class="mini alert-leader-del">删除</button>' +
-        '</div>';
-      box.appendChild(wrap.firstChild);
-    });
-  }
-  document.querySelectorAll('.alert-log-filter').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      alertLogFilter = btn.getAttribute('data-st') || '';
-      document.querySelectorAll('.alert-log-filter').forEach(function (b) { b.classList.toggle('active', b === btn); });
-      loadAlertPanel(true);
-    });
-  });
-  var alertLogRefresh = document.getElementById('alertLogRefresh');
-  if (alertLogRefresh) alertLogRefresh.addEventListener('click', function () { loadAlertPanel(true); });
-  var alertLogClear = document.getElementById('alertLogClear');
-  if (alertLogClear) {
-    alertLogClear.addEventListener('click', function () {
-      if (!confirm('清空本地发送日志？不影响已发出的群消息。')) return;
-      fetch('/api/admin/alert/logs', { method: 'DELETE' })
-        .then(function (r) { return r.json(); })
-        .then(function () { loadAlertPanel(true); })
-        .catch(function () {});
-    });
-  }
-
-  /* ===== 用户反馈 ===== */
-  var fbFilter = '';
-  var fbExpanded = {};
-  var fbAllItems = [];
-  var fbPage = 1;
-  var FB_PAGE_SIZE = 12;
-  var fbMsgEl = document.getElementById('fbAdminMsg');
-  function fbPreviewText(it) {
-    var t = String(it.content || '').replace(/\s+/g, ' ').trim();
-    if (!t && it.files && it.files.length) return '（' + it.files.length + ' 张截图）';
-    if (!t) return '（无文字）';
-    return t.length > 72 ? t.slice(0, 72) + '…' : t;
-  }
-  function fbIsOpen(it) {
-    if (fbExpanded[it.id] !== undefined) return !!fbExpanded[it.id];
-    return it.status === 'new';
-  }
-  function fbSetAll(open) {
-    var box = document.getElementById('fbAdminList');
-    if (!box) return;
-    box.querySelectorAll('.fb-item[data-id]').forEach(function (el) {
-      var id = el.getAttribute('data-id');
-      fbExpanded[id] = open;
-      el.classList.toggle('bd-collapsed', !open);
-    });
-  }
-  function sayFb(ok, t) {
-    if (!fbMsgEl) return;
-    fbMsgEl.className = 'msg ' + (ok ? 'ok' : 'bad');
-    fbMsgEl.textContent = t;
-    setTimeout(function () { if (fbMsgEl.textContent === t) fbMsgEl.textContent = ''; }, 4000);
-  }
-  function fbLabel(st) {
-    if (st === 'done') return '已处理';
-    if (st === 'read') return '已读';
-    return '待处理';
-  }
-  function setFbBadge(n) {
-    var b = document.getElementById('fbBadge');
-    if (!b) return;
-    if (n > 0) { b.hidden = false; b.textContent = n > 99 ? '99+' : String(n); }
-    else { b.hidden = true; b.textContent = ''; }
-  }
-  function fbFilteredItems() {
-    return fbFilter ? fbAllItems.filter(function (it) { return it.status === fbFilter; }) : fbAllItems;
-  }
-  function renderFbPager(total, page, pages) {
-    var pager = document.getElementById('fbAdminPager');
-    var info = document.getElementById('fbPageInfo');
-    var prev = document.getElementById('fbPagePrev');
-    var next = document.getElementById('fbPageNext');
-    if (!pager) return;
-    if (pages <= 1) {
-      pager.hidden = true;
-      if (info) info.textContent = total ? ('共 ' + total + ' 条') : '';
-      return;
-    }
-    pager.hidden = false;
-    if (info) info.textContent = '第 ' + page + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
-    if (prev) prev.disabled = page <= 1;
-    if (next) next.disabled = page >= pages;
-  }
-  function renderFeedbackList() {
-    var box = document.getElementById('fbAdminList');
-    var shown = fbFilteredItems();
-    var total = shown.length;
-    if (!total) {
-      revokeFbAuthBlobs();
-      box.innerHTML = '<div class="files-muted">暂无反馈</div>';
-      renderFbPager(0, 1, 1);
-      return;
-    }
-    var pages = Math.max(1, Math.ceil(total / FB_PAGE_SIZE));
-    if (fbPage > pages) fbPage = pages;
-    if (fbPage < 1) fbPage = 1;
-    var start = (fbPage - 1) * FB_PAGE_SIZE;
-    var pageItems = shown.slice(start, start + FB_PAGE_SIZE);
-    box.innerHTML = pageItems.map(function (it) {
-        var who = esc(it.realName || it.username || '') + (it.department ? ' · ' + esc(it.department) : '') + (it.username ? '（' + esc(it.username) + '）' : '');
-        var sum = fbPreviewText(it);
-        var open = fbIsOpen(it);
-        var imgs = (it.files || []).map(function (f) {
-          return '<a class="fb-img-link" href="' + esc(f.url) + '" data-auth-src="' + esc(f.url) + '"><img data-auth-src="' + esc(f.url) + '" alt="' + esc(f.name) + '"></a>';
-        }).join('');
-        var ops = '';
-        if (it.status === 'new') ops += '<button type="button" class="mini" data-act="read" data-id="' + it.id + '">标为已读</button>';
-        if (it.status !== 'done') ops += '<button type="button" class="mini" data-act="done" data-id="' + it.id + '">已处理</button>';
-        ops += '<button type="button" class="mini" data-act="del" data-id="' + it.id + '">删除</button>';
-        var replyHtml = '';
-        if (it.reply) {
-          replyHtml += '<div class="fb-reply"><span class="fb-rp-meta">管理员回复' + (it.replyAt ? ' · ' + esc(it.replyAt) : '') + '</span><span class="fb-rp-text">' + esc(it.reply) + '</span></div>';
-        }
-        replyHtml += '<div class="fb-reply-box">' +
-          '<input type="text" class="fb-reply-input" maxlength="4000" data-saved="' + escAttr(it.reply || '') + '" value="' + escAttr(it.reply || '') + '" placeholder="填写处理情况，回复给提交者…">' +
-          '<button type="button" class="mini" data-act="reply-send" data-id="' + it.id + '">' + (it.reply ? '更新回复' : '发送回复') + '</button>' +
-          '</div>';
-        return '<div class="fb-item' + (open ? '' : ' bd-collapsed') + '" data-id="' + it.id + '">' +
-          '<div class="fb-item-hd" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">' +
-          '<svg class="fb-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
-          '<span class="fb-st ' + esc(it.status || 'new') + '">' + esc(fbLabel(it.status)) + '</span>' +
-          '<span class="fb-meta"><span>' + who + '</span><span>' + esc(it.createdAt) + '</span></span>' +
-          '<span class="fb-sum' + (sum.indexOf('（') === 0 ? ' muted' : '') + '">' + esc(sum) + '</span>' +
-          '</div>' +
-          '<div class="fb-item-bd">' +
-          (it.content ? '<div class="fb-body">' + esc(it.content) + '</div>' : '<div class="fb-body" style="color:#98a2b6">（无文字，仅截图）</div>') +
-          (imgs ? '<div class="fb-imgs">' + imgs + '</div>' : '') +
-          replyHtml +
-          '<div class="fb-ops">' + ops + '</div>' +
-          '</div></div>';
-    }).join('');
-    revokeFbAuthBlobs();
-    if (window.sbBindAuthImages) fbAuthBlobs = window.sbBindAuthImages(box, []);
-    renderFbPager(total, fbPage, pages);
-  }
-  function loadFeedback() {
-    fetch('/api/feedback', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (res) {
-      fbAllItems = (res && res.items) || [];
-      setFbBadge(res && res.unread ? res.unread : 0);
-      renderFeedbackList();
-    }).catch(function (e) {
-      document.getElementById('fbAdminList').textContent = '加载失败：' + (e.message || '');
-      var pager = document.getElementById('fbAdminPager');
-      if (pager) pager.hidden = true;
-    });
-  }
-  document.querySelectorAll('.fb-filter').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      fbFilter = btn.getAttribute('data-st') || '';
-      fbPage = 1;
-      document.querySelectorAll('.fb-filter').forEach(function (b) { b.classList.toggle('active', b === btn); });
-      if (fbAllItems.length) renderFeedbackList();
-      else loadFeedback();
-    });
-  });
-  document.getElementById('fbPagePrev').addEventListener('click', function () {
-    if (fbPage <= 1) return;
-    fbPage--;
-    renderFeedbackList();
-    var sec = document.getElementById('sec-feedback');
-    if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-  document.getElementById('fbPageNext').addEventListener('click', function () {
-    var pages = Math.max(1, Math.ceil(fbFilteredItems().length / FB_PAGE_SIZE));
-    if (fbPage >= pages) return;
-    fbPage++;
-    renderFeedbackList();
-    var sec = document.getElementById('sec-feedback');
-    if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-  document.getElementById('fbExpandAll').addEventListener('click', function () { fbSetAll(true); });
-  document.getElementById('fbCollapseAll').addEventListener('click', function () { fbSetAll(false); });
-  document.getElementById('fbAdminList').addEventListener('keydown', function (ev) {
-    var hd = ev.target.closest ? ev.target.closest('.fb-item-hd') : null;
-    if (!hd || (ev.key !== 'Enter' && ev.key !== ' ')) return;
-    ev.preventDefault();
-    fbToggleItem(hd.closest ? hd.closest('.fb-item') : null);
-  });
-  var fbAuthBlobs = [];
-  function revokeFbAuthBlobs() {
-    fbAuthBlobs.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
-    fbAuthBlobs = [];
-  }
-  var fbPrev = { urls: [], names: [], i: 0, scale: 1, x: 0, y: 0, drag: null };
-  var FB_ZOOM_MIN = 0.25, FB_ZOOM_MAX = 8, FB_ZOOM_STEP = 1.25;
-  function fbPreviewClose() {
-    var mask = document.getElementById('fbPreview');
-    if (mask) mask.hidden = true;
-    fbPrev.drag = null;
-    var stage = document.getElementById('fbPreviewStage');
-    if (stage) stage.classList.remove('dragging');
-  }
-  function fbApplyZoom() {
-    var img = document.getElementById('fbPreviewImg');
-    var pct = document.getElementById('fbPreviewZoomPct');
-    var stage = document.getElementById('fbPreviewStage');
-    if (img) img.style.transform = 'translate(' + fbPrev.x + 'px,' + fbPrev.y + 'px) scale(' + fbPrev.scale + ')';
-    if (pct) pct.textContent = Math.round(fbPrev.scale * 100) + '%';
-    if (stage) stage.classList.toggle('zoomed', fbPrev.scale > 1.02);
-  }
-  function fbResetZoom() {
-    fbPrev.scale = 1;
-    fbPrev.x = 0;
-    fbPrev.y = 0;
-    fbApplyZoom();
-  }
-  function fbZoomTo(next, clientX, clientY) {
-    next = Math.max(FB_ZOOM_MIN, Math.min(FB_ZOOM_MAX, next));
-    var stage = document.getElementById('fbPreviewStage');
-    var s0 = fbPrev.scale || 1;
-    if (s0 <= 0) s0 = 1;
-    if (stage && clientX != null && clientY != null) {
-      var rect = stage.getBoundingClientRect();
-      var cx = clientX - (rect.left + rect.width / 2);
-      var cy = clientY - (rect.top + rect.height / 2);
-      var k = next / s0;
-      fbPrev.x = cx - (cx - fbPrev.x) * k;
-      fbPrev.y = cy - (cy - fbPrev.y) * k;
-    }
-    fbPrev.scale = next;
-    if (Math.abs(next - 1) < 0.02) {
-      fbPrev.scale = 1;
-      fbPrev.x = 0;
-      fbPrev.y = 0;
-    }
-    fbApplyZoom();
-  }
-  function fbPreviewShow(i) {
-    if (!fbPrev.urls.length) return;
-    fbPrev.i = (i + fbPrev.urls.length) % fbPrev.urls.length;
-    var img = document.getElementById('fbPreviewImg');
-    var cap = document.getElementById('fbPreviewCap');
-    if (img) {
-      img.alt = fbPrev.names[fbPrev.i] || '';
-      var url = fbPrev.urls[fbPrev.i] || '';
-      if (url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) {
-        img.src = url;
-      } else if (window.sbAuthBlob && url) {
-        var idx = fbPrev.i;
-        img.removeAttribute('src');
-        window.sbAuthBlob(url).then(function (u) {
-          fbAuthBlobs.push(u);
-          if (fbPrev.i !== idx) return;
-          fbPrev.urls[idx] = u;
-          img.src = u;
-        }).catch(function () {
-          if (fbPrev.i === idx) img.alt = '图片无法加载';
-        });
-      } else {
-        img.src = url;
-      }
-    }
-    if (cap) cap.textContent = fbPrev.names[fbPrev.i] || '';
-    var many = fbPrev.urls.length > 1;
-    var prev = document.getElementById('fbPreviewPrev');
-    var next = document.getElementById('fbPreviewNext');
-    if (prev) prev.hidden = !many;
-    if (next) next.hidden = !many;
-    var mask = document.getElementById('fbPreview');
-    if (mask) mask.hidden = false;
-    fbResetZoom();
-  }
-  document.getElementById('fbPreviewClose').addEventListener('click', fbPreviewClose);
-  document.getElementById('fbPreviewPrev').addEventListener('click', function (ev) { ev.stopPropagation(); fbPreviewShow(fbPrev.i - 1); });
-  document.getElementById('fbPreviewNext').addEventListener('click', function (ev) { ev.stopPropagation(); fbPreviewShow(fbPrev.i + 1); });
-  document.getElementById('fbPreviewZoomIn').addEventListener('click', function (ev) {
-    ev.stopPropagation();
-    fbZoomTo(fbPrev.scale * FB_ZOOM_STEP);
-  });
-  document.getElementById('fbPreviewZoomOut').addEventListener('click', function (ev) {
-    ev.stopPropagation();
-    fbZoomTo(fbPrev.scale / FB_ZOOM_STEP);
-  });
-  document.getElementById('fbPreviewZoomReset').addEventListener('click', function (ev) {
-    ev.stopPropagation();
-    fbResetZoom();
-  });
-  document.getElementById('fbPreview').addEventListener('click', function (ev) {
-    if (ev.target === this || ev.target.id === 'fbPreviewStage') fbPreviewClose();
-  });
-  var fbStage = document.getElementById('fbPreviewStage');
-  fbStage.addEventListener('wheel', function (ev) {
-    ev.preventDefault();
-    fbZoomTo(fbPrev.scale * (ev.deltaY < 0 ? FB_ZOOM_STEP : 1 / FB_ZOOM_STEP), ev.clientX, ev.clientY);
-  }, { passive: false });
-  fbStage.addEventListener('dblclick', function (ev) {
-    ev.preventDefault();
-    if (fbPrev.scale > 1.05) fbResetZoom();
-    else fbZoomTo(2, ev.clientX, ev.clientY);
-  });
-  fbStage.addEventListener('pointerdown', function (ev) {
-    if (ev.target.id !== 'fbPreviewImg') return;
-    if (fbPrev.scale <= 1.02) return;
-    fbPrev.drag = { x: ev.clientX, y: ev.clientY, ox: fbPrev.x, oy: fbPrev.y };
-    fbStage.classList.add('dragging');
-    try { fbStage.setPointerCapture(ev.pointerId); } catch (err) {}
-    ev.preventDefault();
-  });
-  fbStage.addEventListener('pointermove', function (ev) {
-    if (!fbPrev.drag) return;
-    fbPrev.x = fbPrev.drag.ox + (ev.clientX - fbPrev.drag.x);
-    fbPrev.y = fbPrev.drag.oy + (ev.clientY - fbPrev.drag.y);
-    fbApplyZoom();
-  });
-  function fbEndDrag() {
-    fbPrev.drag = null;
-    fbStage.classList.remove('dragging');
-  }
-  fbStage.addEventListener('pointerup', fbEndDrag);
-  fbStage.addEventListener('pointercancel', fbEndDrag);
-  document.getElementById('fbPreviewImg').addEventListener('dragstart', function (ev) { ev.preventDefault(); });
-  document.addEventListener('keydown', function (ev) {
-    var mask = document.getElementById('fbPreview');
-    if (!mask || mask.hidden) return;
-    if (ev.key === 'Escape') fbPreviewClose();
-    else if (ev.key === 'ArrowLeft') fbPreviewShow(fbPrev.i - 1);
-    else if (ev.key === 'ArrowRight') fbPreviewShow(fbPrev.i + 1);
-    else if (ev.key === '+' || ev.key === '=' || ev.key === 'Add') { ev.preventDefault(); fbZoomTo(fbPrev.scale * FB_ZOOM_STEP); }
-    else if (ev.key === '-' || ev.key === '_' || ev.key === 'Subtract') { ev.preventDefault(); fbZoomTo(fbPrev.scale / FB_ZOOM_STEP); }
-    else if (ev.key === '0') { ev.preventDefault(); fbResetZoom(); }
-  });
-  function fbToggleItem(item) {
-    if (!item) return;
-    var id = item.getAttribute('data-id');
-    var hd = item.querySelector('.fb-item-hd');
-    var next = item.classList.contains('bd-collapsed');
-    fbExpanded[id] = next;
-    item.classList.toggle('bd-collapsed', !next);
-    if (hd) hd.setAttribute('aria-expanded', next ? 'true' : 'false');
-  }
-  document.getElementById('fbAdminList').addEventListener('click', function (ev) {
-    var hd = ev.target.closest ? ev.target.closest('.fb-item-hd') : null;
-    if (hd && !(ev.target.closest && ev.target.closest('button'))) {
-      fbToggleItem(hd.closest ? hd.closest('.fb-item') : null);
-      return;
-    }
-    var link = ev.target.closest ? ev.target.closest('a.fb-img-link') : null;
-    if (link) {
-      ev.preventDefault();
-      var wrap = link.closest ? link.closest('.fb-imgs') : null;
-      var links = wrap ? Array.prototype.slice.call(wrap.querySelectorAll('a.fb-img-link')) : [link];
-      fbPrev.urls = links.map(function (a) {
-        var im = a.querySelector('img');
-        if (im && im.src && im.src.indexOf('blob:') === 0) return im.src;
-        return a.getAttribute('data-auth-src') || a.getAttribute('href') || '';
-      }).filter(Boolean);
-      fbPrev.names = links.map(function (a) {
-        var im = a.querySelector('img');
-        return (im && im.getAttribute('alt')) || '';
-      });
-      var idx = links.indexOf(link);
-      fbPreviewShow(idx < 0 ? 0 : idx);
-      return;
-    }
-    var btn = ev.target.closest ? ev.target.closest('button[data-act]') : null;
-    if (!btn) return;
-    var id = btn.getAttribute('data-id');
-    var act = btn.getAttribute('data-act');
-    if (act === 'del') {
-      if (!confirm('删除这条反馈？图片会一并删除。')) return;
-      fetch('/api/feedback/' + id, { method: 'DELETE' })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-        .then(function (res) {
-          if (!res.ok) { sayFb(false, (res.data && res.data.detail) || '删除失败'); return; }
-          sayFb(true, '已删除');
-          loadFeedback();
-        });
-      return;
-    }
-    if (act === 'reply-send') {
-      var box = btn.closest ? btn.closest('.fb-item') : null;
-      var input = box ? box.querySelector('.fb-reply-input') : null;
-      var text = input ? input.value.trim() : '';
-      if (!text) { sayFb(false, '请先填写回复内容'); return; }
-      btn.disabled = true;
-      fetch('/api/feedback/' + id + '/reply', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reply: text })
-      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-        .then(function (res) {
-          if (!res.ok) { sayFb(false, (res.data && res.data.detail) || '回复失败'); }
-          else { sayFb(true, '✓ 已回复并标为已处理，提交者可查看'); }
-          loadFeedback();
-        })
-        .finally(function () { if (btn) btn.disabled = false; });
-      return;
-    }
-    var st = act === 'done' ? 'done' : 'read';
-    fetch('/api/feedback/' + id, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: st })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-      .then(function (res) {
-        if (!res.ok) { sayFb(false, (res.data && res.data.detail) || '更新失败'); return; }
-        sayFb(true, st === 'done' ? '已标记处理' : '已标为已读');
-        loadFeedback();
-      });
-  });
-
-  /* ===== 模型配置 ===== */
-  var cfgData = null;
-  var cfgMsg = document.getElementById('cfgMsg');
-  function sayCfg(ok, t) { cfgMsg.className = 'msg ' + (ok ? 'ok' : 'bad'); cfgMsg.textContent = t; setTimeout(function () { if (cfgMsg.textContent === t) cfgMsg.textContent = ''; }, 5000); }
-
-  function loadConfig() {
-    fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
-      cfgData = cfg;
-      renderConfig(cfg);
-    }).catch(function (e) { sayCfg(false, '配置加载失败：' + (e.message || '')); });
-  }
-
-  function renderConfig(cfg) {
-    cfgData = cfg;
-    var ed = cfg.edit || {};
-    var fams = [
-      { key: 'grok', name: 'Grok' },
-      { key: 'gemini', name: 'Gemini' },
-      { key: 'doubao', name: '火山' }
-    ];
-    var wrap = document.getElementById('cfgCards');
-    wrap.innerHTML = '';
-    fams.forEach(function (f) {
-      wrap.appendChild(buildModelCard(f, ed));
-    });
-    bindModelIdChange(fams, ed);
-    renderClassifySelect(fams, ed);
-    renderPoolCard(ed);
-    renderPapersCard(ed);
-    renderProjectProofCard(ed);
-    renderWecomCard(ed);
-  }
-
-  function collectFields(key, root) {
-    var p = {};
-    (root || document).querySelectorAll('[data-f="' + key + '"]').forEach(function (el) {
-      var k = el.getAttribute('data-k');
-      if (k === 'apiKey' || k === 'password') { if (el.value.trim()) p[k] = el.value.trim(); }
-      else if (el.type === 'checkbox') p[k] = !!el.checked;
-      else if (k === 'timeoutSec' || k === 'intervalSec' || k === 'windowHours' || k === 'opinionWaitMin' || k === 'talentUploadMax') {
-        var n = parseInt(el.value, 10); if (n > 0 || k === 'opinionWaitMin') p[k] = isNaN(n) ? 0 : n;
-      }
-      else if (k === 'temperature') { var t = parseFloat(el.value); if (!isNaN(t)) p.temperature = t; }
-      else if (k === 'id') { if (el.value.trim()) p.id = el.value.trim(); }
-      else if (k === 'baseUrl') p.baseUrl = el.value.trim();
-      else if (k === 'groups') p.groups = el.value;
-      else p[k] = el.value;
-    });
-    return p;
-  }
-
-  function postConfig(payload) {
-    return fetch('/api/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); });
-  }
-
-  function cardMsg(el, ok, t) {
-    if (!el) return;
-    el.className = 'cfg-save-msg ' + (ok ? 'ok' : 'bad');
-    el.textContent = t;
-    if (ok) setTimeout(function () { if (el.textContent === t) el.textContent = ''; }, 4000);
-  }
-
-  function buildModelCard(f, ed) {
-    var m = ed[f.key] || {};
-    var card = document.createElement('div');
-    card.className = 'acard';
-    card.innerHTML =
-      '<h3>' + esc(m.label || f.name) +
-        '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (m.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (m.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-      '<div class="cfg-grid">' +
-        '<div class="f-row span2"><label>模型 ID</label><div class="inp"><input data-f="' + f.key + '" data-k="id" data-orig="' + esc(m.id || '') + '" value="' + esc(m.id || '') + '" placeholder="模型标识，修改后默认采用下拉自动跟随"></div></div>' +
-        '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="' + f.key + '" data-k="baseUrl" value="' + esc(m.baseUrl || '') + '" placeholder="OpenAI 兼容接口地址"></div></div>' +
-        '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="' + f.key + '" data-k="apiKey" value="" placeholder="' + (m.hasKey ? '••••••••（已配置）' : '填入密钥') + '"></div></div>' +
-        '<div class="f-row"><label>超时（秒）</label><div class="inp"><input type="number" min="30" max="900" data-f="' + f.key + '" data-k="timeoutSec" value="' + esc(m.timeoutSec || '') + '"></div></div>' +
-        ((f.key === 'grok' || f.key === 'gemini')
-          ? '<div class="f-row"><label>' + (f.key === 'gemini' ? '思考强度' : '推理强度') + '</label><div class="inp"><select data-f="' + f.key + '" data-k="reasoningEffort" class="role-sel" style="width:100%;height:46px;padding:0 10px">' +
-              [['low','短（low）'],['medium','中（medium）'],['high','长（high）']].map(function (v) { return '<option value="' + v[0] + '"' + ((m.reasoningEffort || 'medium') === v[0] ? ' selected' : '') + '>' + v[1] + '</option>'; }).join('') +
-            '</select></div></div>'
-          : '') +
-        (f.key === 'gemini'
-          ? '<div class="f-row"><label>温度</label><div class="inp"><input type="number" step="0.1" min="0" max="2" data-f="gemini" data-k="temperature" value="' + esc(m.temperature == null ? 0.1 : m.temperature) + '"></div></div>' +
-            '<div class="f-row"><label>API 请求格式</label><div class="inp"><select data-f="gemini" data-k="apiFormat" class="role-sel" style="width:100%;height:46px;padding:0 10px">' +
-              [['openai','OpenAI 兼容（/chat/completions）'],['genai','Google GenAI（generateContent）']].map(function (v) { return '<option value="' + v[0] + '"' + ((m.apiFormat || 'openai') === v[0] ? ' selected' : '') + '>' + v[1] + '</option>'; }).join('') +
-            '</select></div></div>' +
-            '<div class="f-row"><label>检索</label><div class="chk"><input type="checkbox" data-f="gemini" data-k="enableSearch"' + (m.enableSearch ? ' checked' : '') + '> 打开检索（Google Search）</div></div>'
-          : '') +
-        (f.key !== 'grok'
-          ? '<div class="f-row"><label>流式</label><div class="chk"><input type="checkbox" data-f="' + f.key + '" data-k="stream"' + (m.stream ? ' checked' : '') + '> 使用流式输出</div></div>'
-          : '') +
-      '</div>' +
-      '<div class="cfg-save-row">' +
-        '<button type="button" class="mini cfg-save-one">保存本模型</button>' +
-        '<span class="cfg-save-msg"></span>' +
-      '</div>';
-    var btn = card.querySelector('.cfg-save-one');
-    if (btn) btn.addEventListener('click', function () { saveOneModel(f.key, card); });
-    return card;
-  }
-
-  function saveOneModel(famKey, card) {
-    var btn = card.querySelector('.cfg-save-one');
-    var msg = card.querySelector('.cfg-save-msg');
-    var ed = cfgData.edit || {};
-    if (btn) btn.disabled = true;
-    cardMsg(msg, false, '');
-    var payload = {};
-    payload[famKey] = collectFields(famKey, card);
-    var idInp = card.querySelector('[data-k="id"]');
-    var curId = idInp ? idInp.value.trim() : (ed[famKey] || {}).id || '';
-    if (curId && ed.classifyModel === curId) payload.classifyModel = curId;
-    postConfig(payload).then(function (res) {
-      if (res.ok && res.data && res.data.version) {
-        cardMsg(msg, true, '✓ 已保存');
-        var got = res.data.edit || {};
-        for (var k in got) ed[k] = got[k];
-        var hk = !!(ed[famKey] || {}).hasKey;
-        var dot = card.querySelector('.keydot');
-        if (dot) { dot.style.color = hk ? 'var(--ok)' : 'var(--bad)'; dot.textContent = '● ' + (hk ? '密钥已配置' : '未配置密钥'); }
-      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
-      if (btn) btn.disabled = false;
-    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
-  }
-
-  function bindModelIdChange(fams, ed) {
-    document.querySelectorAll('#cfgCards input[data-k="id"]').forEach(function (inp) {
-      inp.addEventListener('change', function () {
-        var v = inp.value.trim();
-        if (!v) return;
-        if (ed.classifyModel === inp.getAttribute('data-orig')) ed.classifyModel = v;
-        renderClassifySelect(fams, ed);
-      });
-    });
-  }
-
-  function renderClassifySelect(fams, ed) {
-    var sel = document.getElementById('classifyModel');
-    var opts = [];
-    fams.forEach(function (f) {
-      var m = ed[f.key] || {};
-      var id = m.id || '';
-      var inp = document.querySelector('#cfgCards input[data-f="' + f.key + '"][data-k="id"]');
-      if (inp && inp.value.trim()) id = inp.value.trim();
-      if (id) opts.push([id, (m.label || f.key) + ' · ' + id]);
-    });
-    sel.innerHTML = opts.map(function (o) {
-      return '<option value="' + esc(o[0]) + '"' + (ed.classifyModel === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
-    }).join('');
-  }
-
-  function renderPoolCard(ed) {
-    var box = document.getElementById('poolCfgCard');
-    if (!box) return;
-    var p = ed.pool || {};
-    var ready = !!p.configured;
-    box.innerHTML =
-      '<div class="acard">' +
-        '<h3>人才库 / 企业库 API ' +
-          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (p.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">生成计划时按申报书编号 / 姓名 / 企业统一社会信用代码检索外部只读人才库与企业库补齐空缺字段；密钥仅存本机 config.json，界面不回显。Base URL / 检索模式留空 = 不修改。</p>' +
-        '<div class="cfg-grid">' +
-          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="pool" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://192.168.2.23:8078"></div></div>' +
-          '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="pool" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-API-KEY') + '"></div></div>' +
-          '<div class="f-row"><label>检索模式</label><div class="inp"><input data-f="pool" data-k="mode" value="' + esc(p.mode || 'all') + '" placeholder="all"></div></div>' +
-          '<div class="f-row span2"><label>人才附件上传接口</label><div class="inp"><input data-f="pool" data-k="fileUploadUrl" value="' + esc(p.fileUploadUrl || '') + '" placeholder="可空，默认走 Base URL /api/external-read/v1/talent-files"><div style="font-size:12px;color:#8a93a6;margin-top:6px">值班扫描到新材料时按此接口入库。multipart 字段 attach_id、kind、file。</div></div></div>' +
-          '<div class="f-row span2"><label>人才附件上传 Key</label><div class="inp"><input type="password" data-f="pool" data-k="fileUploadKey" value="" placeholder="' + (p.fileUploadHasKey ? '••••••••（已配置，留空不修改）' : '可空，默认用人才库 API Key') + '"></div></div>' +
-          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已就绪 · 检索时参与' : '未配置 · 跳过检索，缺数据写遗留') + '</div></div>' +
-        '</div>' +
-        '<div class="cfg-save-row">' +
-          '<button type="button" class="mini cfg-save-one">保存人才库配置</button>' +
-          '<span class="cfg-save-msg"></span>' +
-        '</div>' +
-      '</div>';
-    var btn = box.querySelector('.cfg-save-one');
-    if (btn) btn.addEventListener('click', function () { savePoolConfig(box); });
-  }
-
-  function renderPapersCard(ed) {
-    var box = document.getElementById('papersCfgCard');
-    if (!box) return;
-    var p = ed.papers || {};
-    var ready = !!p.configured;
-    var authOk = !!(p.hasKey || p.hasPassword);
-    box.innerHTML =
-      '<div class="acard">' +
-        '<h3>论文导出 API ' +
-          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (authOk ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.authMode === 'apiKey' ? 'API Key' : (p.authMode === 'session' ? '网页账号' : '未配置鉴权')) + '</span></h3>' +
-        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">意见点名缺论文全文时，人才库未命中后按人才编号拉取科研成果附件。优先使用 <code>API Key</code>（见 <code>论文api文档.md</code>）；未配密钥时可填论文系统管理员账号密码（网页登录）。Base URL / 账号留空 = 不修改。</p>' +
-        '<div class="cfg-grid">' +
-          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="papers" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://192.168.2.62:8000"></div></div>' +
-          '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="papers" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-Api-Key') + '"></div></div>' +
-          '<div class="f-row"><label>管理员账号</label><div class="inp"><input data-f="papers" data-k="username" value="' + esc(p.username || '') + '" placeholder="admin"></div></div>' +
-          '<div class="f-row"><label>管理员密码（留空 = 不修改）</label><div class="inp"><input type="password" data-f="papers" data-k="password" value="" placeholder="' + (p.hasPassword ? '••••••••（已配置）' : '填入密码') + '"></div></div>' +
-          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已就绪 · 缺论文时可拉取' : '未配置 · 跳过论文 API') + '</div></div>' +
-          '<div class="f-row"><label>连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="papersHealthBtn">检测论文 API</button><span id="papersHealthMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
-        '</div>' +
-        '<div class="cfg-save-row">' +
-          '<button type="button" class="mini cfg-save-one">保存论文 API 配置</button>' +
-          '<span class="cfg-save-msg"></span>' +
-        '</div>' +
-      '</div>';
-    var btn = box.querySelector('.cfg-save-one');
-    if (btn) btn.addEventListener('click', function () { savePapersConfig(box); });
-    var hb = box.querySelector('#papersHealthBtn');
-    if (hb) hb.addEventListener('click', function () {
-      var msg = box.querySelector('#papersHealthMsg');
-      if (msg) msg.textContent = '检测中…';
-      fetch('/api/papers/health').then(function (r) { return r.json(); }).then(function (j) {
-        if (!msg) return;
-        if (j.ok) msg.textContent = '✓ 服务与鉴权正常';
-        else if (j.service_ok) msg.textContent = '服务可达；' + (j.error || '鉴权未通过');
-        else msg.textContent = '✗ ' + (j.error || '不可达');
-        msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
-      }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });
-    });
-  }
-
-  function savePapersConfig(card) {
-    var btn = card.querySelector('.cfg-save-one');
-    var msg = card.querySelector('.cfg-save-msg');
-    var ed = cfgData.edit || {};
-    if (btn) btn.disabled = true;
-    cardMsg(msg, false, '');
-    postConfig({ papers: collectFields('papers', card) }).then(function (res) {
-      if (res.ok && res.data && res.data.version) {
-        cardMsg(msg, true, '✓ 已保存');
-        var got = res.data.edit || {};
-        for (var k in got) ed[k] = got[k];
-        var p = ed.papers || {};
-        var dot = card.querySelector('.keydot');
-        if (dot) { dot.style.color = p.hasKey ? 'var(--ok)' : 'var(--bad)'; dot.textContent = '● ' + (p.hasKey ? '密钥已配置' : '未配置密钥'); }
-      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
-      if (btn) btn.disabled = false;
-    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
-  }
-
-  function savePoolConfig(card) {
-    var btn = card.querySelector('.cfg-save-one');
-    var msg = card.querySelector('.cfg-save-msg');
-    var ed = cfgData.edit || {};
-    if (btn) btn.disabled = true;
-    cardMsg(msg, false, '');
-    postConfig({ pool: collectFields('pool', card) }).then(function (res) {
-      if (res.ok && res.data && res.data.version) {
-        cardMsg(msg, true, '✓ 已保存');
-        var got = res.data.edit || {};
-        for (var k in got) ed[k] = got[k];
-        var p = ed.pool || {};
-        var dot = card.querySelector('.keydot');
-        if (dot) { dot.style.color = p.hasKey ? 'var(--ok)' : 'var(--bad)'; dot.textContent = '● ' + (p.hasKey ? '密钥已配置' : '未配置密钥'); }
-      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
-      if (btn) btn.disabled = false;
-    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
-  }
-
-  function collectWecom(card) {
-    var p = collectFields('wecomChat', card);
-    p.watch = collectFields('wecomWatch', card);
-    return p;
-  }
-
-  function renderProjectProofCard(ed) {
-    var box = document.getElementById('projectProofCfgCard');
-    if (!box) return;
-    var pp = ed.projectProof || {};
-    var cb = pp.codebuddy || {};
-    var g = pp.generate || {};
-    var ready = !!g.configured;
-    box.innerHTML =
-      '<div class="acard">' +
-        '<h3>项目证明 API ' +
-          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (g.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (g.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">调用 <code>/api/external/documents</code>，只传已确定的经历名单（letters / projects），不读简历、不读会话。人才库命中来华前单位及主持/参与项目后才会生成。密钥留空表示不修改。</p>' +
-        '<div class="cfg-grid">' +
-          '<div class="f-row span2"><label>生成接口 Base URL</label><div class="inp"><input data-f="ppGen" data-k="baseUrl" value="' + esc(g.baseUrl || '') + '" placeholder="http://192.168.2.62:3602"></div></div>' +
-          '<div class="f-row span2"><label>生成接口 API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="ppGen" data-k="apiKey" value="" placeholder="' + (g.hasKey ? '••••••••（已配置）' : '填入密钥') + '"></div></div>' +
-          '<div class="f-row"><label>documents 路径</label><div class="inp"><input data-f="ppGen" data-k="path" value="' + esc(g.path || '') + '" placeholder="/api/external/documents"></div></div>' +
-          '<div class="f-row"><label>生成超时（秒）</label><div class="inp"><input data-f="ppGen" data-k="timeoutSec" value="' + esc(g.timeoutSec || 300) + '" placeholder="300"></div></div>' +
-          '<div class="f-row span2"><label>CodeBuddy 命令</label><div class="inp"><input data-f="ppCb" data-k="cmd" value="' + esc(cb.cmd || '') + '" placeholder="codebuddy.cmd"></div></div>' +
-          '<div class="f-row"><label>检索超时（秒）</label><div class="inp"><input data-f="ppCb" data-k="timeoutSec" value="' + esc(cb.timeoutSec || 180) + '" placeholder="180"></div></div>' +
-          '<div class="f-row"><label>检索轮数</label><div class="inp"><input data-f="ppCb" data-k="maxTurns" value="' + esc(cb.maxTurns || 10) + '" placeholder="10"></div></div>' +
-          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已配置 · 缺项目证明时可生成' : '未配置 · 跳过生成接口') + '</div></div>' +
-          '<div class="f-row"><label>连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="ppProbeBtn">检测生成接口</button><span id="ppProbeMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
-        '</div>' +
-        '<div class="cfg-save-row">' +
-          '<button type="button" class="mini cfg-save-one">保存项目证明配置</button>' +
-          '<span class="cfg-save-msg"></span>' +
-        '</div>' +
-      '</div>';
-    var btn = box.querySelector('.cfg-save-one');
-    if (btn) btn.addEventListener('click', function () { saveProjectProofConfig(box); });
-    var hb = box.querySelector('#ppProbeBtn');
-    if (hb) hb.addEventListener('click', function () {
-      var msg = box.querySelector('#ppProbeMsg');
-      if (msg) msg.textContent = '检测中…';
-      fetch('/api/project-proof/probe', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (j) {
-        if (!msg) return;
-        if (j.ok) msg.textContent = '✓ ' + (j.note || '服务可达，密钥已被接受');
-        else msg.textContent = '✗ ' + (j.error || '检测失败');
-        msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
-      }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });
-    });
-  }
-
-  function collectProjectProof(root) {
-    var card = root || document.getElementById('projectProofCfgCard');
-    if (!card) return null;
-    return {
-      codebuddy: collectFields('ppCb', card),
-      generate: collectFields('ppGen', card)
-    };
-  }
-
-  function saveProjectProofConfig(card) {
-    var btn = card.querySelector('.cfg-save-one');
-    var msg = card.querySelector('.cfg-save-msg');
-    var ed = cfgData.edit || {};
-    if (btn) btn.disabled = true;
-    cardMsg(msg, false, '');
-    postConfig({ projectProof: collectProjectProof(card) }).then(function (res) {
-      if (res.ok && res.data && res.data.version) {
-        cardMsg(msg, true, '✓ 已保存');
-        var got = res.data.edit || {};
-        for (var k in got) ed[k] = got[k];
-        renderProjectProofCard(ed);
-      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
-      if (btn) btn.disabled = false;
-    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
-  }
-
-  function renderWecomCard(ed) {
-    var box = document.getElementById('wecomCfgCard');
-    if (!box) return;
-    var p = ed.wecomChat || {};
-    var w = p.watch || {};
-    var ready = !!p.configured;
-    var groups = (p.groups || []).join('\n');
-    var mode = w.mode || 'auto';
-    box.innerHTML =
-      '<div class="acard">' +
-        '<h3>企业微信聊天记录 ' +
-          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (p.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (p.hasKey ? '密钥已配置' : '未配置密钥') + '</span></h3>' +
-        '<p style="margin:-8px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">管理后台「会话记录」只读调用聊天记录解析服务（默认 <code>http://127.0.0.1:8767</code>）。请先在该项目启动 <code>start.ps1</code> 并复制开放读取 API Key。关注会话一行一个，群聊和单聊都可以；值班扫描必须填写关注会话，留空只浏览不自动提交。</p>' +
-        '<div class="cfg-grid">' +
-          '<div class="f-row span2"><label>Base URL</label><div class="inp"><input data-f="wecomChat" data-k="baseUrl" value="' + esc(p.baseUrl || '') + '" placeholder="http://127.0.0.1:8767"></div></div>' +
-          '<div class="f-row span2"><label>API Key（留空 = 不修改）</label><div class="inp"><input type="password" data-f="wecomChat" data-k="apiKey" value="" placeholder="' + (p.hasKey ? '••••••••（已配置）' : '填入 X-API-Key') + '"></div></div>' +
-          '<div class="f-row span2"><label>关注会话（值班必填）</label><div class="inp"><textarea data-f="wecomChat" data-k="groups" rows="3" placeholder="会话名称或编号">' + esc(groups) + '</textarea><div style="font-size:12px;color:#8a93a6;margin-top:6px">也可在会话记录左侧点 ★ 直接关注；此处与看板同步。群聊、单聊都会扫描。</div></div></div>' +
-          '<div class="f-row"><label>就绪状态</label><div style="padding-top:9px;font-size:13px;font-weight:700;color:' + (ready ? 'var(--ok)' : 'var(--bad)') + '">' + (ready ? '已配置密钥 · 可打开会话记录' : '未配置 · 看板无法列出消息') + '</div></div>' +
-          '<div class="f-row"><label>连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomHealthBtn">检测解析服务</button><span id="wecomHealthMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
-        '</div>' +
-        '<h3 style="margin:22px 0 10px;font-size:14px">聊天值班（Gemini）' +
-          '<span class="keydot" style="margin-left:auto;font-size:12px;font-weight:600;color:' + (w.hasKey ? 'var(--ok)' : 'var(--bad)') + '">● ' + (w.hasKey ? 'Gemini 已配置' : '未配置 Gemini') + '</span></h3>' +
-        '<p style="margin:-4px 0 14px;font-size:12.5px;color:#7c88a1;line-height:1.7">判断使用与出计划相同的 Gemini，按固定题目只认会话里的修改意见，再匹配申报书并提交到「待确认」。不会自动写入正文。模型：' + esc(w.model || '未配置') + '。</p>' +
-        '<div class="cfg-grid">' +
-          '<div class="f-row"><label>开启值班</label><div style="padding-top:10px"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" data-f="wecomWatch" data-k="enabled"' + (w.enabled ? ' checked' : '') + '> 聊天同步后增量扫描</label></div></div>' +
-          '<div class="f-row"><label>识别到意见后</label><div class="inp"><select data-f="wecomWatch" data-k="mode">' +
-            '<option value="auto"' + (mode === 'auto' ? ' selected' : '') + '>自动提交待确认任务</option>' +
-            '<option value="review"' + (mode === 'review' ? ' selected' : '') + '>只列入待人审</option>' +
-            '<option value="off"' + (mode === 'off' ? ' selected' : '') + '>关闭</option>' +
-          '</select></div></div>' +
-          '<div class="f-row span2"><label>扫描时机</label><div style="padding-top:10px;font-size:13px;color:#5b6577;line-height:1.6">聊天记录同步过来后做一次增量扫描，不再按固定间隔。</div></div>' +
-          '<div class="f-row"><label>回看窗口（小时）</label><div class="inp"><input data-f="wecomWatch" data-k="windowHours" value="' + esc(w.windowHours || 48) + '" placeholder="48"></div></div>' +
-          '<div class="f-row"><label>值班账号</label><div class="inp"><input data-f="wecomWatch" data-k="owner" value="' + esc(w.owner || '') + '" placeholder="任务归属用户名，可空"></div></div>' +
-          '<div class="f-row"><label>判断超时（秒）</label><div class="inp"><input data-f="wecomWatch" data-k="timeoutSec" value="' + esc(w.timeoutSec || 60) + '" placeholder="60"></div></div>' +
-          '<div class="f-row"><label>意见等待（分钟）</label><div class="inp"><input data-f="wecomWatch" data-k="opinionWaitMin" value="' + esc(w.opinionWaitMin != null ? w.opinionWaitMin : 60) + '" placeholder="60"></div></div>' +
-          '<div class="f-row span2"><label>无独立意见时</label><div class="chk" style="padding-top:10px"><input type="checkbox" data-f="wecomWatch" data-k="allowNoOpinion"' + (w.allowNoOpinion ? ' checked' : '') + '> 允许仅凭申报书标注栏提交</div></div>' +
-          '<div class="f-row span2"><label>新材料入库</label><div class="chk" style="padding-top:10px"><input type="checkbox" data-f="wecomWatch" data-k="talentUploadEnabled"' + (w.talentUploadEnabled !== false ? ' checked' : '') + '> 扫到护照/学历等新文件且能匹配编号时自动上传到人才库</div></div>' +
-          '<div class="f-row"><label>每会话每轮最多</label><div class="inp"><input data-f="wecomWatch" data-k="talentUploadMax" value="' + esc(w.talentUploadMax || 10) + '" placeholder="10"></div></div>' +
-          '<div class="f-row"><label>值班连通性</label><div style="padding-top:9px"><button type="button" class="mini" id="wecomWatchProbeBtn">检测 Gemini</button> <button type="button" class="mini" id="wecomWatchRunBtn">立即扫描</button><span id="wecomWatchProbeMsg" style="margin-left:8px;font-size:12px;color:#7c88a1"></span></div></div>' +
-        '</div>' +
-        '<div class="cfg-save-row">' +
-          '<button type="button" class="mini cfg-save-one">保存聊天记录配置</button>' +
-          '<span class="cfg-save-msg"></span>' +
-        '</div>' +
-      '</div>';
-    var btn = box.querySelector('.cfg-save-one');
-    if (btn) btn.addEventListener('click', function () { saveWecomConfig(box); });
-    var hb = box.querySelector('#wecomHealthBtn');
-    if (hb) hb.addEventListener('click', function () {
-      var msg = box.querySelector('#wecomHealthMsg');
-      if (msg) msg.textContent = '检测中…';
-      fetch('/api/wecom/health').then(function (r) { return r.json(); }).then(function (j) {
-        if (!msg) return;
-        if (j.ok) msg.textContent = '✓ 服务与鉴权正常（' + (j.source_count || 0) + ' 台电脑）';
-        else if (j.service_ok) msg.textContent = '服务可达；' + (j.error || '鉴权未通过');
-        else msg.textContent = '✗ ' + (j.error || '不可达');
-        msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
-      }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });
-    });
-    var pb = box.querySelector('#wecomWatchProbeBtn');
-    if (pb) pb.addEventListener('click', function () {
-      var msg = box.querySelector('#wecomWatchProbeMsg');
-      if (msg) msg.textContent = '检测中…';
-      fetch('/api/wecom/watch-probe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-        .then(function (res) {
-          var j = res.data || {};
-          if (!msg) return;
-          if (j.ok) msg.textContent = '✓ ' + (j.detail || '已连通') + ' · ' + (j.model || '') + ' · ' + (j.ms || 0) + 'ms';
-          else msg.textContent = '✗ ' + (j.error || j.detail || '失败');
-          msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
-        }).catch(function (e) { if (msg) msg.textContent = '检测失败：' + (e.message || e); });
-    });
-    var rb = box.querySelector('#wecomWatchRunBtn');
-    if (rb) rb.addEventListener('click', function () {
-      var msg = box.querySelector('#wecomWatchProbeMsg');
-      if (msg) msg.textContent = '扫描中…';
-      fetch('/api/wecom/watch-run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-        .then(function (res) {
-          var j = res.data || {};
-          if (!msg) return;
-          if (j.ok) msg.textContent = '✓ 本轮完成' + (j.created && j.created.length ? '，提交 ' + j.created.length + ' 条' : '');
-          else msg.textContent = '✗ ' + (j.detail || '扫描未执行');
-          msg.style.color = j.ok ? 'var(--ok)' : 'var(--bad)';
-        }).catch(function (e) { if (msg) msg.textContent = '扫描失败：' + (e.message || e); });
-    });
-  }
-
-  function saveWecomConfig(card) {
-    var btn = card.querySelector('.cfg-save-one');
-    var msg = card.querySelector('.cfg-save-msg');
-    var ed = cfgData.edit || {};
-    if (btn) btn.disabled = true;
-    cardMsg(msg, false, '');
-    postConfig({ wecomChat: collectWecom(card) }).then(function (res) {
-      if (res.ok && res.data && res.data.version) {
-        cardMsg(msg, true, '✓ 已保存');
-        var got = res.data.edit || {};
-        for (var k in got) ed[k] = got[k];
-        var p = ed.wecomChat || {};
-        var dot = card.querySelector('.keydot');
-        if (dot) { dot.style.color = p.hasKey ? 'var(--ok)' : 'var(--bad)'; dot.textContent = '● ' + (p.hasKey ? '密钥已配置' : '未配置密钥'); }
-        if (window.loadWecomBoard) window.loadWecomBoard();
-      } else cardMsg(msg, false, (res.data && res.data.detail) || '保存失败');
-      if (btn) btn.disabled = false;
-    }).catch(function (e) { cardMsg(msg, false, '保存失败：' + (e.message || '')); if (btn) btn.disabled = false; });
-  }
-
-  document.getElementById('cfgSave').addEventListener('click', function () {
-    var btn = this;
-    btn.disabled = true;
-    var payload = {
-      grok: collectFields('grok'),
-      gemini: collectFields('gemini'),
-      doubao: collectFields('doubao'),
-      pool: collectFields('pool', document.getElementById('poolCfgCard')),
-      papers: collectFields('papers', document.getElementById('papersCfgCard')),
-      projectProof: collectProjectProof(document.getElementById('projectProofCfgCard')),
-      wecomChat: collectWecom(document.getElementById('wecomCfgCard')),
-      classifyModel: document.getElementById('classifyModel').value
-    };
-    postConfig(payload).then(function (res) {
-      if (res.ok && res.data && res.data.version) { sayCfg(true, '✓ 配置已保存'); cfgData = res.data; renderConfig(res.data); }
-      else sayCfg(false, (res.data && res.data.detail) || '保存失败');
-      btn.disabled = false;
-    }).catch(function (e) { sayCfg(false, '保存失败：' + (e.message || '')); btn.disabled = false; });
-  });
-
-  document.getElementById('cfgRestore').addEventListener('click', function () {
-    if (!confirm('确定恢复为默认配置？当前修改将被覆盖。')) return;
-    fetch('/api/config/restore-default', { method: 'POST' })
-    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-    .then(function (res) {
-      if (res.ok && res.data && res.data.version) { sayCfg(true, '✓ 已恢复默认'); cfgData = res.data; renderConfig(res.data); }
-      else sayCfg(false, (res.data && res.data.detail) || '恢复失败');
-    });
-  });
-
-  document.getElementById('cfgProbe').addEventListener('click', function () {
-    var btn = this;
-    var box = document.getElementById('probeBox');
-    btn.disabled = true;
-    box.hidden = false;
-    box.innerHTML = '<div class="p-row">正在检测 Grok / Gemini / 火山…</div>';
-    fetch('/api/config/probe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, data: j }; }); })
-      .then(function (res) {
-        var data = res.data || {};
-        if (!res.ok) {
-          box.innerHTML = '<div class="p-row p-bad">' + esc((data.detail) || '检测失败') + '</div>';
-          sayCfg(false, (data.detail) || '检测失败');
-          btn.disabled = false;
-          return;
-        }
-        var rows = data.results || [];
-        box.innerHTML = rows.map(function (r) {
-          var ms = r.ms ? (' · ' + (r.ms / 1000).toFixed(1) + 's') : '';
-          if (r.ok) return '<div class="p-row p-ok">● ' + esc(r.label || r.id) + ' 已连通' + ms + (r.detail ? '（' + esc(r.detail) + '）' : '') + '</div>';
-          return '<div class="p-row p-bad">● ' + esc(r.label || r.id) + ' 失败' + ms + '：' + esc(r.error || '未知错误') + '</div>';
-        }).join('') || '<div class="p-row p-bad">' + esc(data.error || '没有可检测的模型') + '</div>';
-        var n = rows.filter(function (r) { return r.ok; }).length;
-        sayCfg(!!data.ok, n + '/' + rows.length + ' 个模型连通');
-        btn.disabled = false;
-      })
-      .catch(function (e) {
-        box.innerHTML = '<div class="p-row p-bad">' + esc(e.message || '检测失败') + '</div>';
-        sayCfg(false, '检测失败：' + (e.message || ''));
-        btn.disabled = false;
-      });
-  });
 
   document.getElementById('logoutBtn').addEventListener('click', function () {
     fetch('/api/auth/logout', { method: 'POST' }).then(function () {

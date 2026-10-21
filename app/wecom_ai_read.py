@@ -1,14 +1,16 @@
 """AI 解读：先扫当前会话全部文件，按规则分类，再按时间绑定申报书版本与修改意见。"""
 from __future__ import annotations
+import asyncio
 import json
 from datetime import datetime, timedelta
 
 from .config import LLM_TIMEOUT_CLASSIFY, resolve_gemini
 from . import wecom_client as W
 from .llm import LlmError, chat, extract_json_lenient
+from .party import sender_of
 from .wecom_ai_bind import PROMPT_TIME_WINDOW
 from .wecom_cases import annotate_existing, cluster_messages, split_scan_stats
-from .wecom_file_class import counts_of, list_file_entries, make_cluster_kind_of, slim_items
+from .wecom_file_class import counts_of, list_file_entries, make_cluster_kind_of, sanitize_classified_entry, slim_items
 from .wecom_groups import list_watch_groups
 
 _SUMMARY_PROMPT = """你是申报书修改系统的聊天解读助手。已扫描会话全部文件、按规则分类，并按时间完成「申报书版本 ↔ 修改意见」绑定。
@@ -30,6 +32,16 @@ _SUMMARY_PROMPT = """你是申报书修改系统的聊天解读助手。已扫�
 """
 
 
+async def _progress(cb, phase: str, percent: int, label: str, **extra) -> None:
+    if not cb:
+        return
+    ev = {"phase": phase, "percent": max(0, min(100, int(percent))), "label": str(label or "")}
+    ev.update(extra)
+    out = cb(ev)
+    if asyncio.iscoroutine(out):
+        await out
+
+
 def _default_dates(start: str, end: str) -> tuple[str, str]:
     end = str(end or "").strip()[:10]
     start = str(start or "").strip()[:10]
@@ -40,21 +52,30 @@ def _default_dates(start: str, end: str) -> tuple[str, str]:
 
 
 def _slim_case(c: dict, session_name: str = "") -> dict:
-    app = c.get("app") or {}
+    app = c.get("app") if isinstance(c.get("app"), dict) else {}
     ops = c.get("opinions") or []
+    slim_app = {
+        "filename": app.get("filename") or "",
+        "time": app.get("time") or "",
+        "sender": sender_of(app),
+        "message_id": app.get("message_id") or 0,
+        "kind": app.get("kind") or "file",
+        "copies": list(app.get("copies") or [])[:8],
+    }
     return {
         "id": c.get("id"),
         "session_name": session_name or str(c.get("session_name") or ""),
         "session_id": str(c.get("session_id") or c.get("sessionId") or ""),
-        "filename": app.get("filename") or "",
-        "time": app.get("time") or "",
-        "sender": app.get("sender") or "",
-        "message_id": app.get("message_id") or 0,
+        "filename": slim_app["filename"],
+        "time": slim_app["time"],
+        "sender": slim_app["sender"],
+        "message_id": slim_app["message_id"],
+        "app": slim_app,
         "names": list(c.get("names") or [])[:4],
         "nums": list(c.get("nums") or [])[:6],
         "ready": bool(c.get("ready")),
-        "existing": bool(c.get("existing")),
-        "similar": bool(c.get("similar")),
+        "existing": c.get("existing") if isinstance(c.get("existing"), dict) else bool(c.get("existing")),
+        "similar": c.get("similar") if isinstance(c.get("similar"), dict) else bool(c.get("similar")),
         "opinionCount": len(ops),
         "opinions": [
             {
@@ -62,6 +83,7 @@ def _slim_case(c: dict, session_name: str = "") -> dict:
                 "filename": o.get("filename") or "",
                 "time": o.get("time") or "",
                 "message_id": o.get("message_id") or 0,
+                "copies": list(o.get("copies") or [])[:8] if str(o.get("kind") or "") != "text" else [],
                 "text": str(o.get("text") or "")[:400] if str(o.get("kind") or "") == "text" else "",
             }
             for o in ops[:6]
@@ -158,6 +180,8 @@ def scan_files_then_pair(
 ) -> dict:
     """先扫全部文件，用原有规则分类，再按分类结果拆案。"""
     entries = list_file_entries(messages)
+    for it in entries:
+        sanitize_classified_entry(it)
     kind_of = make_cluster_kind_of(entries)
     scan = split_scan_stats(messages, kind_of=kind_of)
     cluster_hours = int(window_hours or 48)
@@ -213,8 +237,10 @@ async def _analyze_one_group(
     bind: bool = False,
     bind_prompts: list | None = None,
     user: dict | None = None,
+    progress=None,
 ) -> dict:
     sid = str(session_id or "").strip()
+    await _progress(progress, "load", 8, "正在读取聊天记录")
     data = await W.list_merged_messages(
         sid,
         source_id=str(source_id or ""),
@@ -224,6 +250,8 @@ async def _analyze_one_group(
     )
     messages = data.get("items") or []
     name = str(session_name or data.get("display_name") or sid)
+    nmsg = len(messages)
+    await _progress(progress, "load", 22, "已读取 " + str(nmsg) + " 条消息", messages=nmsg)
     paired = scan_files_then_pair(
         messages,
         session_id=sid,
@@ -231,11 +259,18 @@ async def _analyze_one_group(
         window_hours=window_hours,
         runner=runner,
     )
+    nfiles = len(paired.get("entries") or [])
+    await _progress(
+        progress, "scan", 48,
+        "规则扫描完成 · 文件 " + str(nfiles) + " 个",
+        files=nfiles,
+    )
     cases = paired.get("cases") or []
     ready = sum(1 for c in cases if c.get("ready") and not c.get("existing"))
     bind_out = {}
     if bind:
         from .wecom_ai_bind import run_version_bind
+        await _progress(progress, "bind", 55, "正在按时间绑定申报书与修改意见")
         prompts = bind_prompts if isinstance(bind_prompts, list) and bind_prompts else [PROMPT_TIME_WINDOW]
         bind_out = await run_version_bind(
             messages,
@@ -246,6 +281,7 @@ async def _analyze_one_group(
             user=user,
             kind_of=paired.get("kind_of"),
         )
+        await _progress(progress, "bind", 78, "绑定完成")
     return {
         "session_id": sid,
         "session_name": name,
@@ -272,6 +308,7 @@ async def ai_read_watched(
     bind: bool = False,
     bind_prompts: list | None = None,
     user: dict | None = None,
+    progress=None,
 ) -> dict:
     start, end = _default_dates(start_date, end_date)
     allow = list_watch_groups()
@@ -298,6 +335,11 @@ async def ai_read_watched(
         name = str(g.get("display_name") or sid)
         if not sid:
             continue
+        pct = 8 + int(70 * done / max(1, total))
+        await _progress(
+            progress, "group", pct,
+            "正在解读 " + name + "（" + str(done + 1) + "/" + str(total) + "）",
+        )
         try:
             one = await _analyze_one_group(
                 session_id=sid,
@@ -349,6 +391,7 @@ async def ai_read_watched(
             except Exception:
                 pass
 
+    await _progress(progress, "summary", 85, "正在生成关注群摘要")
     summary = await _summarize(scope="watch", groups=groups_out, all_cases=all_cases)
     try:
         model = str(resolve_gemini().get("id") or "")
@@ -405,6 +448,7 @@ async def ai_read_chat(
     bind: bool = True,
     bind_prompts: list | None = None,
     user: dict | None = None,
+    progress=None,
 ) -> dict:
     """scope=watch 时扫描全部关注群；scope=session 时扫描当前会话全部文件后按规则分类、按时间绑定。"""
     if str(scope or "").strip().lower() == "watch":
@@ -416,6 +460,7 @@ async def ai_read_chat(
             bind=bind,
             bind_prompts=bind_prompts,
             user=user,
+            progress=progress,
         )
     sid = str(session_id or "").strip()
     if not sid:
@@ -433,9 +478,11 @@ async def ai_read_chat(
         bind=bind,
         bind_prompts=bind_prompts,
         user=user,
+        progress=progress,
     )
     name = one["session_name"]
     cases = one.get("cases") or []
+    await _progress(progress, "summary", 82, "正在生成解读摘要")
     summary = await _summarize(
         scope="session",
         groups=[{
@@ -448,6 +495,7 @@ async def ai_read_chat(
         }],
         all_cases=cases,
     )
+    await _progress(progress, "summary", 94, "解读完成")
     try:
         model = str(resolve_gemini().get("id") or "")
     except ValueError:

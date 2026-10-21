@@ -1,9 +1,12 @@
 """各群记录看板：只读企业微信解析服务。登录用户可用（主界面下滑可见）。"""
+import asyncio
+import json
 import time
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from urllib.parse import quote
 from .. import wecom_client as W
+from ..party import sender_of
 
 router = APIRouter()
 
@@ -35,47 +38,194 @@ def _file_upload_public() -> dict:
     from ..pool import talent_upload_target
     t = talent_upload_target()
     return {
-        "baseUrl": t.get("url") or "",
         "hasKey": bool(t.get("key")),
         "configured": bool(t.get("ok")),
-        "via": t.get("via") or "",
     }
 
 
-@router.post("/api/wecom/file-summary")
-async def api_file_summary(body: dict, request: Request):
-    """当前会话文件按聊天上下文分类汇总；无缓存时调用模型复核。"""
-    _user(request)
+async def _emit_progress(progress, phase: str, percent: int, label: str, **extra) -> None:
+    if not progress:
+        return
+    ev = {
+        "phase": phase,
+        "percent": max(0, min(100, int(percent))),
+        "label": str(label or ""),
+    }
+    ev.update(extra)
+    out = progress(ev)
+    if asyncio.iscoroutine(out):
+        await out
+
+
+def _sse_job(work):
+    """work(progress) -> coroutine returning a JSON-serializable dict."""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def progress(ev: dict) -> None:
+        await queue.put(dict(ev or {}))
+
+    async def run() -> None:
+        try:
+            result = await work(progress)
+            await queue.put({"phase": "done", "percent": 100, "label": "完成", "result": result})
+        except HTTPException as e:
+            detail = e.detail if isinstance(e.detail, str) else str(e.detail)
+            await queue.put({"phase": "error", "message": detail or "请求失败"})
+        except W.WecomError as e:
+            await queue.put({"phase": "error", "message": e.message})
+        except ValueError as e:
+            await queue.put({"phase": "error", "message": str(e)})
+        except Exception:
+            await queue.put({"phase": "error", "message": "解析失败，请稍后重试"})
+
+    async def gen():
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                ev = await queue.get()
+                yield "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
+                if ev.get("phase") in ("done", "error"):
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _apply_file_peers(groups: list, session_id: str) -> list:
+    try:
+        peers = await W.session_peers(session_id)
+    except Exception:
+        peers = []
+    if not peers:
+        return groups
+    sid = str(session_id or "").strip()
+    for g in groups or []:
+        for f in (g.get("files") or []) if isinstance(g, dict) else []:
+            if not isinstance(f, dict):
+                continue
+            copies = list(f.get("copies") or [])
+            if not copies and f.get("messageId"):
+                copies = [{"message_id": f.get("messageId"), "session_id": sid}]
+            f["copies"] = W.merge_copy_peers(copies, peers)
+    return groups
+
+
+def _file_summary_payload(
+    *,
+    sid: str,
+    sess_name: str,
+    message_count: int,
+    groups: list,
+    classify_note: str,
+    used_gemini: bool,
+    counts: dict,
+    mode: str,
+    new_file_count: int = 0,
+    from_cache: bool = False,
+) -> dict:
+    from ..wecom_file_class import refresh_group_image_flags, stamp_cached_file_rows
+    incremental = mode == "incremental"
+    groups = stamp_cached_file_rows(refresh_group_image_flags(groups or []))
+    return {
+        "ok": True,
+        "session_id": sid,
+        "session_name": sess_name,
+        "messageCount": int(message_count or 0),
+        "fileCount": sum(len(g.get("files") or []) for g in groups if isinstance(g, dict)),
+        "groups": groups,
+        "upload": _file_upload_public(),
+        "classifyNote": classify_note or "",
+        "usedGemini": bool(used_gemini),
+        "counts": counts or {},
+        "fromCache": bool(from_cache),
+        "incremental": incremental,
+        "mode": mode,
+        "newFileCount": int(new_file_count or 0),
+    }
+
+
+async def _file_summary_work(body: dict, u: dict, progress=None) -> dict:
+    """当前会话文件按聊天上下文分类汇总。第一次全量扫描并落盘，之后只扫新文件。"""
     from ..wecom_file_class import (
-        CAT_ORDER,
-        LABEL_TO_ID,
+        after_cursor,
+        build_file_groups,
         classify_session_files,
-        get_summary_cache,
-        is_image_message,
-        put_summary_cache,
+        counts_from_groups,
+        incremental_work_window,
+        load_summary_state,
+        merge_file_groups,
+        save_summary_state,
         session_data_stamp,
     )
-    body = body if isinstance(body, dict) else {}
     sid = str(body.get("session_id") or "").strip()
-    if not sid:
-        raise HTTPException(400, "请先选择会话")
     start_date = str(body.get("start_date") or "")
     end_date = str(body.get("end_date") or "")
     force = bool(body.get("force") or body.get("refresh"))
     stamp = session_data_stamp(sid, start_date=start_date, end_date=end_date)
     auto_raw = body.get("autoUpload")
-    do_auto = bool(auto_raw)
-    if not force:
-        cached = get_summary_cache(sid, stamp)
-        if cached:
-            cached["upload"] = _file_upload_public()
-            cached["fromCache"] = True
-            return await _with_auto_upload(cached, session_id=sid, do_auto=do_auto)
+    do_auto = bool(auto_raw) and u.get("role") == "admin"
+    await _emit_progress(progress, "load", 4, "准备读取会话")
+    state = None if force else load_summary_state(sid, start_date, end_date)
+    if (
+        state
+        and stamp
+        and str(state.get("stamp") or "") == stamp
+        and state.get("full_done")
+        and isinstance(state.get("result"), dict)
+    ):
+        await _emit_progress(progress, "cache", 70, "沿用已扫描结果")
+        cached = _file_summary_payload(
+            sid=sid,
+            sess_name=str((state.get("result") or {}).get("session_name") or body.get("session_name") or ""),
+            message_count=int((state.get("result") or {}).get("messageCount") or 0),
+            groups=list((state.get("result") or {}).get("groups") or []),
+            classify_note=str((state.get("result") or {}).get("classifyNote") or "沿用已扫描结果"),
+            used_gemini=bool((state.get("result") or {}).get("usedGemini")),
+            counts=dict((state.get("result") or {}).get("counts") or {}),
+            mode="cache",
+            from_cache=True,
+        )
+        cached["upload"] = _file_upload_public()
+        cached["groups"] = await _apply_file_peers(cached.get("groups") or [], sid)
+        await _emit_progress(progress, "group", 92, "整理文件列表")
+        return await _with_auto_upload(cached, session_id=sid, do_auto=do_auto)
+
+    last_time = str((state or {}).get("last_time") or "")
+    last_id = str((state or {}).get("last_message_id") or "")
+    incremental = bool(
+        not force
+        and state
+        and state.get("full_done")
+        and (last_time or last_id)
+        and isinstance(state.get("result"), dict)
+    )
+    fetch_start = start_date
+    if incremental and len(last_time) >= 10 and last_time[4:5] == "-":
+        day = last_time[:10]
+        if not start_date or day >= str(start_date)[:10]:
+            fetch_start = day
+    await _emit_progress(
+        progress, "load", 10,
+        "正在读取聊天记录" + ("（增量）" if incremental else "（全量）"),
+    )
     try:
         data = await W.list_merged_messages(
             sid,
             source_id=str(body.get("source_id") or ""),
-            start_date=start_date,
+            start_date=fetch_start,
             end_date=end_date,
             full=True,
         )
@@ -83,82 +233,151 @@ async def api_file_summary(body: dict, request: Request):
         raise _http(e)
     messages = [m for m in (data.get("items") or []) if isinstance(m, dict)]
     sess_name = str(data.get("display_name") or body.get("session_name") or "")
-    typed = await classify_session_files(messages, session_id=sid, use_gemini=True, keep_entries=True)
-    groups = {}
-    order = []
-    seen = set()
-    for it in typed.get("entries") or typed.get("items") or []:
-        if not isinstance(it, dict):
-            continue
-        fname = str(it.get("filename") or "").strip()
-        mid = it.get("messageId") or 0
-        key = (fname, str(it.get("time") or ""), str(it.get("sender") or ""), str(mid))
-        if not fname or key in seen:
-            continue
-        seen.add(key)
-        cid = str(it.get("type") or LABEL_TO_ID.get(it.get("label") or "") or "other")
-        label = str(it.get("label") or "其他")
-        if cid not in groups:
-            groups[cid] = {"id": cid, "label": label, "files": []}
-            order.append(cid)
-        idx = it.get("index")
-        m = messages[idx] if isinstance(idx, int) and 0 <= idx < len(messages) else {}
-        copies = []
-        for c in (m.get("copies") or []) if isinstance(m, dict) else []:
-            if not isinstance(c, dict):
+    await _emit_progress(
+        progress, "load", 22,
+        "已读取 " + str(len(messages)) + " 条消息",
+        messages=len(messages),
+    )
+
+    if incremental:
+        old_result = dict(state.get("result") or {})
+        old_groups = list(old_result.get("groups") or [])
+        first_new, work = incremental_work_window(messages, last_time, last_id)
+        if first_new >= len(messages):
+            await _emit_progress(progress, "scan", 80, "增量扫描，没有新文件")
+            note = "增量扫描，没有新文件"
+            result = _file_summary_payload(
+                sid=sid,
+                sess_name=sess_name or str(old_result.get("session_name") or ""),
+                message_count=int(old_result.get("messageCount") or 0),
+                groups=old_groups,
+                classify_note=note,
+                used_gemini=bool(old_result.get("usedGemini")),
+                counts=dict(old_result.get("counts") or {}),
+                mode="incremental",
+                from_cache=True,
+            )
+            result["groups"] = await _apply_file_peers(result["groups"], sid)
+            if stamp:
+                save_summary_state(
+                    sid,
+                    start_date=start_date,
+                    end_date=end_date,
+                    stamp=stamp,
+                    result=result,
+                    last_time=last_time,
+                    last_message_id=last_id,
+                    full_done=True,
+                )
+            return await _with_auto_upload(result, session_id=sid, do_auto=do_auto)
+
+        await _emit_progress(progress, "scan", 28, "发现新消息，正在分类文件", messages=len(work))
+        typed = await classify_session_files(
+            work, session_id=sid, use_gemini=True, keep_entries=True, progress=progress,
+        )
+        new_entries = []
+        for it in typed.get("entries") or typed.get("items") or []:
+            if not isinstance(it, dict):
                 continue
-            copies.append({
-                "source_id": str(c.get("source_id") or ""),
-                "source_label": str(c.get("source_label") or c.get("label") or ""),
-                "message_id": c.get("message_id") or mid,
-                "session_id": str(c.get("session_id") or sid),
-            })
-        media = str((m or {}).get("media_url") or it.get("mediaUrl") or "")
-        groups[cid]["files"].append({
-            "filename": fname,
-            "sender": str(it.get("sender") or ""),
-            "time": str(it.get("time") or ""),
-            "messageId": mid,
-            "copies": copies,
-            "sessionId": sid,
-            "sessionName": sess_name,
-            "reason": str(it.get("reason") or ""),
-            "source": str(it.get("source") or ""),
-            "mediaUrl": media,
-            "isImage": bool(it.get("isImage") or is_image_message(
-                m if isinstance(m, dict) else None,
-                filename=fname,
-                media_url=media,
-            )),
-        })
-    rank = {lab: i for i, lab in enumerate(CAT_ORDER)}
-    order = sorted(order, key=lambda cid: rank.get((groups[cid] or {}).get("label") or "", 99))
-    peers = []
-    try:
-        peers = await W.session_peers(sid)
-    except Exception:
-        peers = []
-    if peers:
-        for g in groups.values():
-            for f in g.get("files") or []:
-                f["copies"] = W.merge_copy_peers(f.get("copies") or [], peers)
-    result = {
-        "ok": True,
-        "session_id": sid,
-        "session_name": sess_name,
-        "messageCount": data.get("total") or 0,
-        "fileCount": len(seen),
-        "groups": [groups[k] for k in order],
-        "upload": _file_upload_public(),
-        "classifyNote": typed.get("geminiNote") or "",
-        "usedGemini": bool(typed.get("usedGemini")),
-        "counts": typed.get("counts") or {},
-        "fromCache": False,
-    }
+            idx = it.get("index")
+            if not isinstance(idx, int) or idx < 0 or idx >= len(work):
+                continue
+            if after_cursor(work[idx], last_time, last_id):
+                new_entries.append(it)
+        extra_groups, _extra_n = build_file_groups(
+            new_entries, work, session_id=sid, session_name=sess_name,
+        )
+        groups = merge_file_groups(old_groups, extra_groups)
+        await _emit_progress(progress, "group", 82, "正在整理分类结果")
+        groups = await _apply_file_peers(groups, sid)
+        old_n = sum(len(g.get("files") or []) for g in old_groups if isinstance(g, dict))
+        new_n = sum(len(g.get("files") or []) for g in groups if isinstance(g, dict))
+        added = max(0, new_n - old_n)
+        gemini_note = str(typed.get("geminiNote") or "").strip()
+        note = "增量扫描，新增 " + str(added) + " 个文件"
+        if gemini_note:
+            note = note + "。" + gemini_note
+        result = _file_summary_payload(
+            sid=sid,
+            sess_name=sess_name or str(old_result.get("session_name") or ""),
+            message_count=int(old_result.get("messageCount") or 0) + (len(messages) - first_new),
+            groups=groups,
+            classify_note=note,
+            used_gemini=bool(typed.get("usedGemini")),
+            counts=counts_from_groups(groups),
+            mode="incremental",
+            new_file_count=added,
+        )
+        if stamp:
+            save_summary_state(
+                sid,
+                start_date=start_date,
+                end_date=end_date,
+                stamp=stamp,
+                result=result,
+                messages=messages,
+                last_time=last_time,
+                last_message_id=last_id,
+                full_done=True,
+            )
+        await _emit_progress(progress, "group", 92, "整理完成", files=new_n)
+        return await _with_auto_upload(result, session_id=sid, do_auto=do_auto)
+
+    await _emit_progress(progress, "scan", 26, "正在扫描并分类文件")
+    typed = await classify_session_files(
+        messages, session_id=sid, use_gemini=True, keep_entries=True, progress=progress,
+    )
+    await _emit_progress(
+        progress, "group", 78, "分类完成，正在整理",
+        files=int(typed.get("fileCount") or 0),
+    )
+    groups, _file_n = build_file_groups(
+        typed.get("entries") or typed.get("items") or [],
+        messages,
+        session_id=sid,
+        session_name=sess_name,
+    )
+    groups = await _apply_file_peers(groups, sid)
+    gemini_note = str(typed.get("geminiNote") or "").strip()
+    note = "全量扫描完成"
+    if gemini_note:
+        note = note + "。" + gemini_note
+    result = _file_summary_payload(
+        sid=sid,
+        sess_name=sess_name,
+        message_count=data.get("total") or 0,
+        groups=groups,
+        classify_note=note,
+        used_gemini=bool(typed.get("usedGemini")),
+        counts=typed.get("counts") or counts_from_groups(groups),
+        mode="full",
+    )
     if stamp:
-        put_summary_cache(sid, stamp, result)
+        save_summary_state(
+            sid,
+            start_date=start_date,
+            end_date=end_date,
+            stamp=stamp,
+            result=result,
+            messages=messages,
+            full_done=True,
+        )
+    await _emit_progress(progress, "group", 92, "正在收尾", files=_file_n)
     result = await _with_auto_upload(result, session_id=sid, do_auto=do_auto)
     return result
+
+
+@router.post("/api/wecom/file-summary")
+async def api_file_summary(body: dict, request: Request):
+    """当前会话文件按聊天上下文分类汇总。第一次全量扫描并落盘，之后只扫新文件。"""
+    u = _user(request)
+    body = body if isinstance(body, dict) else {}
+    sid = str(body.get("session_id") or "").strip()
+    if not sid:
+        raise HTTPException(400, "请先选择会话")
+    if not body.get("stream"):
+        return await _file_summary_work(body, u)
+    return _sse_job(lambda progress: _file_summary_work(body, u, progress=progress))
 
 
 async def _with_auto_upload(result: dict, *, session_id: str, do_auto: bool) -> dict:
@@ -166,7 +385,7 @@ async def _with_auto_upload(result: dict, *, session_id: str, do_auto: bool) -> 
     groups = result.get("groups") or []
     files = flatten_groups(groups, session_id=session_id)
     if do_auto:
-        files, summary = await auto_upload_files(files, session_id=session_id)
+        files, summary = await auto_upload_files(files, session_id=session_id, source="file_summary")
     else:
         from ..wecom_talent_upload import annotate_files, upload_configured
         files = annotate_files(files)
@@ -211,7 +430,7 @@ async def api_upload_talent_files(body: dict, request: Request):
         if not row.get("type") and row.get("label"):
             from ..wecom_file_class import LABEL_TO_ID
             row["type"] = LABEL_TO_ID.get(str(row.get("label") or ""), row.get("label"))
-        got = await upload_one(row, force=True)
+        got = await upload_one(row, force=True, source="file_summary")
         if got.get("uploadStatus") == "uploaded":
             out.append(got)
         else:
@@ -577,6 +796,96 @@ async def api_search(
         raise _http(e)
 
 
+def _lookup_message_filename(source_id: str, session_id: str, message_id: int) -> str:
+    from .. import wecom_local as L
+    if not L.available() or not session_id or int(message_id or 0) <= 0:
+        return ""
+    want = int(message_id)
+    sids = [str(source_id or "").strip()]
+    try:
+        extra = [str(s.get("id") or "") for s in (L.list_sources() or [])]
+    except Exception:
+        extra = []
+    for sid in sids + extra:
+        if not sid:
+            continue
+        try:
+            rows, _older = L.read_window(sid, session_id, need=0)
+        except Exception:
+            continue
+        for m in rows or []:
+            if not isinstance(m, dict):
+                continue
+            try:
+                if int(m.get("message_id") or 0) != want:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            return str(m.get("attachment_name") or m.get("filename") or m.get("cache_name") or "")
+    return ""
+
+
+def _parse_message_ids(*vals) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    for val in vals:
+        if val is None:
+            continue
+        if isinstance(val, (list, tuple)):
+            parts = val
+        else:
+            parts = str(val).replace(";", ",").split(",")
+        for part in parts:
+            try:
+                n = int(str(part).strip() or 0)
+            except (TypeError, ValueError):
+                n = 0
+            if n and n not in seen:
+                seen.add(n)
+                out.append(n)
+    return out
+
+
+def _local_shot_response(name: str, source_id: str = "", message_id: int = 0, extra_ids=None):
+    from ..wecom_file_class import (
+        file_basename,
+        image_media_type,
+        resolve_wecom_cached_file,
+        resolve_wecom_temp_image,
+    )
+    path = resolve_wecom_temp_image(name)
+    mids = _parse_message_ids(message_id, extra_ids)
+    if not mids:
+        mids = [0]
+    if path is None:
+        for mid in mids:
+            path = resolve_wecom_cached_file(source_id, mid, name)
+            if path is not None:
+                break
+    if path is None and name:
+        path = resolve_wecom_cached_file("", 0, name)
+    if path is None:
+        return None
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    disp = file_basename(path.name) or path.name
+    if "_" in disp and disp.split("_", 1)[0].isdigit():
+        rest = disp.split("_", 1)[1]
+        if rest:
+            disp = rest
+    img_type = image_media_type(disp, "", raw) or "image/png"
+    return Response(
+        content=raw,
+        media_type=img_type,
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": "inline; filename*=UTF-8''" + quote(disp),
+        },
+    )
+
+
 @router.get("/api/wecom/sources/{source_id}/files/{message_id}")
 async def api_file(
     source_id: str,
@@ -584,36 +893,56 @@ async def api_file(
     request: Request,
     session_id: str = Query(""),
     inline: bool = Query(False),
+    name: str = Query(""),
 ):
     _user(request)
-    from ..wecom_file_class import image_media_type
+    from ..wecom_file_class import file_basename, image_media_type
+    local_name = str(name or "").strip()
+    extra_ids = request.query_params.get("message_ids") or ""
+    if inline:
+        hit = _local_shot_response(local_name, source_id, message_id, extra_ids)
+        if hit is not None:
+            return hit
     try:
         got = await W.stream_attachment(source_id, message_id, session_id)
     except W.WecomError as e:
+        if inline:
+            hint = local_name or _lookup_message_filename(source_id, session_id, message_id)
+            hit = _local_shot_response(hint, source_id, message_id, extra_ids)
+            if hit is not None:
+                return hit
         raise _http(e)
-    if got.get("kind") == "pending":
-        return JSONResponse(
-            {"ok": True, "kind": "pending", "job_id": got.get("job_id") or "", "detail": got.get("detail") or "", "filename": got.get("filename") or ""},
-            status_code=202,
-        )
-    if got.get("kind") == "missing":
+    if got.get("kind") in ("pending", "missing"):
+        hint = local_name or _lookup_message_filename(source_id, session_id, message_id)
+        hit = _local_shot_response(hint, source_id, message_id, extra_ids)
+        if hit is not None:
+            return hit
+        if got.get("kind") == "pending":
+            accept = (request.headers.get("accept") or "").lower()
+            if inline and "json" not in accept:
+                return Response(status_code=204)
+            return JSONResponse(
+                {"ok": True, "kind": "pending", "job_id": got.get("job_id") or "", "detail": got.get("detail") or "", "filename": got.get("filename") or ""},
+                status_code=202,
+            )
         raise HTTPException(404, got.get("detail") or "文件不在缓存")
-    name = str(got.get("filename") or ("wecom-" + str(message_id)))
+    fname = str(got.get("filename") or ("wecom-" + str(message_id)))
+    disp = file_basename(fname) or fname
     raw_type = str(got.get("content_type") or "application/octet-stream")
     body = b"" if got.get("kind") == "stream" else (got.get("content") or b"")
-    img_type = image_media_type(name, raw_type, body if body else None)
-    if inline and not img_type and "." not in name:
+    img_type = image_media_type(disp, raw_type, body if body else None)
+    if inline and not img_type and "." not in disp:
         img_type = "image/jpeg"
     if inline and img_type:
         headers = {
             "Cache-Control": "private, max-age=3600",
-            "Content-Disposition": "inline; filename*=UTF-8''" + quote(name),
+            "Content-Disposition": "inline; filename*=UTF-8''" + quote(disp),
         }
         media_type = img_type
     else:
         headers = {
             "Cache-Control": "no-cache",
-            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(name),
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(disp),
         }
         media_type = raw_type
     if got.get("kind") == "stream":
@@ -629,19 +958,42 @@ async def api_file(
     )
 
 
-@router.post("/api/wecom/ai-read")
-async def api_ai_read(body: dict, request: Request):
-    u = _user(request)
+@router.get("/api/wecom/local-image")
+async def api_local_image(
+    request: Request,
+    name: str = Query(""),
+    source_id: str = Query(""),
+    session_id: str = Query(""),
+    message_id: int = Query(0),
+    message_ids: str = Query(""),
+):
+    """文件汇总/会话预览：直接读本机 Temp 或解析同步目录里的截图，不经过远端回传。"""
+    _user(request)
+    extra = message_ids
+    hit = _local_shot_response(name, source_id, message_id, extra)
+    if hit is None and session_id:
+        for mid in _parse_message_ids(message_id, extra) or [0]:
+            hint = _lookup_message_filename(source_id, session_id, mid)
+            if hint:
+                hit = _local_shot_response(hint, source_id, mid, extra)
+                if hit is not None:
+                    break
+    if hit is None:
+        raise HTTPException(404, "本机没有这张图片")
+    return hit
+
+
+async def _ai_read_work(body: dict, u: dict, progress=None) -> dict:
     from ..main import runner
     from ..wecom_ai_read import ai_read_chat
     from ..wecom_ai_store import save_ai_read
-    body = body if isinstance(body, dict) else {}
     scope = str(body.get("scope") or "").strip().lower()
     sid = str(body.get("session_id") or "").strip()
     if not scope:
         scope = "session" if sid else "watch"
     if scope != "watch" and not sid:
         raise HTTPException(400, "缺少 session_id")
+    await _emit_progress(progress, "load", 4, "开始解读")
     try:
         bind_raw = body.get("bind")
         bind = True if bind_raw is None else bool(bind_raw)
@@ -658,15 +1010,26 @@ async def api_ai_read(body: dict, request: Request):
             bind=bind,
             bind_prompts=bind_prompts,
             user=u,
+            progress=progress,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
     except W.WecomError as e:
         raise _http(e)
+    await _emit_progress(progress, "save", 97, "正在保存解读记录")
     meta = save_ai_read(got, user=str(u.get("username") or u.get("realName") or ""))
     got["recordId"] = meta.get("id") or ""
     got["recordAt"] = meta.get("at") or ""
     return got
+
+
+@router.post("/api/wecom/ai-read")
+async def api_ai_read(body: dict, request: Request):
+    u = _user(request)
+    body = body if isinstance(body, dict) else {}
+    if not body.get("stream"):
+        return await _ai_read_work(body, u)
+    return _sse_job(lambda progress: _ai_read_work(body, u, progress=progress))
 
 
 @router.get("/api/wecom/ai-reads")
@@ -678,6 +1041,19 @@ async def api_ai_reads(
     _user(request)
     from ..wecom_ai_store import list_ai_reads
     return list_ai_reads(session_id=session_id, limit=limit)
+
+
+@router.get("/api/wecom/ai-read-latest")
+def api_ai_read_latest(request: Request, session_id: str = Query("")):
+    _user(request)
+    from ..wecom_ai_store import latest_ai_read
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise HTTPException(400, "缺少 session_id")
+    row = latest_ai_read(sid)
+    if not row:
+        raise HTTPException(404, "当前会话还没有解读记录")
+    return row
 
 
 @router.get("/api/wecom/ai-reads/{record_id}")
@@ -770,7 +1146,7 @@ async def api_split_create(body: dict, request: Request):
     _user(request)
     from datetime import datetime, timedelta
     from ..main import runner
-    from ..wecom_cases import cluster_messages, annotate_existing
+    from ..wecom_ai_read import scan_files_then_pair
     from ..wecom_submit import submit_cases
     u = _user(request)
     body = body if isinstance(body, dict) else {}
@@ -793,41 +1169,66 @@ async def api_split_create(body: dict, request: Request):
     except W.WecomError as e:
         raise _http(e)
     session_name = str(body.get("session_name") or data.get("display_name") or "")
-    cases = cluster_messages(
+    paired = scan_files_then_pair(
         data.get("items") or [],
         session_id=sid,
         session_name=session_name,
         window_hours=body.get("windowHours") or 48,
+        runner=runner,
     )
-    annotate_existing(cases, runner)
+    cases = paired.get("cases") or []
     posted = dict(body.get("case")) if isinstance(body.get("case"), dict) else None
     want = body.get("caseIds")
     want_set = {str(x) for x in want} if isinstance(want, list) and want else set()
+    want_mid = ""
     if posted:
         if not posted.get("id") and want_set:
             posted["id"] = next(iter(want_set))
-        by_id = {str(c.get("id") or ""): c for c in cases}
-        hit = by_id.get(str(posted.get("id") or ""))
-        if hit and hit.get("existing"):
-            posted["existing"] = hit["existing"]
         papp = posted.get("app") if isinstance(posted.get("app"), dict) else {}
-        happ = hit.get("app") if hit and isinstance(hit.get("app"), dict) else {}
-        if not papp.get("copies") and happ.get("copies"):
-            papp = dict(papp)
-            papp["copies"] = happ["copies"]
-            posted["app"] = papp
-            posted["ready"] = True
-        if not posted.get("opinions") and hit and hit.get("opinions"):
-            posted["opinions"] = hit["opinions"]
-        cases = [posted]
-    elif want_set:
-        cases = [c for c in cases if str(c.get("id") or "") in want_set]
-        if not cases:
+        want_mid = str(
+            posted.get("message_id") or posted.get("messageId") or papp.get("message_id") or ""
+        )
+    hit = None
+    if want_set:
+        for c in cases:
+            if str(c.get("id") or "") in want_set:
+                hit = c
+                break
+    if hit is None and posted:
+        pid = str(posted.get("id") or "")
+        if pid:
+            for c in cases:
+                if str(c.get("id") or "") == pid:
+                    hit = c
+                    break
+    if hit is None and want_mid:
+        for c in cases:
+            app = c.get("app") if isinstance(c.get("app"), dict) else {}
+            if str(app.get("message_id") or "") == want_mid:
+                hit = c
+                break
+    if posted or want_set:
+        if hit:
+            chosen = dict(hit)
+            if posted:
+                papp = posted.get("app") if isinstance(posted.get("app"), dict) else {}
+                happ = chosen.get("app") if isinstance(chosen.get("app"), dict) else {}
+                if papp.get("copies") and not happ.get("copies"):
+                    happ = dict(happ)
+                    happ["copies"] = papp["copies"]
+                    chosen["app"] = happ
+                    chosen["ready"] = True
+                if posted.get("opinions") and not chosen.get("opinions"):
+                    chosen["opinions"] = posted["opinions"]
+            cases = [chosen]
+        elif posted and (posted.get("app") or {}).get("copies"):
+            cases = [posted]
+        else:
             return {
                 "ok": False,
                 "created": [],
                 "skipped": [],
-                "errors": [{"id": next(iter(want_set)), "detail": "没有找到该条申报书，请关闭窗口后重新拆解再上传"}],
+                "errors": [{"id": next(iter(want_set), ""), "detail": "没有找到该条申报书，请关闭窗口后重新拆解再上传"}],
             }
     force = bool(body.get("force"))
     return await submit_cases(
@@ -896,7 +1297,7 @@ async def api_manual_create(body: dict, request: Request):
             "message_id": fake["message_id"],
             "copies": copies,
             "time": str(app_in.get("time") or ""),
-            "sender": str(app_in.get("sender") or ""),
+            "sender": sender_of(app_in),
         },
         "opinions": [],
         "ready": True,
@@ -967,7 +1368,7 @@ async def api_manual_create(body: dict, request: Request):
             used.add(oname)
             opinions.append({"name": oname, "dataB64": base64.b64encode(opinion_txt_bytes({
                 "text": text,
-                "sender": op.get("sender") or "",
+                "sender": sender_of(op),
                 "time": op.get("time") or "",
             })).decode()})
             continue

@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.wecom_client import find_message_index, slice_around, message_ids_of, merge_copy_peers
+from app.wecom_client import find_message_index, slice_around, message_ids_of, merge_copy_peers, merge_messages
 from app.wecom_locate import pick_copy_locate
 
 
@@ -69,6 +69,19 @@ def test_merge_copy_peers_adds_session_computers():
     assert by["pc3"]["message_id"] == 88
 
 
+def test_merge_copy_peers_from_message_id_only():
+    copies = [{"message_id": 42, "session_id": "R:img"}]
+    peers = [
+        {"source_id": "local", "label": "本机", "kind": "local"},
+        {"source_id": "pc2", "label": "财务室"},
+    ]
+    got = merge_copy_peers(copies, peers)
+    ids = [x["source_id"] for x in got]
+    assert ids == ["local", "pc2"]
+    assert all(x["message_id"] == 42 for x in got)
+    assert all(x["session_id"] == "R:img" for x in got)
+
+
 def test_pick_copy_locate_uses_clicked_session():
     copies = [
         {"source_id": "pc1", "source_label": "前台", "message_id": 11, "session_id": "R:aaa"},
@@ -78,6 +91,19 @@ def test_pick_copy_locate_uses_clicked_session():
     assert got["sessionId"] == "R:bbb"
     assert got["messageId"] == "99"
     assert got["sessionName"] == "默认群"
+
+
+def test_merge_keeps_same_name_files_on_different_days():
+    src = {"id": "pc1", "operator_name": "前台"}
+    a = {"message_id": 1, "sender": "陈侃", "attachment_name": "申报书.docx", "time_text": "2026-09-01 10:00:00"}
+    b = {"message_id": 2, "sender": "陈侃", "attachment_name": "申报书.docx", "time_text": "2026-09-08 10:00:00"}
+    same_day = {"message_id": 9, "sender": "陈侃", "attachment_name": "申报书.docx", "time_text": "2026-09-01 10:00:00"}
+    got = merge_messages([([a, b], src), ([same_day], {"id": "pc2", "operator_name": "财务"})], "R:x")
+    assert len(got) == 2
+    days = sorted(str(x.get("time_text") or "")[:10] for x in got)
+    assert days == ["2026-09-01", "2026-09-08"]
+    copies = next(x["copies"] for x in got if str(x.get("time_text") or "").startswith("2026-09-01"))
+    assert {c["source_id"] for c in copies} == {"pc1", "pc2"}
 
 
 def test_pick_copy_locate_fallback():
@@ -93,6 +119,8 @@ if __name__ == "__main__":
     test_slice_around_keeps_context()
     test_slice_around_end_of_list()
     test_merge_copy_peers_adds_session_computers()
+    test_merge_copy_peers_from_message_id_only()
     test_pick_copy_locate_uses_clicked_session()
+    test_merge_keeps_same_name_files_on_different_days()
     test_pick_copy_locate_fallback()
     print("ALL OK")

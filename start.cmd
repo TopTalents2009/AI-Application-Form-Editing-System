@@ -16,6 +16,9 @@ echo interpreter: %PYEXE%
 REM only stop python/uvicorn on 3777/3778, never svchost
 powershell -NoProfile -Command "$ports=3777,3778; foreach($port in $ports){ $cs=@(Get-NetTCPConnection -LocalPort $port -State Listen -EA SilentlyContinue); foreach($c in $cs){ try{ $p=Get-Process -Id $c.OwningProcess -EA Stop; if($p.ProcessName -match 'python|uvicorn'){ Stop-Process -Id $p.Id -Force; Write-Host ('stopped old python pid='+$p.Id+' port='+$port) } } catch {} } }"
 
+echo ensuring parser 8767 ...
+"%PYEXE%" "%~dp0scripts\ensure_parser.py"
+
 set SHENBAOSHU_PORT=3777
 "%PYEXE%" "%~dp0run.py" --probe
 if errorlevel 1 (

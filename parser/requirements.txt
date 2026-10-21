@@ -1,0 +1,10 @@
+pycryptodome
+litellm
+playwright
+pywin32
+pyautogui
+Pillow
+zstandard
+fastapi
+uvicorn
+sqlcipher3

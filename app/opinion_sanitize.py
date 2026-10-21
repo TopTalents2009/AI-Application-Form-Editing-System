@@ -13,6 +13,24 @@ _META_ITEM = re.compile(
 _META_TAIL = re.compile(
     r"(还有【[^】]+】[^。；;]*[。；;]?|拟提供申报人支持条件[^。；;]*[。；;]?|申报人推荐理由[^。；;]*[。；;]?)"
 )
+_YEAR_BANNER = re.compile(r"【[^】]*模板修改意见】")
+_YEAR_META_LINE = re.compile(
+    r"^(?:"
+    r"【[^】]*模板修改意见】"
+    r"|申报人\s*[:：]"
+    r"|申报\s*ID\s*[:：]"
+    r"|库内\s*id\s*[:：]"
+    r"|出生日期\s*[:：]"
+    r"|模板\s*[:：]"
+    r"|来源\s*[:：]"
+    r"|请按下列条款修改申报书原文"
+    r")",
+    re.I,
+)
+_YEAR_REAL_ITEM = re.compile(r"^\s*\d{1,3}[\.、．\)]\s*【", re.M)
+_ID_META_CLAUSE = re.compile(
+    r"申报人(姓名|及项目)|有效证件姓名|封面申报人|出生日期|模板修改指引|基础信息说明"
+)
 
 
 def _compact(s: str) -> str:
@@ -43,6 +61,61 @@ def is_echo_app_opinion(app_text: str, op_text: str, app_name: str = "", op_name
     if len(short) >= 2000 and short in long:
         return True
     return False
+
+
+def strip_year_template_header(text: str) -> str:
+    """去掉年转模板意见页眉，只留编号条款。"""
+    raw = str(text or "")
+    if not raw.strip():
+        return ""
+    if not (_YEAR_BANNER.search(raw) or re.search(r"^(?:申报人|出生日期|申报\s*ID|库内\s*id|模板|来源)\s*[:：]", raw, re.M)):
+        return raw.strip()
+    kept = []
+    started = False
+    for ln in raw.splitlines():
+        s = ln.strip()
+        if not started:
+            if not s or _YEAR_META_LINE.match(s) or _YEAR_BANNER.search(s):
+                continue
+            started = True
+        kept.append(ln)
+    return "\n".join(kept).strip()
+
+
+def is_identity_meta_text(text: str) -> bool:
+    """页眉/摘要把姓名、出生日期当成条款，但不是可执行修改。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if is_year_template_meta(raw):
+        return True
+    if _YEAR_REAL_ITEM.search(raw) and re.search(r"修改前|修改后", raw):
+        return False
+    if re.search(r"出生年月在.{0,20}以前", raw):
+        return False
+    return bool(_ID_META_CLAUSE.search(raw) and not re.search(r"修改前|修改后", raw))
+
+
+def is_year_template_meta(text: str) -> bool:
+    """8091 年转模板意见的页眉（申报人/出生日期/编号）不是可执行条款。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if _YEAR_REAL_ITEM.search(raw) and re.search(r"修改前|修改后", raw):
+        return False
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    meta_n = sum(1 for ln in lines if _YEAR_META_LINE.match(ln) or _YEAR_BANNER.search(ln))
+    if meta_n == 0:
+        return False
+    rest = [ln for ln in lines if not (_YEAR_META_LINE.match(ln) or _YEAR_BANNER.search(ln))]
+    if not rest:
+        return True
+    rest_blob = "".join(rest)
+    if len(rest_blob) < 80 and not re.search(r"修改前|修改后", rest_blob):
+        return True
+    return meta_n >= 2 and not re.search(r"^\s*\d{1,3}[\.、．\)]", raw, re.M)
 
 
 def _section_for_meta_item(text: str) -> str:
@@ -123,6 +196,7 @@ def sanitize_opinion_blocks(
     out: list[dict] = []
     seq = 0
     skipped_files: set[str] = set()
+    skipped_year_meta = False
 
     for b in blocks or []:
         text = str(b.get("text") or "").strip()
@@ -133,6 +207,17 @@ def sanitize_opinion_blocks(
             if name not in skipped_files:
                 notes.append("已跳过与申报书正文重复的意见文件「" + name + "」（非修改意见，避免误把填表内容当条款）")
                 skipped_files.add(name)
+            continue
+        stripped = strip_year_template_header(text)
+        if stripped != text:
+            text = stripped
+            if not skipped_year_meta:
+                notes.append("已去掉年转模板意见页眉（申报人姓名/出生日期不改正文）")
+                skipped_year_meta = True
+        if not text or is_year_template_meta(text) or is_identity_meta_text(text):
+            if not skipped_year_meta:
+                notes.append("已跳过年转模板意见页眉（申报人姓名/出生日期等元数据，不改正文身份栏）")
+                skipped_year_meta = True
             continue
 
         if not hj and (len(text) >= 120) and re.search(r"[一二三四五六七八九十]+是", text):

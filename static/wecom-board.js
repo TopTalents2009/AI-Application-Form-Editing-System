@@ -11,6 +11,11 @@
     var m = STATUS[st] || ['st-pending', st || '未知'];
     return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
   }
+  function senderLabel(s) {
+    var v = String(s || '').trim();
+    if (!v || /^(null|none|undefined|nil|unknown|未知)$/i.test(v)) return '未知';
+    return v;
+  }
   function say(ok, t) {
     var msg = document.getElementById('wecomMsg') || document.getElementById('msg');
     if (!msg) return;
@@ -34,6 +39,9 @@
   var wecomAiLoading = false;
   var wecomAiTab = 'read';
   var wecomAiLastRead = null;
+  var wecomAiFocusFile = null;
+  var wecomAiHitTimer = 0;
+  var wecomAiJumping = false;
 
   function wecomKind() {
     var el = document.getElementById('wecomOnlyGroup');
@@ -49,6 +57,18 @@
       if (list[i].id === wecomState.sourceId) return list[i];
     }
     return {};
+  }
+  function wecomLooksLikeId(s) {
+    s = String(s || '').trim();
+    if (!s) return true;
+    return /^[MRS]:/i.test(s) || /^\d{8,}$/.test(s);
+  }
+  function wecomSessionTitle(it) {
+    var sid = String((it && (it.username || it.session_id)) || '');
+    var name = String((it && it.display_name) || '').trim();
+    if (name && !wecomLooksLikeId(name) && name !== sid) return name;
+    if (sid.charAt(0) === 'R' || sid.charAt(0) === 'S') return '未命名群聊';
+    return '未备注联系人';
   }
   function wecomRemoteName() {
     var s = wecomCurrentSource();
@@ -401,23 +421,36 @@
     el = document.getElementById('wwOwner'); if (el) el.value = cfg.owner || '';
     el = document.getElementById('wwAllowNoOpinion'); if (el) el.checked = !!cfg.allowNoOpinion;
     el = document.getElementById('wwSkipDismissed'); if (el) el.checked = cfg.skipDismissed !== false;
-    el = document.getElementById('wwTalentUpload'); if (el) el.checked = cfg.talentUploadEnabled !== false;
-    el = document.getElementById('wwTalentUploadMax'); if (el) el.value = cfg.talentUploadMax != null ? cfg.talentUploadMax : 10;
+    el = document.getElementById('wwTalentUpload') || document.getElementById('igTalentUpload');
+    if (el) el.checked = cfg.talentUploadEnabled !== false;
+    el = document.getElementById('wwTalentUploadMax') || document.getElementById('igTalentUploadMax');
+    if (el) el.value = cfg.talentUploadMax != null ? cfg.talentUploadMax : 10;
   }
 
   function wwCollectPanelForm() {
-    return {
-      enabled: !!(document.getElementById('wwEnabled') || {}).checked,
-      mode: (document.getElementById('wwMode') || {}).value || 'auto',
-      windowHours: parseInt((document.getElementById('wwWindow') || {}).value, 10) || 48,
-      timeoutSec: parseInt((document.getElementById('wwTimeout') || {}).value, 10) || 60,
-      opinionWaitMin: parseInt((document.getElementById('wwOpinionWait') || {}).value, 10) || 0,
-      owner: String(((document.getElementById('wwOwner') || {}).value) || '').trim(),
-      allowNoOpinion: !!(document.getElementById('wwAllowNoOpinion') || {}).checked,
-      skipDismissed: !!((document.getElementById('wwSkipDismissed') || {}).checked),
-      talentUploadEnabled: !!(document.getElementById('wwTalentUpload') || {}).checked,
-      talentUploadMax: parseInt((document.getElementById('wwTalentUploadMax') || {}).value, 10) || 10
-    };
+    var out = {};
+    var el;
+    el = document.getElementById('wwEnabled');
+    if (el) out.enabled = !!el.checked;
+    el = document.getElementById('wwMode');
+    if (el) out.mode = el.value || 'auto';
+    el = document.getElementById('wwWindow');
+    if (el) out.windowHours = parseInt(el.value, 10) || 48;
+    el = document.getElementById('wwTimeout');
+    if (el) out.timeoutSec = parseInt(el.value, 10) || 60;
+    el = document.getElementById('wwOpinionWait');
+    if (el) out.opinionWaitMin = parseInt(el.value, 10) || 0;
+    el = document.getElementById('wwOwner');
+    if (el) out.owner = String(el.value || '').trim();
+    el = document.getElementById('wwAllowNoOpinion');
+    if (el) out.allowNoOpinion = !!el.checked;
+    el = document.getElementById('wwSkipDismissed');
+    if (el) out.skipDismissed = !!el.checked;
+    el = document.getElementById('wwTalentUpload');
+    if (el) out.talentUploadEnabled = !!el.checked;
+    el = document.getElementById('wwTalentUploadMax');
+    if (el) out.talentUploadMax = parseInt(el.value, 10) || 10;
+    return out;
   }
 
   function wwStatusTag(row) {
@@ -658,6 +691,7 @@
             loadWecomWatchPanel();
             loadWecomWatchStatus();
             if (j.logId) wwLoadScanLogDetail(j.logId);
+            if (typeof global.loadIngestBoard === 'function') global.loadIngestBoard(true);
           } else wwPanelMsg('✗ ' + (j.detail || '扫描未执行'), false);
         }).catch(function (e) { wwPanelMsg(e.message || '扫描失败', false); })
         .finally(function () { wwSetBtnBusy(runBtn, false); });
@@ -816,43 +850,52 @@
     loadWecomWatchStatus();
   }
   function renderWecomSourcesIfChanged() {
-    var key = (wecomState.sources || []).map(function (s) {
-      return [s.id || '', s.operator_name || '', s.computer_name || '', s.kind || ''].join('\t');
-    }).join('\n') + '\n' + (wecomState.sourceId || '*');
+    var key = wecomSourceListKey();
     if (wecomState.sourceKey === key && document.getElementById('wecomSources') && document.getElementById('wecomSources').children.length) return;
     wecomState.sourceKey = key;
     renderWecomSources();
   }
+  function wecomSourceListKey() {
+    return (wecomState.sources || []).map(function (s) {
+      return [s.id || '', s.operator_name || '', s.computer_name || '', s.kind || ''].join('\t');
+    }).join('\n') + '\n' + (wecomState.sourceId || '*');
+  }
+  function wecomApplySource(id, kind) {
+    wecomState.sourceId = id || '*';
+    wecomState.sourceKind = kind || '';
+    wecomState.sessionId = '';
+    wecomState.replicas = [];
+    wecomResetMsgWindow();
+    wecomState.sessionKey = '';
+    wecomPickReset(true);
+    wecomState.sourceKey = wecomSourceListKey();
+    loadWecomSessions();
+    var title = document.getElementById('wecomChatTitle');
+    var sub = document.getElementById('wecomChatSub');
+    var stream = document.getElementById('wecomStream');
+    if (title) title.textContent = '未选择会话';
+    if (sub) sub.textContent = '从左侧点开会话；同一会话在多台电脑上已合并';
+    if (stream) stream.innerHTML = '<div class="wecom-empty">选择会话后显示消息。</div>';
+  }
   function renderWecomSources() {
     var box = document.getElementById('wecomSources');
     if (!box) return;
-    var allOn = !wecomState.sourceId || wecomState.sourceId === '*';
-    var html = '<button type="button" class="wecom-chip' + (allOn ? ' on' : '') + '" data-id="*" data-kind="">全部电脑<span class="tag">合并</span></button>';
+    var cur = wecomState.sourceId || '*';
+    var html = '<label class="wecom-src-label"><span>电脑</span><select class="wecom-src-sel" id="wecomSourceSel">';
+    html += '<option value="*" data-kind=""' + (!cur || cur === '*' ? ' selected' : '') + '>全部电脑（合并）</option>';
     html += wecomState.sources.map(function (s) {
       var id = s.id || '';
       var label = s.operator_name || s.computer_name || id;
       var tag = (s.kind === 'local' || id === 'local') ? '本机' : '远端';
-      return '<button type="button" class="wecom-chip' + (id === wecomState.sourceId ? ' on' : '') + '" data-id="' + escAttr(id) + '" data-kind="' + escAttr(s.kind || '') + '">' + esc(label) + '<span class="tag">' + tag + '</span></button>';
+      return '<option value="' + escAttr(id) + '" data-kind="' + escAttr(s.kind || '') + '"' + (id === cur ? ' selected' : '') + '>' + esc(label) + ' · ' + tag + '</option>';
     }).join('');
+    html += '</select></label>';
     box.innerHTML = html;
-    wecomState.sourceKey = (wecomState.sources || []).map(function (s) {
-      return [s.id || '', s.operator_name || '', s.computer_name || '', s.kind || ''].join('\t');
-    }).join('\n') + '\n' + (wecomState.sourceId || '*');
-    box.querySelectorAll('.wecom-chip').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        wecomState.sourceId = btn.getAttribute('data-id') || '*';
-        wecomState.sourceKind = btn.getAttribute('data-kind') || '';
-        wecomState.sessionId = '';
-        wecomState.replicas = [];
-        wecomResetMsgWindow();
-        wecomState.sessionKey = '';
-        wecomPickReset(true);
-        renderWecomSources();
-        loadWecomSessions();
-        document.getElementById('wecomChatTitle').textContent = '未选择会话';
-        document.getElementById('wecomChatSub').textContent = '从左侧点开会话；同一会话在多台电脑上已合并';
-        document.getElementById('wecomStream').innerHTML = '<div class="wecom-empty">选择会话后显示消息。</div>';
-      });
+    wecomState.sourceKey = wecomSourceListKey();
+    var sel = document.getElementById('wecomSourceSel');
+    if (sel) sel.addEventListener('change', function () {
+      var opt = sel.options[sel.selectedIndex];
+      wecomApplySource(sel.value || '*', opt ? (opt.getAttribute('data-kind') || '') : '');
     });
   }
   function wecomSessionKey(items) {
@@ -907,7 +950,10 @@
       wecomState.sessionKey = key;
       list.innerHTML = items.map(function (it) {
         var sid = it.username || '';
-        var name = it.display_name || sid || '未命名会话';
+        var name = wecomSessionTitle(it);
+        var watchName = (sid.indexOf('M:') === 0 || wecomLooksLikeId(it.display_name) || !it.display_name)
+          ? sid
+          : it.display_name;
         var reps = it.replicas || [];
         wecomRememberReplicas(sid, reps);
         var nrep = reps.length;
@@ -916,9 +962,9 @@
           (it.msg_count ? ' · ' + it.msg_count + ' 条' : '') +
           (it.last_time ? ' · 消息 ' + it.last_time : '');
         if (nrep > 1 && labels) meta += ' · ' + labels;
-        var watched = wecomGroupWatched(name, sid);
+        var watched = wecomGroupWatched(watchName, sid);
         var starTitle = watched ? '取消关注（值班不再扫描）' : '加入关注会话（群聊和单聊都会扫描）';
-        return '<div class="wecom-item-wrap' + (sid === wecomState.sessionId ? ' on' : '') + '" data-id="' + escAttr(sid) + '" data-name="' + escAttr(name) + '">' +
+        return '<div class="wecom-item-wrap' + (sid === wecomState.sessionId ? ' on' : '') + '" data-id="' + escAttr(sid) + '" data-name="' + escAttr(watchName) + '" title="' + escAttr(sid) + '">' +
           '<button type="button" class="wecom-star' + (watched ? ' on' : '') + '" title="' + escAttr(starTitle) + '">★</button>' +
           '<button type="button" class="wecom-item" data-replicas="' + encodeURIComponent(JSON.stringify(reps)) + '">' +
           '<b>' + esc(name) + '</b><span>' + esc(meta || sid) + '</span></button></div>';
@@ -1063,7 +1109,7 @@
     var keepList = !!(opts.earlier || opts.newer);
     if (quiet && !keepList && wecomLoadingMore) return;
     var reqId = ++wecomMsgReq;
-    if (title) title.textContent = wecomState.sessionName || wecomState.sessionId;
+    if (title) title.textContent = wecomSessionTitle({ display_name: wecomState.sessionName, username: sid });
     var q = ((document.getElementById('wecomMsgQ') || {}).value || '').trim();
     if (aroundId || aroundTime || keepList) q = '';
     var hasMsgs = !!(stream && stream.querySelector('.wecom-msg'));
@@ -1145,8 +1191,8 @@
         wecomState.replicas = d.replicas;
         wecomRememberReplicas(wecomState.sessionId, d.replicas);
       }
-      if (d.display_name && !wecomState.sessionName) wecomState.sessionName = d.display_name;
-      if (title && wecomState.sessionName) title.textContent = wecomState.sessionName;
+      if (d.display_name && !wecomLooksLikeId(d.display_name)) wecomState.sessionName = d.display_name;
+      if (title) title.textContent = wecomSessionTitle({ display_name: wecomState.sessionName || d.display_name, username: sid });
       var items = d.items || [];
       if (opts.earlier) {
         wecomState.hasEarlier = !!d.hasEarlier;
@@ -1224,11 +1270,13 @@
       }
     });
   }
-  function wecomFileHref(copy) {
+  function wecomFileHref(copy, name) {
     if (!copy || !copy.source_id || !copy.message_id) return '';
     var url = '/api/wecom/sources/' + encodeURIComponent(copy.source_id) + '/files/' + encodeURIComponent(copy.message_id);
     var cid = copy.session_id || wecomState.sessionId || '';
     if (cid) url += '?session_id=' + encodeURIComponent(cid);
+    var base = wecomFileBaseName(name || '') || '';
+    if (base) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'name=' + encodeURIComponent(base);
     return url;
   }
   function wecomIsLocalCopy(c) {
@@ -1337,68 +1385,289 @@
     }
     return text;
   }
+  function wecomFileBaseName(name) {
+    var s = String(name || '').replace(/\\/g, '/').trim();
+    var i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+    return i >= 0 ? s.slice(i + 1) : s;
+  }
   function wecomIsImageFileName(name) {
-    return /\.(png|jpe?g|gif|webp|bmp|tif|tiff)$/i.test(String(name || ''));
+    return /\.(png|jpe?g|gif|webp|bmp|tif|tiff)$/i.test(wecomFileBaseName(name) || String(name || ''));
   }
   function wecomIsNonImageFileName(name) {
-    return /\.(pdf|docx?|docm|dotx?|wps|wpt|xlsx?|xlsm|xlsb|et|ett|pptx?|dps|dpt|zip|rar|7z|txt|md|csv|rtf|ofd|mp[34]|m4a|wav|aac|ogg|flac|amr|wma|webm)$/i.test(String(name || ''));
+    return /\.(pdf|docx?|docm|dotx?|wps|wpt|xlsx?|xlsm|xlsb|et|ett|pptx?|dps|dpt|zip|rar|7z|txt|md|csv|rtf|ofd|mp[34]|m4a|wav|aac|ogg|flac|amr|wma|webm)$/i.test(wecomFileBaseName(name) || String(name || ''));
+  }
+  function wecomLooksLikeImageStem(name) {
+    var base = wecomFileBaseName(name) || String(name || '');
+    var stem = base.replace(/\.[^.]+$/, '');
+    return stem === '图片' || /企业微信截图|微信截图|屏幕截图|screenshot/i.test(base);
   }
   function wecomIsImage(m) {
     var name = String((m && m.attachment_name) || '');
     var fromText = wecomExtractFileName((m && (m.text || m.snippet)) || '');
     if (wecomIsImageFileName(name) || wecomIsImageFileName(fromText)) return true;
+    if (wecomLooksLikeImageStem(name) || wecomLooksLikeImageStem(fromText)) return true;
     if (wecomIsNonImageFileName(name) || wecomIsNonImageFileName(fromText)) return false;
     var t = Number((m && m.msg_type) || 0);
-    return t === 4 || t === 15;
+    if (t === 4 || t === 15) return true;
+    var label = String((m && m.msg_type_label) || '').trim();
+    if (label === '图片' || /^(image|photo)$/i.test(label)) return true;
+    return !!wecomThumbSrcFromMedia(m && m.media_url);
+  }
+  function wecomThumbIsAvatarUrl(url) {
+    return /qlogo\.cn|\/mmhead\//i.test(String(url || ''));
   }
   function wecomThumbSrcFromMedia(url) {
     url = String(url || '').trim();
-    return url ? ('/api/wecom/media?url=' + encodeURIComponent(url)) : '';
+    if (!url || wecomThumbIsAvatarUrl(url)) return '';
+    if (!/qpic\.cn|pic\.weixin/i.test(url)) return '';
+    return '/api/wecom/media?url=' + encodeURIComponent(url);
   }
-  function wecomThumbSrcFromCopy(copy) {
-    var url = wecomFileHref(copy);
+  function wecomThumbSrcFromCopy(copy, name) {
+    var url = wecomFileHref(copy, name);
     if (!url) return '';
     return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'inline=1';
   }
-  function wecomThumbSrc(m, copies) {
+  function wecomThumbSrcFromLocal(f) {
+    if (!f) return '';
+    var name = f.filename || f.attachment_name || '';
+    if (!wecomFileWantThumb(f) && !wecomLooksLikeImageStem(name) && !wecomIsImageFileName(name)) return '';
+    var q = [];
+    if (name) q.push('name=' + encodeURIComponent(name));
+    var mid = f.messageId || f.message_id || '';
+    if (mid) q.push('message_id=' + encodeURIComponent(String(mid)));
+    var sid = f.sessionId || wecomState.sessionId || '';
+    if (sid) q.push('session_id=' + encodeURIComponent(sid));
+    var copies = wecomExpandCopies(f.copies || [], mid, sid);
+    var src = f.cacheSourceId || (copies[0] && copies[0].source_id) || '';
+    if (src) q.push('source_id=' + encodeURIComponent(src));
+    var mids = [];
+    copies.forEach(function (c) {
+      var n = Number((c && c.message_id) || 0);
+      if (n && mids.indexOf(n) < 0) mids.push(n);
+    });
+    if (mid && mids.indexOf(Number(mid)) < 0) mids.unshift(Number(mid));
+    if (mids.length) q.push('message_ids=' + mids.join(','));
+    if (!name && !mids.length) return '';
+    return '/api/wecom/local-image?' + q.join('&');
+  }
+  function wecomThumbSrc(m) {
     if (!wecomIsImage(m)) return '';
-    copies = copies || wecomCopiesOf(m);
-    if (copies[0]) return wecomThumbSrcFromCopy(copies[0]);
-    if (m && m.media_url) return wecomThumbSrcFromMedia(m.media_url);
-    return '';
+    var local = wecomThumbSrcFromLocal({
+      filename: wecomFileName(m),
+      messageId: m.message_id,
+      copies: wecomCopiesOf(m),
+      sessionId: wecomState.sessionId,
+      isImage: true
+    });
+    return local || wecomThumbSrcFromMedia(m && m.media_url);
+  }
+  function wecomFileWantThumb(f) {
+    if (!f) return false;
+    var base = wecomFileBaseName(f.filename);
+    if (wecomIsNonImageFileName(base || f.filename)) return false;
+    return !!(wecomIsImageFileName(f.filename) || wecomIsImageFileName(base) || wecomLooksLikeImageStem(f.filename) || f.isImage);
+  }
+  function wecomFileThumbFallbacks(f, primary) {
+    var out = [];
+    var seen = {};
+    function add(u) {
+      u = String(u || '').trim();
+      if (!u || seen[u] || u === primary) return;
+      seen[u] = true;
+      out.push(u);
+    }
+    add(wecomThumbSrcFromLocal(f));
+    add(wecomThumbSrcFromMedia(f && (f.mediaUrl || f.media_url) || ''));
+    wecomExpandCopies((f && f.copies) || [], (f && f.messageId) || '', (f && f.sessionId) || wecomState.sessionId).forEach(function (c) {
+      add(wecomThumbSrcFromCopy(c, f && f.filename));
+    });
+    return out;
   }
   function wecomFileThumbSrc(f) {
-    if (!f) return '';
-    if (wecomIsNonImageFileName(f.filename)) return '';
-    if (!(wecomIsImageFileName(f.filename) || f.isImage)) return '';
-    var copies = wecomExpandCopies(f.copies || [], f.messageId, f.sessionId || wecomState.sessionId);
-    if (copies[0]) return wecomThumbSrcFromCopy(copies[0]);
-    if (f.mediaUrl || f.media_url) return wecomThumbSrcFromMedia(f.mediaUrl || f.media_url);
-    return '';
+    if (!wecomFileWantThumb(f)) return '';
+    return wecomThumbSrcFromLocal(f) || wecomThumbSrcFromMedia(f.mediaUrl || f.media_url || '');
   }
   function wecomThumbHtml(src, alt, cls, fallback) {
-    if (!src) return '';
-    var extra = fallback && fallback !== src ? ' data-fallback="' + escAttr(fallback) + '"' : '';
-    return '<img class="' + (cls || 'wecom-thumb') + '" data-preview="' + escAttr(src) + '" src="' + escAttr(src) + '" alt="' + escAttr(alt || '') + '" loading="lazy" referrerpolicy="no-referrer"' + extra + '>';
+    var media = [];
+    var files = [];
+    var seen = {};
+    function add(u) {
+      u = String(u || '').trim();
+      if (!u || seen[u]) return;
+      seen[u] = true;
+      if (/\/api\/wecom\/media\?/.test(u)) media.push(u);
+      else files.push(u);
+    }
+    add(src);
+    if (Array.isArray(fallback)) fallback.forEach(add);
+    else add(fallback);
+    var isFiles = (cls || '').indexOf('wecom-files-thumb') >= 0;
+    if (!media.length && !files.length && !isFiles) return '';
+    var extra = '';
+    if (media.length) extra += ' data-media="' + escAttr(media.join('\n')) + '"';
+    if (files.length) extra += ' data-file-srcs="' + escAttr(files.join('\n')) + '"';
+    var boxCls = 'wecom-thumb-box' + (isFiles ? '' : ' wecom-thumb-box-chat');
+    return '<span class="' + boxCls + '"' + extra + '><img class="' + (cls || 'wecom-thumb') + '" alt="预览" hidden referrerpolicy="no-referrer"></span>';
+  }
+  var wecomThumbFileQ = [];
+  var wecomThumbFileN = 0;
+  function wecomThumbBlobLooksImage(buf) {
+    if (!buf || buf.byteLength < 12) return false;
+    var u8 = new Uint8Array(buf);
+    if (u8[0] === 0xFF && u8[1] === 0xD8 && u8[2] === 0xFF) return true;
+    if (u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4E && u8[3] === 0x47) return true;
+    if (u8[0] === 0x47 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x38) return true;
+    if (u8[0] === 0x42 && u8[1] === 0x4D) return true;
+    if (u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x46 && u8[8] === 0x57 && u8[9] === 0x45 && u8[10] === 0x42 && u8[11] === 0x50) return true;
+    if (u8[0] === 0x49 && u8[1] === 0x49 && u8[2] === 0x2A && u8[3] === 0x00) return true;
+    if (u8[0] === 0x4D && u8[1] === 0x4D && u8[2] === 0x00 && u8[3] === 0x2A) return true;
+    return false;
+  }
+  function wecomThumbFetchFile(url, done) {
+    wecomThumbFileQ.push({ url: url, done: done });
+    wecomThumbFilePump();
+  }
+  function wecomThumbFilePump() {
+    while (wecomThumbFileN < 3 && wecomThumbFileQ.length) {
+      (function (job) {
+        wecomThumbFileN += 1;
+        fetch(job.url, { credentials: 'same-origin', headers: { Accept: 'image/*,*/*;q=0.8' } }).then(function (r) {
+          var ct = (r.headers.get('content-type') || '').toLowerCase();
+          if (r.status === 202 || r.status === 204) {
+            job.tries = (job.tries || 0) + 1;
+            if (job.tries < 4) {
+              setTimeout(function () {
+                wecomThumbFileQ.push(job);
+                wecomThumbFilePump();
+              }, 700 * job.tries);
+              return;
+            }
+            job.done('');
+            return;
+          }
+          if (!r.ok || ct.indexOf('json') >= 0) {
+            job.done('');
+            return;
+          }
+          return r.blob().then(function (blob) {
+            if (!blob || blob.size < 24 || (blob.type && blob.type.indexOf('json') >= 0)) {
+              job.done('');
+              return;
+            }
+            return blob.slice(0, 16).arrayBuffer().then(function (buf) {
+              if (!wecomThumbBlobLooksImage(buf)) {
+                job.done('');
+                return;
+              }
+              job.done(URL.createObjectURL(blob));
+            });
+          });
+        }).catch(function () {
+          job.done('');
+        }).then(function () {
+          wecomThumbFileN -= 1;
+          wecomThumbFilePump();
+        });
+      })(wecomThumbFileQ.shift());
+    }
   }
   function wecomBindThumbs(root) {
     if (!root) return;
-    root.querySelectorAll('img.wecom-thumb, img.wecom-files-thumb').forEach(function (img) {
-      img.addEventListener('click', function (ev) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        wecomPreview(img.getAttribute('data-preview') || img.src);
-      });
-      img.addEventListener('error', function () {
-        var fb = img.getAttribute('data-fallback') || '';
-        if (fb && img.getAttribute('src') !== fb) {
-          img.setAttribute('src', fb);
-          img.setAttribute('data-preview', fb);
+    function loadBox(box) {
+      var st = box.getAttribute('data-thumb-state') || '';
+      if (st === 'loading' || st === 'ok') return;
+      box.setAttribute('data-thumb-state', 'loading');
+      var img = box.querySelector('img');
+      if (!img) return;
+      var media = String(box.getAttribute('data-media') || '').split('\n').filter(Boolean);
+      var files = String(box.getAttribute('data-file-srcs') || '').split('\n').filter(Boolean);
+      function show(url) {
+        if (!url) return;
+        img.hidden = false;
+        img.src = url;
+        img.setAttribute('data-preview', url);
+        box.classList.add('has-img');
+        box.setAttribute('data-thumb-state', 'ok');
+      }
+      function miss() {
+        img.hidden = true;
+        img.removeAttribute('src');
+        box.classList.remove('has-img');
+        box.setAttribute('data-thumb-state', 'miss');
+      }
+      function tryFiles(i, after) {
+        if (i >= files.length) {
+          after();
           return;
         }
-        img.hidden = true;
-        var row = img.closest('.wecom-files-row, .wecom-ai-file');
-        if (row) row.classList.remove('is-img');
+        wecomThumbFetchFile(files[i], function (url) {
+          if (url) show(url);
+          else tryFiles(i + 1, after);
+        });
+      }
+      function tryMedia(i, after) {
+        if (i >= media.length) {
+          after();
+          return;
+        }
+        var url = media[i];
+        var probe = new Image();
+        var settled = false;
+        function finish(ok) {
+          if (settled) return;
+          settled = true;
+          probe.onload = probe.onerror = null;
+          if (ok && probe.naturalWidth >= 8) show(url);
+          else tryMedia(i + 1, after);
+        }
+        probe.onload = function () { finish(true); };
+        probe.onerror = function () { finish(false); };
+        probe.referrerPolicy = 'no-referrer';
+        probe.src = url;
+      }
+      var preferFiles = files.length > 0;
+      if (preferFiles) tryFiles(0, function () { tryMedia(0, miss); });
+      else tryMedia(0, function () { tryFiles(0, miss); });
+    }
+    var boxes = root.querySelectorAll('.wecom-thumb-box');
+    function boxInView(b) {
+      var r = b.getBoundingClientRect();
+      var h = window.innerHeight || 0;
+      var w = window.innerWidth || 0;
+      var host = root.getBoundingClientRect ? root.getBoundingClientRect() : null;
+      if (host && host.height > 0) {
+        return r.width > 0 && r.height > 0 && r.bottom > host.top - 160 && r.top < host.bottom + 160;
+      }
+      return r.width > 0 && r.height > 0 && r.bottom > -40 && r.top < h + 160 && r.right > 0 && r.left < w;
+    }
+    boxes.forEach(function (b) {
+      if (boxInView(b)) loadBox(b);
+    });
+    if (typeof IntersectionObserver === 'function') {
+      try {
+        var io = new IntersectionObserver(function (ents) {
+          ents.forEach(function (en) {
+            if (!en.isIntersecting) return;
+            io.unobserve(en.target);
+            loadBox(en.target);
+          });
+        }, { root: null, rootMargin: '200px', threshold: 0.01 });
+        boxes.forEach(function (b) {
+          if (!b.getAttribute('data-thumb-state')) io.observe(b);
+        });
+      } catch (err) {
+        boxes.forEach(loadBox);
+      }
+    } else {
+      boxes.forEach(loadBox);
+    }
+    boxes.forEach(function (box) {
+      box.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var img = box.querySelector('img');
+        var src = (img && !img.hidden && (img.getAttribute('data-preview') || img.src)) || '';
+        if (src) wecomPreview(src);
       });
     });
   }
@@ -1504,18 +1773,19 @@
       var fname = wecomFileName(m);
       var copies = wecomCopiesOf(m);
       var mid = m.message_id || (copies[0] && copies[0].message_id) || '';
-      var thumbSrc = wecomThumbSrc(m, copies);
-      var thumbFb = (wecomIsImage(m) && m.media_url) ? wecomThumbSrcFromMedia(m.media_url) : '';
-      var hasThumb = !!thumbSrc;
+      var thumbSrc = wecomThumbSrc(m);
+      var thumbFb = copies.map(function (c) { return wecomThumbSrcFromCopy(c, fname); }).filter(Boolean);
+      if (m.media_url) thumbFb.push(wecomThumbSrcFromMedia(m.media_url));
+      var hasThumb = wecomIsImage(m);
       var showCard = wecomHasFile(m);
       var text = wecomCaption(m, fname, hasThumb || showCard);
-      var who = m.sender || '未知';
+      var who = senderLabel(m.sender);
       var when = m.time_text || '';
       var typ = m.msg_type_label || '';
       if (showCard && /系统消息/.test(typ)) typ = '文件';
       var extra = '';
       if (hasThumb) {
-        extra += wecomThumbHtml(thumbSrc, fname, '', thumbFb);
+        extra += wecomThumbHtml(thumbSrc, '预览', '', thumbFb);
         if (copies.length && !showCard) {
           extra += '<div><button type="button" class="wecom-orig" data-wecom-dl="' + escAttr(mid) + '" data-name="' + escAttr(fname) + '" data-copies="' + encodeURIComponent(JSON.stringify(copies)) + '">下载原文件</button></div>';
         }
@@ -1817,6 +2087,97 @@
     }
     nextChunk();
   }
+  function wecomProgressHtml() {
+    return '<div class="ar-progress wecom-progress">'
+      + '<div class="ar-progress-row">'
+      + '<span class="ar-progress-spin"></span>'
+      + '<span class="ar-progress-lab">准备中…</span>'
+      + '<span class="ar-progress-pct">0%</span></div>'
+      + '<div class="ar-progress-track"><div class="ar-progress-bar"></div></div>'
+      + '<div class="ar-progress-meta"></div></div>';
+  }
+  function wecomProgressPaint(root, ev) {
+    if (!root || !ev) return;
+    var pct = Math.max(0, Math.min(100, Number(ev.percent) || 0));
+    var lab = root.querySelector('.ar-progress-lab');
+    var pEl = root.querySelector('.ar-progress-pct');
+    var bar = root.querySelector('.ar-progress-bar');
+    var meta = root.querySelector('.ar-progress-meta');
+    if (lab) lab.textContent = ev.label || '';
+    if (pEl) pEl.textContent = pct + '%';
+    if (bar) bar.style.width = pct + '%';
+    if (meta) {
+      var bits = [];
+      if (ev.detail) bits.push(ev.detail);
+      if (ev.files != null) bits.push('文件 ' + ev.files);
+      if (ev.messages != null) bits.push('消息 ' + ev.messages);
+      meta.textContent = bits.join(' · ');
+    }
+  }
+  function wecomReadSSE(res, onEvent) {
+    if (!res.body || !res.body.getReader) {
+      return Promise.reject(new Error('浏览器不支持进度推送'));
+    }
+    var reader = res.body.getReader();
+    var dec = new TextDecoder();
+    var buf = '';
+    function pump() {
+      return reader.read().then(function (x) {
+        if (x.done) throw new Error('解析中断');
+        buf += dec.decode(x.value, { stream: true });
+        var parts = buf.split('\n\n');
+        buf = parts.pop() || '';
+        for (var i = 0; i < parts.length; i++) {
+          var line = parts[i].replace(/^data:\s*/, '').trim();
+          if (!line) continue;
+          try {
+            var ev = JSON.parse(line);
+            onEvent(ev);
+            if (ev.phase === 'done' || ev.phase === 'error') return ev;
+          } catch (err) {}
+        }
+        return pump();
+      });
+    }
+    return pump();
+  }
+  function wecomPostProgress(url, payload, box, thenOk, thenErr) {
+    var root = null;
+    if (box) {
+      box.innerHTML = wecomProgressHtml();
+      root = box.querySelector('.ar-progress');
+      wecomProgressPaint(root, { percent: 2, label: '开始解析…' });
+    }
+    var body = {};
+    Object.keys(payload || {}).forEach(function (k) { body[k] = payload[k]; });
+    body.stream = true;
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      var ct = (res.headers.get('content-type') || '');
+      if (!res.ok && ct.indexOf('text/event-stream') < 0) {
+        return res.json().then(function (j) {
+          var d = j && (typeof j.detail === 'string' ? j.detail : (j.message || ''));
+          throw new Error(d || '请求失败');
+        }, function () { throw new Error('请求失败'); });
+      }
+      if (ct.indexOf('text/event-stream') >= 0) {
+        return wecomReadSSE(res, function (ev) {
+          if (ev.phase === 'error') throw new Error(ev.message || '解析失败');
+          wecomProgressPaint(root, ev);
+        }).then(function (last) {
+          if (last && last.phase === 'done') return last.result || last;
+          throw new Error((last && last.message) || '解析中断');
+        });
+      }
+      return res.json().then(function (j) {
+        if (!res.ok) throw new Error((j && (j.detail || j.message)) || '请求失败');
+        return j;
+      });
+    }).then(thenOk).catch(thenErr);
+  }
   function wecomFileBox() {
     return document.getElementById('wecomFileBox');
   }
@@ -1825,6 +2186,7 @@
   }
   var wecomFileCacheKey = '';
   var wecomFileLoading = false;
+  var wecomFileReq = 0;
   function wecomFileRequestKey() {
     var dates = wecomSplitDates();
     return [wecomState.sessionId || '', dates.start_date || '', dates.end_date || '', wecomSourceParam() || ''].join('\t');
@@ -1837,38 +2199,46 @@
     }
     if (!box) return;
     var key = wecomFileRequestKey();
-    if (!force && wecomFileData && wecomFileCacheKey === key && wecomFileData.session_id === wecomState.sessionId) {
-      wecomFilePaint(true);
-      return;
-    }
-    if (wecomFileLoading && !force) return;
+    var had = !force && wecomFileData && wecomFileCacheKey === key && wecomFileData.session_id === wecomState.sessionId;
+    if (had) wecomFilePaint(true);
+    if (wecomFileLoading && !force && had) return;
     wecomFileLoading = true;
-    box.innerHTML = '<div class="wecom-empty">正在按聊天上下文分类本会话文件…<br><span style="font-size:12px;color:#8a93a6">识别到护照、学历等材料且能匹配人才编号时，会自动入库</span></div>';
+    var req = ++wecomFileReq;
     var dates = wecomSplitDates();
-    fetch('/api/wecom/file-summary', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: wecomState.sessionId,
-        session_name: wecomState.sessionName || '',
-        source_id: wecomSourceParam() || '',
-        start_date: dates.start_date,
-        end_date: dates.end_date,
-        force: !!force
-      })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (x) {
-        wecomFileLoading = false;
-        if (!x.ok) {
-          if (box) box.innerHTML = '<div class="wecom-empty">' + esc((x.j && x.j.detail) || '汇总失败') + '</div>';
-          return;
-        }
-        wecomFileCacheKey = key;
-        wecomFileRender(x.j || {});
-      }).catch(function (e) {
-        wecomFileLoading = false;
-        if (box) box.innerHTML = '<div class="wecom-empty">' + esc(e.message || '汇总失败') + '</div>';
-      });
+    var payload = {
+      session_id: wecomState.sessionId,
+      session_name: wecomState.sessionName || '',
+      source_id: wecomSourceParam() || '',
+      start_date: dates.start_date,
+      end_date: dates.end_date,
+      force: !!force
+    };
+    var target = box;
+    if (had) {
+      var wrap = box.querySelector('.wecom-file-progress-host');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'wecom-file-progress-host';
+        box.insertBefore(wrap, box.firstChild);
+      }
+      target = wrap;
+    }
+    wecomPostProgress('/api/wecom/file-summary', payload, target, function (d) {
+      if (req !== wecomFileReq) return;
+      wecomFileLoading = false;
+      wecomFileCacheKey = key;
+      wecomFileRender(d || {}, had);
+    }, function (e) {
+      if (req !== wecomFileReq) return;
+      wecomFileLoading = false;
+      if (had) {
+        var host = box.querySelector('.wecom-file-progress-host');
+        if (host) host.parentNode.removeChild(host);
+        say(false, e.message || '汇总失败');
+        return;
+      }
+      if (box) box.innerHTML = '<div class="wecom-empty">' + esc(e.message || '汇总失败') + '</div>';
+    });
   }
   var WECOM_FILE_CATS = ['申报书', '修改意见', '护照', '身份证明', '学历证明', '工作证明', '意向协议', '股权证明', '论文全文', '证件照', '电子签', '项目证明', '成果转化证明', '其他'];
   function wecomFileCatRank(label) {
@@ -1988,12 +2358,17 @@
     }
     wecomFileLoad(false);
   }
-  function wecomFileRender(d) {
+  function wecomFileRender(d, keepView) {
     wecomFileData = d || {};
-    wecomFileChecked = {};
-    wecomFileQuery = '';
-    wecomFileCat = wecomFilePendingCat || '';
-    wecomFilePendingCat = '';
+    if (!keepView) {
+      wecomFileChecked = {};
+      wecomFileQuery = '';
+      wecomFileCat = wecomFilePendingCat || '';
+      wecomFilePendingCat = '';
+    } else if (wecomFilePendingCat) {
+      wecomFileCat = wecomFilePendingCat;
+      wecomFilePendingCat = '';
+    }
     wecomFilePaint(true);
     if (wecomFilePendingNote) {
       say(true, wecomFilePendingNote);
@@ -2005,15 +2380,10 @@
     if (!box) return;
     if (!skipSync) wecomFileSyncChecks();
     var d = wecomFileData || {};
-    var upload = d.upload || {};
     var aidEl = document.getElementById('wecomFileAid');
-    var urlEl = document.getElementById('wecomFileUrl');
-    var keyEl = document.getElementById('wecomFileKey');
     var qEl = document.getElementById('wecomFileQ');
     var catEl = document.getElementById('wecomFileCat');
     var aidKeep = aidEl ? aidEl.value : '';
-    var urlKeep = urlEl ? urlEl.value : (upload.baseUrl || '');
-    var keyKeep = keyEl ? keyEl.value : '';
     if (qEl) wecomFileQuery = qEl.value || '';
     if (catEl) wecomFileCat = catEl.value || '';
     var all = wecomFileAllRows();
@@ -2029,9 +2399,13 @@
     var picked = Object.keys(wecomFileChecked).length;
     var session = wecomState.sessionName || '';
     var countText = n === all.length ? ('共 ' + all.length + ' 个文件') : ('筛选出 ' + n + ' · 共 ' + all.length);
+    var modeText = d.mode === 'incremental'
+      ? ('增量' + (d.newFileCount ? (' · 新增 ' + d.newFileCount) : ''))
+      : (d.mode === 'cache' ? '已缓存' : (d.mode === 'full' ? '全量' : ''));
     var html = '';
     if (!all.length) {
       html += '<div class="wecom-empty">当前日期范围内没有文件</div>';
+      html += '<div class="wecom-files-act" style="padding:8px 0"><button type="button" class="mini" id="wecomFileRescan">重新全量扫描</button></div>';
     } else {
       html += '<div class="wecom-files-bar">' +
         '<div class="wecom-files-find">' +
@@ -2041,7 +2415,9 @@
         '<div class="wecom-files-meta">' +
           (session ? '<span class="wecom-files-sess" title="' + escAttr(session) + '">' + esc(session) + '</span>' : '') +
           '<span class="count-pill">' + esc(countText) + '</span>' +
+          (modeText ? '<span class="count-pill">' + esc(modeText) + '</span>' : '') +
           (d.classifyNote ? '<span class="wecom-files-sess" title="' + escAttr(d.classifyNote) + '">' + esc(d.classifyNote) + '</span>' : '') +
+          '<button type="button" class="mini" id="wecomFileRescan" title="忽略缓存，重新通读本会话全部文件">重新全量扫描</button>' +
           ((d.autoUpload && d.autoUpload.note) ? '<span class="wecom-files-sess" title="' + escAttr(d.autoUpload.note) + '">' + esc(d.autoUpload.note) + '</span>' : '') +
           (picked ? '<span class="wecom-files-picked">已选 ' + picked + '</span>' : '') +
         '</div></div>';
@@ -2064,24 +2440,41 @@
           }
           var key = wecomFileKey(f);
           var on = wecomFileChecked[key] ? ' checked' : '';
-          var who = String(f.sender || '').trim() || '未知';
+          var who = senderLabel(f.sender);
           var when = String(f.time || '').trim() || '未知';
           var why = String(f.reason || '').trim();
           var srcMap = {context: '聊天', gemini: '模型', filename: '文件名'};
           var srcLab = srcMap[f.source] || '';
+          var wantThumb = wecomFileWantThumb(f);
           var thumbSrc = wecomFileThumbSrc(f);
-          var thumbFb = (f.mediaUrl || f.media_url) ? wecomThumbSrcFromMedia(f.mediaUrl || f.media_url) : '';
-          html += '<label class="wecom-files-row' + (thumbSrc ? ' is-img' : '') + '"><input type="checkbox" data-file="1" data-key="' + escAttr(key) + '" data-name="' + escAttr(f.filename) + '" data-mid="' + escAttr(f.messageId) + '"' + on + '>' +
-            (thumbSrc ? wecomThumbHtml(thumbSrc, f.filename || '', 'wecom-files-thumb', thumbFb) : '') +
-            '<span class="nm" title="' + escAttr(f.filename) + '">' + esc(f.filename || '未命名') + wecomFileUploadTag(f) + '</span>' +
+          var thumbFb = wecomFileThumbFallbacks(f, thumbSrc);
+          var shownName = wecomFileBaseName(f.filename) || f.filename || '未命名';
+          var aiMids = wecomExpandCopies(f.copies || [], f.messageId, f.sessionId || wecomState.sessionId).map(function (c) {
+            return String((c && c.message_id) || '');
+          }).filter(Boolean);
+          if (f.messageId && aiMids.indexOf(String(f.messageId)) < 0) aiMids.unshift(String(f.messageId));
+          var aiJump = escAttr(JSON.stringify({
+            messageId: String(f.messageId || ''),
+            filename: f.filename || '',
+            label: lab,
+            attachId: String(f.attachId || ''),
+            sender: f.sender || '',
+            time: f.time || '',
+            sessionId: f.sessionId || wecomState.sessionId || '',
+            mids: aiMids
+          }));
+          html += '<div class="wecom-files-row' + (wantThumb ? ' is-img' : '') + '"><input type="checkbox" data-file="1" data-key="' + escAttr(key) + '" data-name="' + escAttr(f.filename) + '" data-mid="' + escAttr(f.messageId) + '"' + on + '>' +
+            (wantThumb ? wecomThumbHtml(thumbSrc, '预览', 'wecom-files-thumb', thumbFb) : '') +
+            '<button type="button" class="nm wecom-files-ai" title="' + escAttr((f.filename || shownName) + '　在最新解读记录中查看此文件') + '" data-ai-file="' + aiJump + '">' + esc(shownName) + wecomFileUploadTag(f) + '</button>' +
             '<span class="wecom-files-who" title="' + escAttr('发出人 ' + who + ' 发出时间 ' + when + (why ? '　' + why : '') + (f.attachId ? '　编号 ' + f.attachId : '') + (f.uploadNote ? '　' + f.uploadNote : '')) + '">' +
             '<em>发出人</em>' + esc(who) + '<em>发出时间</em>' + esc(when) +
             (f.attachId ? '<em>编号</em>' + esc(f.attachId) : '') +
             (srcLab ? '<em>依据</em>' + esc(srcLab) : '') +
             (why ? '<em>分类</em>' + esc(why) : '') + '</span>' +
             '<span class="wecom-files-acts">' +
+            '<button type="button" class="mini wecom-files-ai" data-ai-file="' + aiJump + '" title="打开最新解读记录中的对应文件">解读</button>' +
             '<button type="button" class="mini wecom-files-loc" data-locate="' + escAttr(JSON.stringify(wecomFileLocatePayload(f))) + '">定位</button>' +
-            '<button type="button" class="mini wecom-files-dl" data-name="' + escAttr(f.filename || 'file') + '" data-copies="' + encodeURIComponent(JSON.stringify(wecomExpandCopies(f.copies || [], f.messageId, f.sessionId || wecomState.sessionId))) + '" data-wecom-dl="' + escAttr(f.messageId || '') + '">下载</button></span></label>';
+            '<button type="button" class="mini wecom-files-dl" data-name="' + escAttr(f.filename || 'file') + '" data-copies="' + encodeURIComponent(JSON.stringify(wecomExpandCopies(f.copies || [], f.messageId, f.sessionId || wecomState.sessionId))) + '" data-wecom-dl="' + escAttr(f.messageId || '') + '">下载</button></span></div>';
         });
         if (prevLab) html += '</div>';
         html += '</div>';
@@ -2091,8 +2484,6 @@
     if (all.length) {
       html += '<div class="wecom-files-foot">' +
         '<div class="wecom-files-cfg">' +
-          '<label>上传接口<input id="wecomFileUrl" value="' + escAttr(urlKeep) + '" placeholder="暂不填写" autocomplete="off"></label>' +
-          '<label>Key<input id="wecomFileKey" type="password" value="' + escAttr(keyKeep) + '" placeholder="' + (upload.hasKey ? '已配置，留空不修改' : '暂不填写') + '" autocomplete="off"></label>' +
           '<label>人才编号<input id="wecomFileAid" value="' + escAttr(aidKeep) + '" placeholder="attach_id" autocomplete="off"></label>' +
         '</div>' +
         '<div class="wecom-files-act"><span id="wecomFileMsg"></span><button type="button" class="primary" id="wecomFileUp">上传选中到人才附件</button></div></div>';
@@ -2130,9 +2521,22 @@
         }
       });
     });
+    box.querySelectorAll('.wecom-files-ai').forEach(function (btn) {
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        try {
+          wecomAiOpenLatestForFile(JSON.parse(btn.getAttribute('data-ai-file') || '{}'));
+        } catch (e) {
+          say(false, '无法打开解读记录');
+        }
+      });
+    });
     wecomBindThumbs(box);
     var up = document.getElementById('wecomFileUp');
     if (up) up.addEventListener('click', wecomFileUpload);
+    var rescan = document.getElementById('wecomFileRescan');
+    if (rescan) rescan.addEventListener('click', function () { wecomFileLoad(true); });
     if (qIn && keepFocus) {
       qIn.focus();
       var len = qIn.value.length;
@@ -2141,7 +2545,7 @@
   }
   function wecomFileToggle() {
     wecomRailOpen('files');
-    wecomFileLoad(true);
+    wecomFileLoad(false);
   }
   function wecomFileUpload() {
     var msg = document.getElementById('wecomFileMsg');
@@ -2162,7 +2566,7 @@
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (x) {
         if (msg) msg.textContent = (x.j && (x.j.detail || x.j.message)) || (x.ok ? '已提交' : '上传失败');
-        if (x.ok) wecomFileLoad(true);
+        if (x.ok) wecomFileLoad(false);
       }).catch(function (e) {
         if (msg) msg.textContent = e.message || '上传失败';
       });
@@ -2700,7 +3104,7 @@
       var copyIdx = idx;
       var c = copies[idx++];
       var label = c.source_label || c.source_id || '';
-      var url = wecomFileHref(c);
+      var url = wecomFileHref(c, name);
       if (!url) {
         wecomSetPcState(wrap, copyIdx, 'miss');
         tryNext();
@@ -2876,6 +3280,10 @@
     wecomRailRestoreWidth();
     wecomRailBindResizer();
     wecomRailSyncTabs();
+    if (wecomState.railTab === 'files') {
+      var filesBox = wecomFileBox && wecomFileBox();
+      if (filesBox) wecomBindThumbs(filesBox);
+    }
   }
   function wecomRailClose() {
     wecomState.aiKey = '';
@@ -3084,7 +3492,7 @@
     var when = String((op && op.time) || '').trim();
     var loc = wecomAiBindLocatePayload(d, op);
     var html = '<div class="wecom-ai-bind-op-row">' +
-      '<button type="button" class="wecom-ai-bind-op' + (meta.isText ? ' text' : '') + '" data-locate="' + escAttr(JSON.stringify(loc)) + '" title="定位到聊天记录">' +
+      '<button type="button" class="wecom-ai-bind-op' + (meta.isText ? ' text' : '') + (wecomAiFileIsFocus(op) ? ' hit' : '') + '" data-ai-file-mid="' + escAttr(loc.messageId) + '" data-ai-file-name="' + escAttr((op && op.filename) || '') + '" data-locate="' + escAttr(JSON.stringify(loc)) + '" title="定位到聊天记录">' +
       '<span class="kind">' + esc(meta.tag) + '</span>' +
       '<span class="body">' + esc(meta.main) + '</span></button>';
     if (who || when) {
@@ -3093,10 +3501,28 @@
     html += '</div>';
     return html;
   }
+  function wecomAiIsScreenshotName(name) {
+    var s = String(name || '');
+    var base = s.replace(/\\/g, '/').split('/').pop() || s;
+    if (/企业微信截图|微信截图|屏幕截图|screenshot|截图_\d{6,}/i.test(s) || /企业微信截图|微信截图|屏幕截图|screenshot|截图_\d{6,}/i.test(base)) return true;
+    return /[\\/]temp[\\/]/i.test(s) && /\.(png|jpe?g|gif|webp|bmp|tif|tiff)$/i.test(base);
+  }
+  function wecomAiIsAppFileName(name) {
+    if (wecomAiIsScreenshotName(name)) return false;
+    var base = String(name || '').replace(/\\/g, '/').split('/').pop() || '';
+    return /\.(docx?|docm|wps|xlsx?|xlsm|xls|pdf)$/i.test(base);
+  }
+  function wecomAiBindAppVersions(t) {
+    return ((t && t.versions) || []).filter(function (v) {
+      return wecomAiIsAppFileName((v && v.filename) || '');
+    });
+  }
   function wecomAiBindOne(d, block) {
     var html = '';
     if (block.error) html += '<p style="color:var(--bad)">' + esc(block.error) + '</p>';
-    var talents = block.talents || [];
+    var talents = (block.talents || []).map(function (t) {
+      return Object.assign({}, t, { versions: wecomAiBindAppVersions(t) });
+    }).filter(function (t) { return (t.versions || []).length; });
     wecomAiBindEnsureOpen(talents);
     if (!talents.length) html += '<p>当前会话未识别到申报书版本</p>';
     talents.forEach(function (t, ti) {
@@ -3112,7 +3538,7 @@
       if (t.company && title.indexOf(t.company) < 0) subBits.push(t.company);
       subBits.push(vers.length + ' 个版本');
       if (opN) subBits.push(opN + ' 条意见');
-      html += '<div class="wecom-ai-bind-talent' + (open ? ' open' : '') + '" data-bind-key="' + escAttr(key) + '">' +
+      html += '<div class="wecom-ai-bind-talent' + (open ? ' open' : '') + (wecomAiTalentHasFocus(t) ? ' focus' : '') + '" data-bind-key="' + escAttr(key) + '">' +
         '<button type="button" class="wecom-ai-bind-talent-hd" data-bind-toggle="' + escAttr(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '">' +
         '<span class="chev" aria-hidden="true"></span>' +
         '<span class="ttl"><b>' + esc(title) + '</b>' +
@@ -3124,10 +3550,12 @@
         }
         vers.forEach(function (v, vi) {
           var ops = wecomAiBindDedupeOpinions(v.opinions || []);
-          var vlab = wecomAiBindVersionLabel(v, vi);
+          var isJump = !!v.jumpFromFiles;
+          var vlab = (isJump && v.focusKind && v.focusKind !== '申报书') ? v.focusKind : wecomAiBindVersionLabel(v, vi);
+          var vcls = (isJump && v.focusKind !== '申报书') ? ' jump' : ' app';
           html += '<div class="wecom-ai-bind-ver">' +
             '<div class="wecom-ai-bind-ver-hd">' +
-            '<button type="button" class="wecom-ai-bind-op app" data-locate="' + escAttr(JSON.stringify(wecomAiBindLocatePayload(d, v))) + '" title="定位申报书">' +
+            '<button type="button" class="wecom-ai-bind-op' + vcls + (wecomAiFileIsFocus(v) ? ' hit' : '') + '" data-ai-file-mid="' + escAttr(String(v.messageId || v.message_id || '')) + '" data-ai-file-name="' + escAttr(v.filename || '') + '" data-locate="' + escAttr(JSON.stringify(wecomAiBindLocatePayload(d, v))) + '" title="定位申报书">' +
             '<span class="kind">' + esc(vlab) + '</span>' +
             '<span class="body">' + esc(v.filename || '申报书') + '</span></button>' +
             '<span class="wecom-ai-bind-op-meta">' + esc([(v.sender || ''), (v.time || '')].filter(Boolean).join(' · ')) + '</span></div>';
@@ -3146,14 +3574,16 @@
     });
     var unbound = wecomAiBindDedupeOpinions(block.unboundOpinions || []);
     if (unbound.length) {
-      html += '<details class="wecom-ai-bind-unbound"><summary>未绑定意见 ' + unbound.length + ' 条</summary>';
+      var unboundOpen = unbound.some(wecomAiFileIsFocus);
+      html += '<details class="wecom-ai-bind-unbound"' + (unboundOpen ? ' open' : '') + '><summary>未绑定意见 ' + unbound.length + ' 条</summary>';
       unbound.forEach(function (op) { html += wecomAiBindOpinionHtml(d, op); });
       html += '</details>';
     }
     return html;
   }
   function wecomAiBindSkeleton() {
-    return '<div class="wecom-ai-card"><h5>申报书版本与修改意见</h5>' +
+    return '<div class="wecom-ai-card" id="wecomAiBindCard"><h5>申报书版本与修改意见</h5>' +
+      wecomAiBindPinHtml() +
       '<div class="wecom-ai-bind-tabs">' +
       '<button type="button" class="wecom-ai-bind-tab on">时间窗</button></div>' +
       '<p>先扫描全部文件并按规则分类，再按时间确认各版申报书对应的修改意见</p></div>';
@@ -3172,7 +3602,7 @@
     var tabs = '<div class="wecom-ai-bind-tabs">' + keys.map(function (k) {
       return '<button type="button" class="wecom-ai-bind-tab' + (!side && k === view ? ' on' : '') + '" data-bind="' + escAttr(k) + '">' + esc(labels[k] || k) + '</button>';
     }).join('') + '<button type="button" class="wecom-ai-bind-tab' + (side ? ' on' : '') + '" data-bind="side">并排</button></div>';
-    var html = '<div class="wecom-ai-card"><h5>申报书版本与修改意见</h5>' + tabs;
+    var html = '<div class="wecom-ai-card" id="wecomAiBindCard"><h5>申报书版本与修改意见</h5>' + wecomAiBindPinHtml() + tabs;
     if (side) {
       html += '<div class="wecom-ai-bind-side">' + keys.map(function (k) {
         var block = binds[k] || {};
@@ -3199,13 +3629,20 @@
       });
     }
     if (!items.length) return '';
-    var counts = ft.counts || {};
-    if (!Object.keys(counts).length) {
-      items.forEach(function (it) {
-        var lab = it.label || '其他';
-        counts[lab] = (counts[lab] || 0) + 1;
-      });
-    }
+    items = items.map(function (it) {
+      var row = Object.assign({}, it);
+      var lab = row.label || '其他';
+      if ((lab === '申报书' || row.type === 'app') && (wecomAiIsScreenshotName(row.filename) || row.isImage || !wecomAiIsAppFileName(row.filename))) {
+        row.label = '其他';
+        row.type = 'other';
+      }
+      return row;
+    });
+    var counts = {};
+    items.forEach(function (it) {
+      var lab = it.label || '其他';
+      counts[lab] = (counts[lab] || 0) + 1;
+    });
     var order = ['申报书', '修改意见', '护照', '身份证明', '学历证明', '工作证明', '意向协议', '股权证明', '论文全文', '证件照', '电子签', '项目证明', '成果转化证明', '其他'];
     var pills = order.filter(function (k) { return counts[k]; }).map(function (k) {
       return '<button type="button" class="wecom-ai-tag jump" data-ai-jump="files" data-ai-cat="' + escAttr(k) + '" title="打开文件汇总 · ' + escAttr(k) + '">' + esc(k) + ' ' + esc(counts[k]) + '</button>';
@@ -3215,6 +3652,9 @@
       var lab = it.label || '其他';
       (byLab[lab] = byLab[lab] || []).push(it);
     });
+    Object.keys(byLab).forEach(function (lab) {
+      if (order.indexOf(lab) < 0) order.push(lab);
+    });
     var html = '<div class="wecom-ai-card"><h5>文件分类（规则：文件名与前后聊天）</h5>';
     if (ft.geminiNote) html += '<p class="wecom-ai-sub">' + esc(ft.geminiNote) + '</p>';
     html += '<div class="wecom-ai-stat" style="margin:8px 0">' + pills + '</div>';
@@ -3222,7 +3662,16 @@
       var rows = byLab[lab] || [];
       if (!rows.length) return;
       html += '<div class="wecom-ai-files-sec"><button type="button" class="wecom-ai-files-sec-hd jump" data-ai-jump="files" data-ai-cat="' + escAttr(lab) + '" title="打开文件汇总 · ' + escAttr(lab) + '"><b>' + esc(lab) + '</b><em>' + rows.length + '</em></button>';
-      rows.slice(0, 12).forEach(function (it) {
+      var hasFocus = rows.some(function (it) { return wecomAiFileIsFocus(it); });
+      var shown = rows;
+      if (hasFocus) {
+        var focused = rows.filter(wecomAiFileIsFocus);
+        var rest = rows.filter(function (it) { return !wecomAiFileIsFocus(it); });
+        shown = focused.concat(rest);
+      } else if (rows.length > 12) {
+        shown = rows.slice(0, 12);
+      }
+      shown.forEach(function (it) {
         var mid = it.messageId || it.message_id || '';
         var loc = {
           sessionId: it.sessionId || it.session_id || d.session_id || wecomState.sessionId || '',
@@ -3230,24 +3679,382 @@
           messageId: String(mid || ''),
           time: it.time || ''
         };
-        var thumbSrc = wecomFileThumbSrc({
+        var thumbFile = {
           filename: it.filename,
           mediaUrl: it.mediaUrl || it.media_url || '',
           copies: it.copies || [],
           messageId: mid,
           sessionId: loc.sessionId,
           isImage: it.isImage
-        });
-        html += '<button type="button" class="wecom-ai-file jump' + (thumbSrc ? ' is-img' : '') + '" data-ai-locate="' + escAttr(JSON.stringify(loc)) + '">' +
-          (thumbSrc ? wecomThumbHtml(thumbSrc, it.filename || '', 'wecom-files-thumb', (it.mediaUrl || it.media_url) ? wecomThumbSrcFromMedia(it.mediaUrl || it.media_url) : '') : '') +
-          '<span class="nm">' + esc(it.filename || '未命名') + '</span>' +
+        };
+        var wantThumb = wecomFileWantThumb(thumbFile);
+        var thumbSrc = wecomFileThumbSrc(thumbFile);
+        var on = wecomAiFileIsFocus(it) ? ' hit' : '';
+        html += '<button type="button" class="wecom-ai-file jump' + (wantThumb ? ' is-img' : '') + on + '" data-ai-file-mid="' + escAttr(String(mid || '')) + '" data-ai-file-name="' + escAttr(it.filename || '') + '" data-ai-locate="' + escAttr(JSON.stringify(loc)) + '">' +
+          (wantThumb ? wecomThumbHtml(thumbSrc, '预览', 'wecom-files-thumb', wecomFileThumbFallbacks(thumbFile, thumbSrc)) : '') +
+          '<span class="nm">' + esc(wecomFileBaseName(it.filename) || it.filename || '未命名') + '</span>' +
           '<div class="why">' + esc((it.sender ? it.sender + ' · ' : '') + (it.time || '') + (it.reason ? ' · ' + it.reason : '')) + '</div></button>';
       });
-      if (rows.length > 12) html += '<div class="why">另有 ' + (rows.length - 12) + ' 个 · <button type="button" class="linkish" data-ai-jump="files" data-ai-cat="' + escAttr(lab) + '">在文件汇总查看</button></div>';
+      if (rows.length > shown.length) html += '<div class="why">另有 ' + (rows.length - shown.length) + ' 个 · <button type="button" class="linkish" data-ai-jump="files" data-ai-cat="' + escAttr(lab) + '">在文件汇总查看</button></div>';
       html += '</div>';
     });
     html += '</div>';
     return html;
+  }
+  function wecomAiFileBase(name) {
+    var s = String(name || '').trim().toLowerCase();
+    s = s.replace(/^\[.*?\]\s*/, '').replace(/^【.*?】\s*/, '');
+    var i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+    if (i >= 0) s = s.slice(i + 1);
+    return s;
+  }
+  function wecomAiFocusMidSet() {
+    var f = wecomAiFocusFile || {};
+    var out = {};
+    [f.messageId].concat(f.mids || []).forEach(function (id) {
+      var s = String(id || '').trim();
+      if (s && s !== '0') out[s] = true;
+    });
+    return out;
+  }
+  function wecomAiCollectMids(it) {
+    var ids = [];
+    if (!it) return ids;
+    ids.push(it.messageId || it.message_id);
+    (it.copies || []).forEach(function (c) {
+      ids.push((c && (c.message_id || c.messageId)) || '');
+    });
+    return ids.map(function (x) { return String(x || '').trim(); }).filter(function (s) { return s && s !== '0'; });
+  }
+  function wecomAiNameClose(a, b) {
+    var x = wecomAiFileBase(a).replace(/\.[^.]+$/, '');
+    var y = wecomAiFileBase(b).replace(/\.[^.]+$/, '');
+    if (!x || !y) return false;
+    if (x === y) return true;
+    if (x.length >= 8 && y.indexOf(x) >= 0) return true;
+    if (y.length >= 8 && x.indexOf(y) >= 0) return true;
+    return false;
+  }
+  function wecomAiFileIsFocus(it) {
+    var focus = wecomAiFocusFile;
+    if (!focus || !it) return false;
+    var mids = wecomAiFocusMidSet();
+    var its = wecomAiCollectMids(it);
+    for (var i = 0; i < its.length; i++) {
+      if (mids[its[i]]) return true;
+    }
+    return wecomAiNameClose(focus.filename, it.filename);
+  }
+  function wecomAiTalentHasFocus(t) {
+    var vers = wecomAiBindAppVersions(t);
+    for (var i = 0; i < vers.length; i++) {
+      if (wecomAiFileIsFocus(vers[i])) return true;
+      var ops = vers[i].opinions || [];
+      for (var j = 0; j < ops.length; j++) {
+        if (wecomAiFileIsFocus(ops[j])) return true;
+      }
+    }
+    return false;
+  }
+  function wecomAiBindHasFocus(block) {
+    var talents = (block && block.talents) || [];
+    for (var i = 0; i < talents.length; i++) {
+      if (wecomAiTalentHasFocus(talents[i])) return true;
+    }
+    return ((block && block.unboundOpinions) || []).some(wecomAiFileIsFocus);
+  }
+  function wecomAiFocusRow() {
+    var focus = wecomAiFocusFile;
+    if (!focus) return null;
+    var row = null;
+    wecomFileAllRows().forEach(function (f) {
+      if (!row && wecomAiFileIsFocus(f)) row = f;
+    });
+    return row || {
+      messageId: focus.messageId,
+      filename: focus.filename,
+      label: focus.label || '',
+      attachId: focus.attachId || '',
+      sender: focus.sender || '',
+      time: focus.time || '',
+      copies: (focus.mids || []).map(function (id) { return { message_id: id }; })
+    };
+  }
+  function wecomAiAidFromName(name) {
+    if (wecomAiIsScreenshotName(name)) return '';
+    var base = String(name || '').replace(/\\/g, '/').split('/').pop() || '';
+    base = base.replace(/\.[^.]+$/, '');
+    var m = base.match(/(?:^|[^\d])(\d{4,6})(?=[^\d]|$)/);
+    return m ? m[1] : '';
+  }
+  function wecomAiFocusAid() {
+    var focus = wecomAiFocusFile || {};
+    var row = wecomAiFocusRow() || {};
+    return String(focus.attachId || row.attachId || '').trim() || wecomAiAidFromName(focus.filename || row.filename || '');
+  }
+  function wecomAiFocusKind() {
+    var row = wecomAiFocusRow() || {};
+    var name = (wecomAiFocusFile && wecomAiFocusFile.filename) || row.filename || '';
+    var lab = String((wecomAiFocusFile && wecomAiFocusFile.label) || row.label || '').trim();
+    if (wecomAiIsScreenshotName(name) || (lab === '申报书' && !wecomAiIsAppFileName(name))) {
+      lab = lab === '申报书' ? '其他' : lab;
+    }
+    if (lab === '申报书' || lab === '修改意见') return lab;
+    var base = wecomAiFileBase(name);
+    if (wecomAiIsAppFileName(name) && /申报书|申请表|application/i.test(base)) return '申报书';
+    if (/修改意见|意见稿|修订意见/i.test(base)) return '修改意见';
+    return lab || '其他';
+  }
+  function wecomAiBindPinHtml() {
+    var f = wecomAiFocusFile;
+    if (!f || !(f.filename || f.messageId)) return '';
+    var kind = wecomAiFocusKind();
+    return '<div class="wecom-ai-bind-pin hit" data-ai-file-mid="' + escAttr(f.messageId || '') + '" data-ai-file-name="' + escAttr(f.filename || '') + '">' +
+      '<span class="kind">' + esc(kind === '其他' ? '跳转文件' : kind) + '</span>' +
+      '<span class="nm">' + esc(f.filename || f.messageId) + '</span></div>';
+  }
+  function wecomAiPrepareFocusOpen(d) {
+    if (!wecomAiFocusFile || !d) return;
+    var binds = d.bindPrompts || {};
+    var foundView = '';
+    Object.keys(binds).forEach(function (k) {
+      var block = binds[k] || {};
+      if (wecomAiBindHasFocus(block) && !foundView) foundView = k;
+      var talents = block.talents || [];
+      talents.forEach(function (t, ti) {
+        if (!wecomAiTalentHasFocus(t)) return;
+        wecomState.bindOpenKeys = wecomState.bindOpenKeys || {};
+        wecomState.bindOpenKeys[wecomAiBindTalentKey(t, ti)] = true;
+      });
+    });
+    if (foundView && wecomState.bindPromptView !== 'side') wecomState.bindPromptView = foundView;
+  }
+  function wecomAiCloneBinds(d) {
+    var out = Object.assign({}, d);
+    var src = d.bindPrompts;
+    out.bindPrompts = {};
+    if (!src || typeof src !== 'object' || Array.isArray(src)) return out;
+    Object.keys(src).forEach(function (k) {
+      var block = src[k] || {};
+      out.bindPrompts[k] = {
+        error: block.error,
+        talents: (block.talents || []).map(function (t) {
+          return Object.assign({}, t, {
+            versions: (t.versions || []).map(function (v) {
+              return Object.assign({}, v, { opinions: (v.opinions || []).slice() });
+            })
+          });
+        }),
+        unboundOpinions: (block.unboundOpinions || []).slice()
+      };
+    });
+    return out;
+  }
+  function wecomAiMakeFocusBindRow(row, kind) {
+    row = row || {};
+    var mid = String(row.messageId || row.message_id || '');
+    var copies = row.copies || ((wecomAiFocusFile && wecomAiFocusFile.mids) || []).map(function (id) {
+      return { message_id: id };
+    });
+    if (kind === '修改意见') {
+      var name = String(row.filename || '');
+      var isText = !name || /\.(txt|md)$/i.test(name);
+      return {
+        messageId: mid,
+        filename: name,
+        time: row.time || '',
+        sender: row.sender || '',
+        kind: isText ? 'text' : 'file',
+        text: isText ? ('从文件汇总跳转：' + (name || '修改意见')) : '',
+        copies: copies,
+        jumpFromFiles: true,
+        focusKind: kind
+      };
+    }
+    return {
+      messageId: mid,
+      filename: row.filename || '',
+      time: row.time || '',
+      sender: row.sender || '',
+      opinions: [],
+      copies: copies,
+      jumpFromFiles: true,
+      focusKind: kind || '申报书',
+      company: row.company || ''
+    };
+  }
+  function wecomAiFindBindTalentIdx(talents, aid) {
+    var i;
+    for (i = 0; i < talents.length; i++) {
+      if (wecomAiTalentHasFocus(talents[i])) return i;
+    }
+    if (aid) {
+      for (i = 0; i < talents.length; i++) {
+        if (String(talents[i].attachId || '') === aid) return i;
+      }
+    }
+    return -1;
+  }
+  function wecomAiInjectFocusBind(d) {
+    var focus = wecomAiFocusFile;
+    if (!focus || !d) return d;
+    if (!(focus.messageId || focus.filename)) return d;
+    var row = wecomAiFocusRow() || {};
+    var kind = wecomAiFocusKind();
+    var aid = wecomAiFocusAid();
+    var out = wecomAiCloneBinds(d);
+    if (!Object.keys(out.bindPrompts).length) {
+      out.bindPrompts.time_window = { talents: [], unboundOpinions: [] };
+    }
+    Object.keys(out.bindPrompts).forEach(function (k) {
+      var block = out.bindPrompts[k];
+      if (wecomAiBindHasFocus(block)) return;
+      if (kind !== '申报书' && kind !== '修改意见') return;
+      var talents = block.talents || [];
+      var ti = wecomAiFindBindTalentIdx(talents, aid);
+      if (kind === '修改意见') {
+        var op = wecomAiMakeFocusBindRow(row, kind);
+        if (ti >= 0) {
+          var t = talents[ti];
+          var vers = (t.versions || []).slice();
+          if (vers.length) {
+            var last = Object.assign({}, vers[vers.length - 1], {
+              opinions: (vers[vers.length - 1].opinions || []).concat([op])
+            });
+            vers[vers.length - 1] = last;
+          } else {
+            vers = [{
+              filename: t.label || '申报书',
+              messageId: '',
+              chatVersion: 'chat-1',
+              opinions: [op],
+              jumpFromFiles: true,
+              focusKind: '申报书'
+            }];
+          }
+          talents[ti] = Object.assign({}, t, { versions: vers });
+        } else {
+          block.unboundOpinions = (block.unboundOpinions || []).concat([op]);
+        }
+        return;
+      }
+      if (!wecomAiIsAppFileName(row.filename || '')) return;
+      var app = wecomAiMakeFocusBindRow(row, '申报书');
+      app.chatVersion = 'chat-' + ((ti >= 0 ? ((talents[ti].versions || []).length) : 0) + 1);
+      if (ti >= 0) {
+        var host = talents[ti];
+        talents[ti] = Object.assign({}, host, { versions: (host.versions || []).concat([app]) });
+      } else {
+        talents.push({
+          attachId: aid,
+          label: (aid ? aid + ' ' : '') + (row.filename || kind || '跳转文件'),
+          company: '',
+          person: '',
+          versions: [app],
+          jumpFromFiles: true
+        });
+      }
+    });
+    return out;
+  }
+  function wecomAiInjectFocusItem(d) {
+    return wecomAiInjectFocusBind(d);
+  }
+  function wecomAiElIsFocus(el) {
+    if (!el || !wecomAiFocusFile) return false;
+    return wecomAiFileIsFocus({
+      messageId: el.getAttribute('data-ai-file-mid') || '',
+      filename: el.getAttribute('data-ai-file-name') || ''
+    });
+  }
+  function wecomAiFindFocusEl(body) {
+    if (!body) return null;
+    var ops = body.querySelectorAll('.wecom-ai-bind-op');
+    for (var i = 0; i < ops.length; i++) {
+      if (wecomAiElIsFocus(ops[i])) return ops[i];
+    }
+    return body.querySelector('.wecom-ai-bind-talent.focus') ||
+      body.querySelector('.wecom-ai-bind-pin') ||
+      document.getElementById('wecomAiBindCard');
+  }
+  function wecomAiScrollToEl(el) {
+    var body = document.getElementById('wecomAiBody');
+    if (!el || !body) return;
+    var br = body.getBoundingClientRect();
+    var er = el.getBoundingClientRect();
+    var extra = Math.max(16, Math.floor(br.height / 4) - Math.floor(er.height / 2));
+    body.scrollTop = Math.max(0, body.scrollTop + (er.top - br.top) - extra);
+  }
+  function wecomAiApplyFocusFile(keep) {
+    var focus = wecomAiFocusFile;
+    if (!focus) return false;
+    var body = document.getElementById('wecomAiBody');
+    var hit = wecomAiFindFocusEl(body);
+    if (!hit) {
+      if (!keep) {
+        wecomAiFocusFile = null;
+        say(false, '最新解读记录里没有这个文件，可点「重新解读」');
+      }
+      return false;
+    }
+    if (body) {
+      body.querySelectorAll('.wecom-ai-file.hit, .wecom-ai-bind-op.hit, .wecom-ai-case.hit, .wecom-ai-bind-pin.hit, #wecomAiBindCard.hit').forEach(function (el) {
+        if (el !== hit) el.classList.remove('hit');
+      });
+    }
+    hit.classList.add('hit');
+    wecomAiScrollToEl(hit);
+    if (!keep) {
+      wecomAiFocusFile = null;
+      say(true, '已定位到申报书版本与修改意见');
+      if (wecomAiHitTimer) clearTimeout(wecomAiHitTimer);
+      wecomAiHitTimer = setTimeout(function () { hit.classList.remove('hit'); }, 6000);
+    }
+    return true;
+  }
+  function wecomAiOpenLatestForFile(f) {
+    f = f || {};
+    if (!wecomState.sessionId) {
+      say(false, '请先选择会话');
+      return;
+    }
+    wecomAiOpen();
+    wecomAiTab = 'read';
+    wecomAiSyncTabs();
+    wecomAiFocusFile = {
+      messageId: String(f.messageId || '').trim(),
+      filename: String(f.filename || '').trim(),
+      label: String(f.label || '').trim(),
+      attachId: String(f.attachId || '').trim(),
+      sender: String(f.sender || '').trim(),
+      time: String(f.time || '').trim(),
+      mids: Array.isArray(f.mids) ? f.mids.map(function (id) { return String(id || '').trim(); }).filter(Boolean) : []
+    };
+    if (wecomAiJumping) return;
+    wecomAiJumping = true;
+    var body = document.getElementById('wecomAiBody');
+    if (body) body.innerHTML = '<div class="wecom-empty">正在打开最新解读记录…</div>';
+    var last = wecomAiLastRead;
+    var same = last && String(last.session_id || '') === String(wecomState.sessionId || '');
+    function done(d) {
+      wecomAiJumping = false;
+      if (!d) {
+        wecomAiFocusFile = null;
+        if (body) body.innerHTML = '<div class="wecom-empty">当前会话还没有解读记录。请先点「AI 解读」。</div>' + wecomAiBindSkeleton();
+        say(false, '当前会话还没有解读记录，请先点「AI 解读」');
+        return;
+      }
+      wecomAiRender(d);
+    }
+    wecomQuery('/api/wecom/ai-read-latest?session_id=' + encodeURIComponent(wecomState.sessionId)).then(function (res) {
+      if (res.ok) {
+        done(res.data || {});
+        return;
+      }
+      done(same ? last : null);
+    }).catch(function () {
+      done(same ? last : null);
+    });
   }
   function wecomAiJump(kind, cat) {
     kind = String(kind || '');
@@ -3370,7 +4177,8 @@
           var upBtn = canUp
             ? ' <button type="button" class="mini primary" data-ai-up="' + escAttr(c.id || '') + '" data-sid="' + escAttr(c.session_id || d.session_id || '') + '">上传</button>'
             : '';
-          return '<div class="wecom-ai-case" data-ai-case="' + escAttr(c.id || '') + '">' + grp + '<b>' + esc(c.filename || c.id) + '</b> ' + st + upBtn +
+          var caseMid = String((c.messageId || c.message_id || (c.app && (c.app.messageId || c.app.message_id)) || '') || '');
+          return '<div class="wecom-ai-case' + (wecomAiFileIsFocus(c.app || c) ? ' hit' : '') + '" data-ai-case="' + escAttr(c.id || '') + '" data-ai-file-mid="' + escAttr(caseMid) + '" data-ai-file-name="' + escAttr(c.filename || (c.app && c.app.filename) || '') + '">' + grp + '<b>' + esc(c.filename || c.id) + '</b> ' + st + upBtn +
             '<div style="color:#8a93a6;margin-top:4px">' + esc(c.time || '') + '</div>' +
             (opsHtml ? ('<div class="wecom-ai-case-ops">' + opsHtml + '</div>') : '<div class="wecom-ai-bind-miss">无配对意见</div>') +
             '</div>';
@@ -3380,8 +4188,13 @@
     var hasOpEarly = d.hasOpinion || (d.opinion && d.opinion.hasOpinion);
     var nextAiKey = [d.scope || 'session', d.session_id, d.start_date, d.end_date, d.messageCount, hasOpEarly, d.recordId || d.id || d.recordAt || ''].join('\t');
     if (wecomState.aiKey && wecomState.aiKey !== nextAiKey) wecomState.bindOpenKeys = null;
-    var bindBlock = wecomAiBindBlock(d);
-    var fileBlock = wecomAiFileTypesBlock(d);
+    var renderD = d;
+    if (wecomAiFocusFile) {
+      renderD = wecomAiInjectFocusItem(d);
+      wecomAiPrepareFocusOpen(renderD);
+    }
+    var bindBlock = wecomAiBindBlock(renderD);
+    var fileBlock = wecomAiFileTypesBlock(renderD);
     var acts = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
       '<button type="button" class="mini primary" id="wecomAiSplitGo">拆解任务</button>' +
       '<button type="button" class="mini" id="wecomAiRefresh">重新解读</button>' +
@@ -3459,6 +4272,13 @@
     wecomAiSyncTabs();
     wecomState.aiStale = false;
     wecomState.aiKey = nextAiKey;
+    if (wecomAiFocusFile) {
+      requestAnimationFrame(function () {
+        wecomAiApplyFocusFile(true);
+        setTimeout(function () { wecomAiApplyFocusFile(true); }, 80);
+        setTimeout(function () { wecomAiApplyFocusFile(false); }, 280);
+      });
+    }
   }
   function wecomAiCaseUpload(btn, d, force) {
     var cid = (btn && btn.getAttribute && btn.getAttribute('data-ai-up')) || '';
@@ -3468,6 +4288,13 @@
     }
     var sid = (btn.getAttribute('data-sid') || (d && d.session_id) || wecomState.sessionId || '').trim();
     var sname = (d && d.session_name) || wecomState.sessionName || '';
+    var cases = (d && d.cases) || [];
+    var hit = null;
+    for (var i = 0; i < cases.length; i++) {
+      if (String(cases[i].id || '') === String(cid)) { hit = cases[i]; break; }
+    }
+    if (!sid && hit) sid = String(hit.session_id || '').trim();
+    if (!sname && hit) sname = hit.session_name || '';
     if (!sid) {
       say(false, '缺少会话，无法上传');
       return;
@@ -3483,11 +4310,11 @@
         session_id: sid,
         session_name: sname,
         source_id: wecomSourceParam() || '',
-        start_date: '',
-        end_date: '',
-        windowHours: 0,
-        allHistory: true,
+        start_date: (d && d.start_date) || '',
+        end_date: (d && d.end_date) || '',
+        windowHours: 48,
         caseIds: [cid],
+        case: hit || undefined,
         force: !!force
       })
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
@@ -3528,41 +4355,30 @@
     var sub = document.getElementById('wecomAiSub');
     var btn = document.getElementById('wecomAiBtn');
     var name = wecomState.sessionName || wecomState.sessionId;
-    if (body) body.innerHTML = '<div class="wecom-empty">正在扫描当前会话全部文件…<br><span style="font-size:12px;color:#8a93a6">' + esc(name) + ' · 扫描全部文件 → 按规则分类 → 按时间确认版本与修改意见</span></div>';
     if (sub) sub.textContent = '分析中 · ' + name;
     wecomAiLoading = true;
     if (btn) btn.disabled = true;
-    fetch('/api/wecom/ai-read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        scope: 'session',
-        session_id: wecomState.sessionId,
-        session_name: wecomState.sessionName || '',
-        source_id: wecomSourceParam() || '',
-        start_date: '',
-        end_date: '',
-        windowHours: 0,
-        bind: true,
-        bindPrompts: ['time_window']
-      })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (x) {
-        var d = x.j || {};
-        if (!x.ok) {
-          if (body) body.innerHTML = '<div class="wecom-empty">' + esc(d.detail || 'AI 解读失败') + '</div>';
-          say(false, d.detail || 'AI 解读失败');
-          return;
-        }
-        wecomAiRender(d);
-        say(true, 'AI 解读完成');
-      }).catch(function (e) {
-        if (body) body.innerHTML = '<div class="wecom-empty">' + esc(e.message || '请求失败') + '</div>';
-        say(false, e.message || 'AI 解读失败');
-      }).finally(function () {
-        wecomAiLoading = false;
-        if (btn) btn.disabled = false;
-      });
+    wecomPostProgress('/api/wecom/ai-read', {
+      scope: 'session',
+      session_id: wecomState.sessionId,
+      session_name: wecomState.sessionName || '',
+      source_id: wecomSourceParam() || '',
+      start_date: '',
+      end_date: '',
+      windowHours: 0,
+      bind: true,
+      bindPrompts: ['time_window']
+    }, body, function (d) {
+      wecomAiLoading = false;
+      if (btn) btn.disabled = false;
+      wecomAiRender(d || {});
+      say(true, 'AI 解读完成');
+    }, function (e) {
+      wecomAiLoading = false;
+      if (btn) btn.disabled = false;
+      if (body) body.innerHTML = '<div class="wecom-empty">' + esc(e.message || '请求失败') + '</div>';
+      say(false, e.message || 'AI 解读失败');
+    });
   }
   (function bindWecomUi() {
     var gq = document.getElementById('wecomGroupQ');
@@ -3629,6 +4445,7 @@
     wecomPickEnsureBar();
   })();
 
+  global.wecomSessionTitle = wecomSessionTitle;
   global.loadWecomBoard = loadWecomBoard;
   global.wecomReloadSessions = loadWecomSessions;
   global.wecomToggleWatch = wecomToggleWatch;
@@ -3641,6 +4458,7 @@
     loadWecomBoard(true);
     loadWecomWatchPanel();
   };
+  global.initWecomWatchPanel = initWecomWatchPanel;
   global.loadWecomWatchPanel = loadWecomWatchPanel;
   global.loadWecomWatchLogs = loadWecomWatchLogs;
   if (document.getElementById('wecomWatchPanel')) initWecomWatchPanel();

@@ -7,11 +7,14 @@ import re
 from .agent_extract import filename_of, is_delivery_name, is_system, text_of
 from .agent_review import (
     SCORE_MIN,
-    SKIP_INTENTS,
     analyzed_ids,
     clear_hits,
+    drop_match_reason,
+    drop_text_keys,
+    filtered_message_ids,
     get_run,
     list_hits,
+    list_known_intents,
     load_examples,
     max_seq,
     save_hits,
@@ -20,8 +23,8 @@ from .agent_review import (
     update_hit_seqs,
 )
 from .llm import extract_json_lenient
-from .party import classify, infer_platform
-from .wecom_intent import judge_message_scored
+from .party import classify, clean_sender, infer_platform
+from .wecom_intent import is_skip_intent, judge_message_scored
 
 CHATTER_RE = re.compile(
     r"^((收到|好的|好滴|好哒|嗯+|哦+|噢+|喔+|额+|啊+|哈+|谢谢|辛苦[啦了哈]?|ok|okay|1|对|是|好)"
@@ -98,7 +101,7 @@ def _pack_hit(message: dict, party: dict, filt: dict, judged: dict | None, *, sk
     fname = filename_of(message)
     return {
         "message_id": str(message.get("message_id") or ""),
-        "sender": str(message.get("sender") or ""),
+        "sender": clean_sender(message.get("sender")) or "未知",
         "time_text": str(message.get("time_text") or ""),
         "text": text[:2000],
         "filename": fname,
@@ -123,22 +126,27 @@ def place_messages(
     done: set[str] | None = None,
     seq_base: int = 0,
     session: dict | None = None,
+    filtered_ids: set[str] | None = None,
+    drop_keys: set[str] | None = None,
 ) -> dict:
-    """按原顺序给每条消息编号。乙方只登记原位，不进 Jev。"""
+    """按原顺序给每条消息编号。乙方只登记原位，不进 Jev。应过滤的甲方直接进过滤明细。"""
     pending: list[tuple] = []
     pass_buf: list[dict] = []
+    drop_buf: list[dict] = []
     seq_updates: list[tuple[str, int]] = []
     skipped = 0
     party_stats = {"甲方": 0, "乙方": 0}
     seen = done or set()
     sess = session or {}
+    ids = filtered_ids if filtered_ids is not None else set()
+    keys = drop_keys if drop_keys is not None else set()
     for i, msg in enumerate(messages):
         if not isinstance(msg, dict):
             skipped += 1
             continue
         seq = int(seq_base) + i
         platform = infer_platform(msg, sess)
-        party = classify(str(msg.get("sender") or ""), platform)
+        party = classify(msg.get("sender"), platform)
         party_stats[party["party"]] = party_stats.get(party["party"], 0) + 1
         if is_system(msg) or (not text_of(msg) and not filename_of(msg)):
             skipped += 1
@@ -163,10 +171,20 @@ def place_messages(
         if mid in seen:
             seq_updates.append((mid, seq))
             continue
+        reason = drop_match_reason(message_id=mid, text=text_of(msg), filtered_ids=ids, drop_keys=keys)
+        if reason:
+            drop_buf.append(_pack_hit(
+                msg, party,
+                {"useful": False, "reason": reason},
+                {"intent": "chat", "intentLabel": "应过滤", "score": 0, "action": reason},
+                seq=seq,
+            ))
+            continue
         pending.append((msg, party, seq))
     return {
         "pending": pending,
         "pass_buf": pass_buf,
+        "drop_buf": drop_buf,
         "seq_updates": seq_updates,
         "skipped": skipped,
         "party_stats": party_stats,
@@ -264,13 +282,25 @@ async def analyze_session(
         work = all_messages
         seq_base = 0
 
-    placed = place_messages(work, done=done, seq_base=seq_base, session=session)
+    filtered_ids = filtered_message_ids(sid)
+    drop_keys = drop_text_keys()
+    placed = place_messages(
+        work,
+        done=done,
+        seq_base=seq_base,
+        session=session,
+        filtered_ids=filtered_ids,
+        drop_keys=drop_keys,
+    )
     pending = placed["pending"]
     pass_buf = placed["pass_buf"]
+    drop_buf = placed.get("drop_buf") or []
     party_stats = placed["party_stats"]
     skipped = placed["skipped"]
     if placed["seq_updates"]:
         update_hit_seqs(sid, placed["seq_updates"])
+    if drop_buf:
+        save_hits(sid, source_id or "*", drop_buf)
     if pass_buf:
         save_hits(sid, source_id or "*", pass_buf)
         await _emit(
@@ -319,9 +349,10 @@ async def analyze_session(
     )
     jev_n = 0
     processed = 0
-    filtered_n = 0
+    filtered_n = len(drop_buf)
     jev_sem = asyncio.Semaphore(8)
-    intent_examples = load_examples("intent", 16)
+    intent_examples = load_examples("intent", 24)
+    known_intents = list_known_intents()
     slim_examples = [
         {
             "text": ((r.get("filename") or "") + " " + (r.get("text") or "")).strip(),
@@ -339,7 +370,9 @@ async def analyze_session(
         nonlocal jev_n
         jev_n += 1
         async with jev_sem:
-            judged = await judge_message_scored(msg, examples=slim_examples)
+            judged = await judge_message_scored(
+                msg, examples=slim_examples, extra_intents=known_intents
+            )
         return _pack_hit(msg, party, keep_filt, judged, seq=seq)
 
     size = max(8, min(int(batch_size or 32), 48))
@@ -360,7 +393,7 @@ async def analyze_session(
         packed = await asyncio.gather(*[
             score_one(item[0], item[1], item[2]) for item in chunk
         ])
-        filtered_n += sum(1 for h in packed if str(h.get("intent") or "") in SKIP_INTENTS)
+        filtered_n += sum(1 for h in packed if is_skip_intent(h.get("intent"), h.get("intent_label")))
         hits_buf.extend(packed)
         processed += len(chunk)
         save_hits(sid, source_id or "*", hits_buf)

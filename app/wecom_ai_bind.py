@@ -11,7 +11,9 @@ from .config import LLM_TIMEOUT_CLASSIFY, resolve_gemini
 from .llm import LlmError, chat, extract_json_lenient
 from . import matcher as M
 from . import talent_app_files as T
+from .party import sender_of
 from .wecom_cases import _fname, _has_file, _msg_kind, is_opinion_text
+from .wecom_file_class import can_be_app_file
 from .wecom_locate import extract_keys, parse_time
 
 PROMPT_TIME_WINDOW = "time_window"
@@ -93,7 +95,7 @@ def _catalog_item(m: dict, role: str, session_id: str, session_name: str) -> dic
         "filename": fname,
         "text": m.get("text") or m.get("snippet") or "",
         "time_text": _msg_time(m),
-        "sender": m.get("sender") or "",
+        "sender": sender_of(m),
         "session_name": session_name,
     })
     attach_id = _pick_attach_id(keys.get("nums") or [], keys.get("text") or "", fname)
@@ -106,7 +108,7 @@ def _catalog_item(m: dict, role: str, session_id: str, session_name: str) -> dic
         "attachId": attach_id,
         "filename": display,
         "time": _msg_time(m),
-        "sender": str(m.get("sender") or ""),
+        "sender": sender_of(m),
         "messageId": mid,
         "message_id": m.get("message_id") or 0,
         "nums": list(keys.get("nums") or [])[:6],
@@ -132,10 +134,14 @@ def extract_catalog(messages: list, *, session_id: str = "", session_name: str =
         if kind not in ("app", "opinion", "text", "ignore", "other"):
             kind = _msg_kind(m)
         if kind == "app" and _has_file(m):
+            if not can_be_app_file(_fname(m)):
+                continue
             apps.append(_catalog_item(m, "app", session_id, session_name))
         elif kind == "opinion" and _has_file(m):
             opinions.append(_catalog_item(m, "opinion", session_id, session_name))
-        elif kind == "text" or (not _has_file(m) and is_opinion_text(m.get("text") or m.get("snippet") or "")):
+        elif kind == "text":
+            opinions.append(_catalog_item(m, "text", session_id, session_name))
+        elif not callable(kind_of) and not _has_file(m) and is_opinion_text(m.get("text") or m.get("snippet") or ""):
             opinions.append(_catalog_item(m, "text", session_id, session_name))
     apps.sort(key=lambda x: (parse_time(x.get("time")) or datetime.min, x.get("messageId") or ""))
     opinions.sort(key=lambda x: (parse_time(x.get("time")) or datetime.min, x.get("messageId") or ""))
@@ -448,7 +454,7 @@ def _opinion_content_key(op: dict) -> str:
         body = re.sub(r"\s+", "", _collapse_repeated_text(str(op.get("text") or "")))[:240]
     else:
         body = str(op.get("filename") or "").strip().lower()
-    sender = str(op.get("sender") or "").strip()
+    sender = sender_of(op)
     day = str(op.get("time") or "")[:10]
     return "|".join([kind, body, sender, day])
 
@@ -489,7 +495,7 @@ def _slim_opinion(op: dict, by_id: dict | None = None) -> dict:
         "kind": kind,
         "filename": str(op.get("filename") or src.get("filename") or ""),
         "time": str(op.get("time") or src.get("time") or ""),
-        "sender": str(op.get("sender") or src.get("sender") or ""),
+        "sender": sender_of(op) or sender_of(src),
         "text": text,
     }
 
@@ -578,7 +584,7 @@ def build_talent_versions(
                 "messageId": str(app.get("messageId") or ""),
                 "filename": app.get("filename") or "",
                 "time": app.get("time") or "",
-                "sender": app.get("sender") or "",
+                "sender": sender_of(app),
                 "opinions": [],
                 "libraryVersion": lib,
                 "libraryHidden": bool(hidden),
@@ -629,6 +635,9 @@ def _sanitize_talents(talents: list, valid_ids: set[str], by_id: dict | None = N
                 continue
             mid = str(v.get("messageId") or "").strip()
             if mid and mid not in valid_ids:
+                continue
+            fname = str(v.get("filename") or "")
+            if fname and not can_be_app_file(fname):
                 continue
             nv = dict(v)
             nv["opinions"] = _sanitize_opinions(v.get("opinions") or [], valid_ids, by_id)
@@ -886,7 +895,7 @@ def _merge_library_fields(new_talents: list, base_talents: list) -> list:
                 "libraryHidden": v.get("libraryHidden"),
                 "filename": v.get("filename"),
                 "time": v.get("time"),
-                "sender": v.get("sender"),
+                "sender": sender_of(v),
                 "chatVersion": v.get("chatVersion"),
             }
     out = []

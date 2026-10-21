@@ -15,6 +15,21 @@ talent_outputs/
 # vendored OCR tool (pip install -e tools/docreconstruct[hybrid])
 tools/docreconstruct/
 
+# 解析服务运行数据 / 密钥（源码在 parser/）
+parser/export/
+parser/export_parse_result/
+parser/logs/
+parser/config.jsonc
+parser/.venv/
+parser/web/node_modules/
+parser/web/dist/
+parser/dist/
+
+# 本机材料与说明书截图用的浏览器配置，勿入库
+附件/
+附件.zip
+docs/**/_edge_profile/
+
 # python
 __pycache__/
 *.py[cod]

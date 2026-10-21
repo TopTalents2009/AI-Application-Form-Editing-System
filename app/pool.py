@@ -705,7 +705,7 @@ def _edit_pairs(edits: list, applied: list | None) -> list[tuple[str, str]]:
 
 
 def build_database_payload(doc: dict | None, original_payload: dict | None = None) -> dict:
-    """将修改后的申报书整理为人才库 payload（与 831 mapper.build_database_payload 对齐）。"""
+    """将修改后的申报书整理为人才库 payload（与 831/8091 mapper.build_database_payload 对齐）。"""
     out = copy.deepcopy(doc) if isinstance(doc, dict) else {}
     orig = original_payload if isinstance(original_payload, dict) else {}
     orig_basic = orig.get("申报人基本信息") if isinstance(orig.get("申报人基本信息"), dict) else {}
@@ -719,6 +719,32 @@ def build_database_payload(doc: dict | None, original_payload: dict | None = Non
     return out
 
 
+def _take_last_application(talent: dict | None) -> dict | None:
+    """8091/831：last_application 可能在 talent 顶层，也可能在 payload 内。"""
+    if not isinstance(talent, dict):
+        return None
+    last = talent.get("last_application")
+    if isinstance(last, dict):
+        return copy.deepcopy(last)
+    payload = talent.get("payload") if isinstance(talent.get("payload"), dict) else {}
+    nested = payload.get("last_application")
+    if isinstance(nested, dict):
+        return copy.deepcopy(nested)
+    return None
+
+
+def _put_last_application(talent: dict, last: dict | None) -> None:
+    """同时写到 talent 顶层和 payload 内，与 8091 库记录一致。"""
+    if not isinstance(talent, dict) or not isinstance(last, dict):
+        return
+    talent["last_application"] = copy.deepcopy(last)
+    payload = talent.get("payload")
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        payload["last_application"] = copy.deepcopy(last)
+        talent["payload"] = payload
+
+
 def build_database_export(
     snap: dict | None,
     edits: list | None = None,
@@ -728,10 +754,10 @@ def build_database_export(
     name: str = "",
     mode: str = "",
 ) -> dict:
-    """可回写人才库的 database.json：{"talent": {...payload...}, "enterprise": ...}。"""
+    """可回写人才库的 database.json：{"talent": {...}, "enterprise": ...}，结构与 8091 一致。"""
     snap = snap if isinstance(snap, dict) else {}
     src = snap.get("talent") if isinstance(snap.get("talent"), dict) else {}
-    talent = copy.deepcopy(src)
+    talent = copy.deepcopy(src) if src else {}
     if attach_id and not talent.get("attach_id"):
         talent["attach_id"] = str(attach_id)
     if name and not talent.get("name"):
@@ -739,15 +765,19 @@ def build_database_export(
     if mode and not talent.get("mode"):
         talent["mode"] = str(mode)
     original_payload = copy.deepcopy(talent["payload"]) if isinstance(talent.get("payload"), dict) else {}
-    last_app = copy.deepcopy(talent["last_application"]) if talent.get("last_application") else None
+    last_app = _take_last_application(talent)
     pairs = _edit_pairs(edits or [], applied)
     if pairs:
         talent = _rewrite_tree(talent, pairs)
     payload = talent.get("payload") if isinstance(talent.get("payload"), dict) else {}
     talent["payload"] = build_database_payload(payload, original_payload)
     if last_app is not None:
-        talent["last_application"] = last_app
+        _put_last_application(talent, last_app)
     result = {"talent": talent}
+    if attach_id:
+        result["attach_id"] = str(attach_id)
+    elif talent.get("attach_id"):
+        result["attach_id"] = str(talent.get("attach_id"))
     enterprise = snap.get("enterprise") if isinstance(snap.get("enterprise"), dict) else None
     if enterprise:
         ent = copy.deepcopy(enterprise)

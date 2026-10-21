@@ -137,6 +137,18 @@
   animation:spin .7s linear infinite;
 }
 @keyframes spin{to{transform:rotate(360deg)}}
+.forgot-row{display:flex;justify-content:flex-end;margin:-6px 0 14px}
+.forgot-link{
+  border:none;background:none;padding:0;cursor:pointer;font:inherit;
+  font-size:13px;color:#8ab4ff;font-weight:600;
+}
+.forgot-link:hover{text-decoration:underline;color:#a9c8ff}
+.form-info{
+  display:none;margin:2px 0 16px;padding:10px 13px;
+  font-size:13px;line-height:1.6;color:#d6e6ff;
+  background:rgba(91,143,232,.16);border:1px solid rgba(138,180,255,.35);border-radius:10px;
+}
+.form-info.show{display:block}
 .form-foot{margin-top:26px;font-size:13.5px;color:rgba(210,225,255,.6);text-align:center}
 .form-foot a{color:#8ab4ff;font-weight:700;text-decoration:none}
 .form-foot a:hover{text-decoration:underline;color:#a9c8ff}
@@ -221,7 +233,11 @@
             </div>
             <div class="caps" id="capsHint">键盘大写锁定已开启</div>
           </div>
+          <div class="forgot-row">
+            <button type="button" class="forgot-link" id="forgotBtn">忘记密码？</button>
+          </div>
 
+          <div class="form-info" id="forgotHint">请联系管理员重置密码。管理员重置后，使用临时密码登录，系统会要求你重新设置密码。</div>
           <div class="form-err" id="errBox"><span id="err"></span></div>
           <button type="submit" class="btn-login" id="submitBtn">登 录</button>
         </form>
@@ -293,9 +309,16 @@
     if (e.getModifierState) caps.style.display = e.getModifierState('CapsLock') ? 'block' : 'none';
   });
 
+  var forgotHint = document.getElementById('forgotHint');
+  document.getElementById('forgotBtn').addEventListener('click', function () {
+    errBox.classList.remove('show');
+    forgotHint.classList.add('show');
+  });
+
   form.addEventListener('submit', function (e) {
     e.preventDefault();
     errBox.classList.remove('show');
+    if (forgotHint) forgotHint.classList.remove('show');
     btn.disabled = true;
     btn.innerHTML = '<span class="spin"></span>登录中…';
     fetch('/api/auth/login', {
@@ -314,7 +337,15 @@
         btn.textContent = '登录成功，正在进入…';
         var next = '';
         try { next = new URLSearchParams(location.search || '').get('next') || ''; } catch (e) { next = ''; }
-        if (!/^\/t\/[A-Za-z0-9._-]+$/.test(next) && next !== '/admin') next = '';
+        if (next) {
+          var path = next.split('?')[0].split('#')[0];
+          var okTask = /^\/t\/[A-Za-z0-9._-]+$/.test(path);
+          var okAdmin = path === '/admin' || /^\/admin\/[a-z]+$/.test(path);
+          var okCi = path === '/chatinsight' || path.indexOf('/chatinsight/') === 0;
+          if (/\.(js|css|map|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|json|txt|wasm)$/i.test(path)) okCi = false;
+          if (path.charAt(0) !== '/' || path.charAt(1) === '/' || path.indexOf('\\') >= 0) okTask = okAdmin = okCi = false;
+          next = (okTask || okAdmin || okCi) ? path : '';
+        }
         location.href = next || res.data.redirect || '/';
         return;
       }

@@ -1,8 +1,9 @@
 """修改意见提到缺附件时：先查人才库，论文再查论文导出 API，并给出本系统下载链接。"""
 from __future__ import annotations
-import asyncio, json, re, secrets
+import asyncio, json, re, secrets, time
+from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 import httpx
 from .config import load_config
 from . import papers as P
@@ -302,6 +303,98 @@ def scan_local_attachments(app_no: str, extra_ids=None, kinds=None) -> tuple[lis
     return acc, notes
 
 
+_LOCAL_BOARD_CACHE = {"at": 0.0, "items": []}
+
+
+def group_attach_id(raw) -> str:
+    """看板归组用：42413 / 0515 → 去掉前导零后的申报书编号。"""
+    s = str(raw or "").strip()
+    if not s or s in ("无编号", "未识别编号"):
+        return ""
+    n = P.norm_attach_id(s) or s
+    if n.isdigit():
+        n = n.lstrip("0") or n
+    return n
+
+
+def _local_kind_label(kid: str, folder: str = "") -> str:
+    for item in KINDS:
+        if item["id"] == kid:
+            return str(item["label"] or kid)
+    return str(folder or "材料")
+
+
+def _scan_local_ingest_items() -> list:
+    root = LOCAL_ATTACH_ROOT
+    if not root.is_dir():
+        return []
+    out = []
+    for person in root.iterdir():
+        if not person.is_dir():
+            continue
+        aid = group_attach_id(person.name)
+        if not aid:
+            continue
+        for fp in person.rglob("*"):
+            if not fp.is_file() or fp.suffix.lower() not in LOCAL_EXT:
+                continue
+            kid = _classify_local_file(fp.parent.name, fp.name) or "other"
+            try:
+                rel = fp.relative_to(root).as_posix()
+            except ValueError:
+                continue
+            try:
+                at = datetime.fromtimestamp(fp.stat().st_mtime).strftime("%Y/%m/%d %H:%M:%S")
+            except OSError:
+                at = ""
+            out.append({
+                "id": 0,
+                "attachId": aid,
+                "source": "local",
+                "sourceLabel": "本地附件",
+                "sessionId": "",
+                "sessionName": "",
+                "messageId": "",
+                "filename": fp.name,
+                "kind": kid,
+                "label": _local_kind_label(kid, fp.parent.name),
+                "sender": "",
+                "personName": "",
+                "ok": True,
+                "status": "local",
+                "detail": rel,
+                "at": at,
+                "time": at,
+                "url": "/api/admin/local-attach?path=" + quote(rel),
+                "rel": rel,
+            })
+    out.sort(key=lambda x: (str(x.get("attachId") or ""), str(x.get("label") or ""), str(x.get("filename") or "")))
+    return out
+
+
+def list_local_ingest_items(*, q: str = "", limit: int = 4000) -> list:
+    """按申报书编号列出本机「附件/{编号}/」文件，供入库看板一一对应。"""
+    now = time.time()
+    if not _LOCAL_BOARD_CACHE["items"] or now - float(_LOCAL_BOARD_CACHE["at"] or 0) > 20:
+        _LOCAL_BOARD_CACHE["items"] = _scan_local_ingest_items()
+        _LOCAL_BOARD_CACHE["at"] = now
+    items = list(_LOCAL_BOARD_CACHE["items"] or [])
+    q = str(q or "").strip().lower()
+    if q:
+        items = [
+            x for x in items
+            if q in str(x.get("attachId") or "").lower()
+            or q in str(x.get("filename") or "").lower()
+            or q in str(x.get("detail") or "").lower()
+            or q in str(x.get("label") or "").lower()
+        ]
+    try:
+        lim = max(1, min(int(limit or 4000), 8000))
+    except (TypeError, ValueError):
+        lim = 4000
+    return items[:lim]
+
+
 _SKIP_CHAT_FILE = re.compile(r"申报书|申请表|修改意见|对照表|任务清单|修改后|_备份|意见反馈")
 
 
@@ -312,13 +405,14 @@ def _wecom_blob(hit: dict) -> str:
 
 
 def _wecom_person_ok(hit: dict, ids, names) -> bool:
+    """编号命中即可；人名至少 3 字才单独当匹配，避免「王安」串到「王安全」。"""
     blob = _wecom_blob(hit)
     for aid in ids or []:
         if aid and str(aid) in blob:
             return True
     for n in names or []:
         n = str(n or "").strip()
-        if len(n) >= 2 and n in blob:
+        if len(n) >= 3 and n in blob:
             return True
     return False
 
@@ -1204,7 +1298,244 @@ def _task_snip(texts: list, kind: dict, limit: int = 90) -> str:
     return ""
 
 
-def build_task_list(texts=None, *, attach: dict | None = None, leftovers=None, clauses=None) -> list:
+_LOC_KEEP_RE = re.compile(
+    r"改为|改成|改至|修改为|更正|更换|替换|重传|不清晰|时间|日期|职位|"
+    r"签发|有效期|起止|入职|离职|至今|毕业|入学|单位名称|扫描|复印"
+)
+_LOC_SKIP_RE = re.compile(
+    r"总体要求|按下列条款执行|合计\s*\d+\s*处需修改|^请同步修改|"
+    r"对应待修改附件|缺失附件已检索|请下载|下载链接|ext-files"
+)
+_LOC_PREFIX_RE = re.compile(
+    r"^(?:【[^】]+】)+|"
+    r"^(?:\[S\d+\]|S\d+)\s*|"
+    r"^(?:护照|学历证明|工作证明|工作经历证明|在职证明|身份证明|意向协议|证件照|电子签|项目证明|成果转化证明|论文全文)"
+    r"(?:材料)?(?:同步修改)?要求\d*[：:]|"
+    r"^要求\d+[：:]|"
+    r"^\d+[\.、．]\s*"
+)
+
+
+def kind_of_item(it: dict | None) -> dict | None:
+    if not isinstance(it, dict):
+        return None
+    kid = str(it.get("id") or "").strip()
+    title = str(it.get("title") or "").strip()
+    for k in KINDS:
+        if kid and k["id"] == kid:
+            return k
+        if title and k["label"] == title:
+            return k
+    return None
+
+
+def _norm_loc_key(s: str) -> str:
+    return re.sub(r"\s+", "", str(s or ""))[:96]
+
+
+def _clean_location(s: str) -> str:
+    t = re.sub(r"\s+", " ", str(s or "")).strip(" ：:。;；,，")
+    for _ in range(6):
+        nxt = _LOC_PREFIX_RE.sub("", t).strip(" ：:。;；,，")
+        if nxt == t:
+            break
+        t = nxt
+    return t
+
+
+_TITLE_GENERIC_RE = re.compile(r"副高级以上职位|副高以上|同步将职位修改|职位同步修改")
+_ZH_TITLE_RE = re.compile(
+    r"(?:回国前职务(?:中文)?|现任职务)\s*(?:同步)?(?:修改为|改为|改成)\s*([^\n；;。]{2,40})"
+)
+_EN_TITLE_RE = re.compile(
+    r"(?:回国前职务英文|英文职务)\s*(?:修改为|改为|改成)[：: ]*([A-Za-z][A-Za-z0-9 .,&/\-]{3,80})"
+)
+_MOD_AFTER_RE = re.compile(r"修改后[：:]\s*([^\n]{2,80})")
+
+
+def _short_title(s: str) -> str:
+    t = re.sub(r"\s+", " ", str(s or "")).strip(" ：:。;；,，「」\"'")
+    t = re.sub(r"^(?:修改为|改为|改成)\s*", "", t).strip()
+    if not t or "副高" in t or "以上职位" in t:
+        return ""
+    if re.search(r"[。；]", t) or len(t) > 40:
+        return ""
+    return t
+
+
+def extract_gemini_job_titles(*, edits=None, clauses=None, leftovers=None) -> dict:
+    """从 Gemini 修改意见里取出实际职务（中/英），供工作证明同步。"""
+    zh, en = "", ""
+
+    def eat(rec):
+        nonlocal zh, en
+        if not isinstance(rec, dict):
+            rec = {"clause": str(rec or ""), "opinion": str(rec or "")}
+        clause = str(rec.get("clause") or "")
+        opinion = str(rec.get("opinion") or rec.get("opinionGemini") or "")
+        blob = clause + "\n" + opinion
+        if not re.search(r"职务|职位", blob):
+            return
+        if re.search(r"职务英文|英文职务", blob):
+            m = _EN_TITLE_RE.search(blob) or re.search(
+                r"(?:修改为|改为|改成|修改后)[：: ]*([A-Za-z][A-Za-z0-9 .,&/\-]{3,80})",
+                clause + "\n" + opinion,
+            )
+            if m and not en:
+                en = _short_title(m.group(1)) or en
+            return
+        if not re.search(r"回国前职务|现任职务|职位修改", blob):
+            return
+        cand = ""
+        m = _MOD_AFTER_RE.search(opinion) or _MOD_AFTER_RE.search(clause)
+        if m:
+            cand = _short_title(m.group(1))
+        if not cand:
+            m = _ZH_TITLE_RE.search(clause) or _ZH_TITLE_RE.search(blob)
+            if m:
+                cand = _short_title(m.group(1))
+        if not cand:
+            return
+        if re.search(r"回国前职务", blob):
+            zh = cand
+        elif not zh:
+            zh = cand
+
+    for src in edits or []:
+        eat(src)
+    if not zh:
+        for src in clauses or []:
+            eat(src)
+    if not zh or not en:
+        prev_zh, prev_en = zh, en
+        for src in leftovers or []:
+            eat({"clause": str(src), "opinion": str(src)})
+        if prev_zh:
+            zh = prev_zh
+        if prev_en:
+            en = prev_en
+    return {"zh": zh, "en": en}
+
+
+def align_locations_with_gemini(locs, titles) -> list:
+    zh = str((titles or {}).get("zh") or "").strip()
+    en = str((titles or {}).get("en") or "").strip()
+    if not zh and not en:
+        return list(locs or [])
+    out, seen = [], []
+    for loc in locs or []:
+        s = str(loc or "").strip()
+        if re.search(r"职位|职务|副高", s) and _TITLE_GENERIC_RE.search(s):
+            bits = []
+            if zh:
+                bits.append("职位修改为" + zh + "（与申报书回国前职务一致）")
+            if en:
+                bits.append("英文职务修改为" + en)
+            s = "；".join(bits) if bits else s
+        key = _norm_loc_key(s)
+        if not key or any(key == x or key in x or x in key for x in seen):
+            continue
+        seen.append(key)
+        out.append(s)
+    return out
+
+
+def collect_kind_locations(kind: dict | None, *, clauses=None, leftovers=None, extra_texts=None, edits=None) -> list:
+    """从意见条款里抽出该附件上「具体要改的位置」，不要总述句。"""
+    keys = [str(x) for x in ((kind or {}).get("keys") or ()) if str(x).strip()]
+    if not keys:
+        return []
+    out, seen = [], []
+
+    def hit_kind(text: str) -> bool:
+        return any(k in (text or "") for k in keys)
+
+    def skip_noise(text: str) -> bool:
+        s = text or ""
+        if _skip_form_field(kind, s):
+            return True
+        if _LOC_SKIP_RE.search(s) and not re.search(r"改为|改成|改至|修改为", s):
+            return True
+        if re.search(r"下载链接|ext-files|已检索到文件|请下载并", s):
+            return True
+        return False
+
+    def add(raw: str):
+        s = _clean_location(raw)
+        if len(s) < 4:
+            return
+        if skip_noise(s) and not _LOC_KEEP_RE.search(s):
+            return
+        if _LOC_SKIP_RE.search(s) and not re.search(r"改为|改成|改至|修改为", s):
+            return
+        key = _norm_loc_key(s)
+        if not key or any(key == x or key in x or x in key for x in seen):
+            return
+        seen.append(key)
+        out.append(s[:200])
+
+    for c in clauses or []:
+        if not isinstance(c, dict):
+            continue
+        title = str(c.get("clause") or "").strip()
+        opinion = str(c.get("opinion") or "").strip()
+        blob = title + "\n" + opinion
+        if not hit_kind(blob):
+            continue
+        if skip_noise(blob) and not _LOC_KEEP_RE.search(blob):
+            continue
+        if _LOC_KEEP_RE.search(title) and "总体要求" not in title:
+            add(title)
+            continue
+        for line in [title, *opinion.splitlines()]:
+            line = str(line or "").strip()
+            if not line:
+                continue
+            if hit_kind(line) or _LOC_KEEP_RE.search(line):
+                add(line)
+
+    if not out:
+        for raw in leftovers or []:
+            s = str(raw or "").strip()
+            if not s or not hit_kind(s) or skip_noise(s):
+                continue
+            if "意见未覆盖" in s or re.search(r"要求\d+|改为|修改为", s):
+                add(s)
+
+    if not out:
+        for raw in extra_texts or []:
+            s = str(raw or "").strip()
+            if not s or not hit_kind(s):
+                continue
+            for sent in re.split(r"(?<=[。；;\n])", s):
+                bit = str(sent or "").strip()
+                if hit_kind(bit) and not skip_noise(bit) and (_LOC_KEEP_RE.search(bit) or NEED_RE.search(bit)):
+                    add(bit)
+
+    titles = extract_gemini_job_titles(edits=edits, clauses=clauses, leftovers=leftovers)
+    out = align_locations_with_gemini(out, titles)
+    return out[:12]
+
+
+def attach_item_locations(items, *, clauses=None, leftovers=None, extra_texts=None, edits=None) -> list:
+    out = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        row = dict(it)
+        kind = kind_of_item(row)
+        if kind and (clauses or leftovers or extra_texts or edits):
+            locs = collect_kind_locations(
+                kind, clauses=clauses, leftovers=leftovers, extra_texts=extra_texts, edits=edits,
+            )
+        else:
+            locs = [str(x).strip() for x in (row.get("locations") or []) if str(x).strip()]
+        row["locations"] = locs
+        out.append(row)
+    return out
+
+
+def build_task_list(texts=None, *, attach: dict | None = None, leftovers=None, clauses=None, edits=None) -> list:
     """护照 / 学历证明 / 工作经历证明等无法改申报书正文的事项 → 人工任务清单。"""
     rows = []
     for c in clauses or []:
@@ -1280,20 +1611,25 @@ def build_task_list(texts=None, *, attach: dict | None = None, leftovers=None, c
                 else:
                     status_label = "本地、人才库与聊天记录均未找到（论文系统未查询）"
                     action += " 尚未查询论文系统。"
+        locations = collect_kind_locations(
+            kind, clauses=clauses, leftovers=leftovers, extra_texts=blob_parts, edits=edits,
+        )
+        snippet = "；".join(locations)[:240] if locations else _task_snip(blob_parts, kind)
         out.append({
             "id": kid,
             "title": lab,
             "action": action,
             "status": status,
             "statusLabel": status_label,
-            "snippet": _task_snip(blob_parts, kind),
+            "snippet": snippet,
+            "locations": locations,
             "downloads": downloads,
         })
     return out
 
 
 def public_task_list(items: list) -> list:
-    keys = ("id", "title", "action", "status", "statusLabel", "snippet", "downloads")
+    keys = ("id", "title", "action", "status", "statusLabel", "snippet", "locations", "downloads")
     out = []
     for it in items or []:
         if not isinstance(it, dict):

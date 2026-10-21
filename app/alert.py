@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from .config import DATA_DIR, atomic_replace, load_config
 from . import wecom_notify as N
+from .party import sender_of
 
 _MOBILE_RE = re.compile(r"(?<!\d)(1\d{10})(?!\d)")
 # 「申报一组唐文秀」「申报书三组组员-…」「匹配三组长-…」→ 组键
@@ -145,6 +146,22 @@ def emit(
     return {"ok": True, "mentioned": mentioned, "mentionedMobile": mobiles}
 
 
+def ops_fault(*, kind: str, title: str, lines: list | None = None) -> dict:
+    """解析服务 / 值班循环等运维故障。走现有 Webhook，15 分钟去重。"""
+    k = str(kind or "ops").strip() or "ops"
+    t = str(title or "系统运维异常").strip() or "系统运维异常"
+    href = "/wecom" if "watch" in k or "parser" in k else "/system"
+    return emit(
+        level="P1",
+        kind=k,
+        title=t,
+        lines=[str(x)[:200] for x in (lines or []) if str(x).strip()][:6],
+        url=_admin_url(href),
+        department="",
+        dedupe_key="ops|" + k + "|" + t[:60],
+    )
+
+
 def task_failed(task: dict) -> dict:
     t = task if isinstance(task, dict) else {}
     err = str(t.get("error") or "").strip()
@@ -193,7 +210,7 @@ def feedback_new(item: dict) -> dict:
         kind="feedback",
         title="新用户反馈" + ((" #" + fid) if fid else ""),
         lines=lines,
-        url=_admin_url("#sec-feedback"),
+        url=_admin_url("/feedback"),
         department=dept,
         dedupe_key="feedback|" + fid,
     )
@@ -216,7 +233,7 @@ def watch_pending(item: dict) -> dict:
         kind="watch_pending",
         title="值班待审申报书",
         lines=lines,
-        url=_admin_url("#sec-wecom"),
+        url=_admin_url("/wecom"),
         department="",
         dedupe_key="watch|" + str(it.get("caseId") or "") + "|" + reason[:40],
     )
@@ -228,7 +245,7 @@ def leaders_from_messages(messages: list | None) -> list[str]:
     for m in messages or []:
         if not isinstance(m, dict):
             continue
-        who = str(m.get("sender") or "").strip()
+        who = sender_of(m)
         if "组长" not in who:
             continue
         if who not in out:
@@ -346,7 +363,7 @@ def notify_group_issues(
         for k in h.get("keywords") or []:
             if k not in kws:
                 kws.append(k)
-        who = str(h.get("sender") or "群成员").strip()
+        who = sender_of(h, "群成员")
         when = str(h.get("time") or "").strip()
         body = str(h.get("text") or "").replace("\n", " ").strip()[:80]
         lines.append(who + ((" " + when) if when else "") + "：" + body)
@@ -377,7 +394,7 @@ def notify_group_issues(
         kind="group_issue",
         title=title,
         lines=lines,
-        url=_admin_url("#sec-wecom"),
+        url=_admin_url("/wecom"),
         department="",
         dedupe_key="group_issue|" + str(session_id or sess) + "|" + ",".join(mids)[:80],
         mentioned_mobile=mobiles,
@@ -434,8 +451,15 @@ def _task_url(tid: str) -> str:
 
 def _admin_url(hash_part: str) -> str:
     base = str(cfg().get("publicBaseUrl") or "").strip().rstrip("/")
-    path = "/admin" + str(hash_part or "")
-    return (base + path) if base else path
+    part = str(hash_part or "/overview")
+    mapping = {"#sec-feedback": "/feedback", "#sec-wecom": "/wecom"}
+    if part in mapping:
+        part = mapping[part]
+    if not part.startswith("/"):
+        part = "/" + part
+    if not part.startswith("/admin"):
+        part = "/admin" + part
+    return (base + part) if base else part
 
 
 def _owner_dept(owner: str) -> str:

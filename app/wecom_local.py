@@ -4,11 +4,232 @@ import json
 import re
 import threading
 import time
+from collections import Counter
 from pathlib import Path
+
+from .party import sender_of
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, tuple] = {}
 _CACHE_MAX = 64
+_NAME_CACHE: dict[str, str] = {}
+_SELF_CACHE: dict[str, set] = {}
+_ID_NAME = re.compile(r"^[MRS]:", re.I)
+_DIGITS_ID = re.compile(r"^\d{8,}$")
+_JSON_NAME = re.compile(r'"name"\s*:\s*"([^"]{1,40})"')
+_SKIP_JSON_NAME = {"user", "avatar", "name", "vid", "userid", "username"}
+_JOIN_SHARE = re.compile(r"你通过(.+?)分享的链接加入了此(智能)?(表格|文档)")
+_CREATED_DOC = re.compile(r"你创建了(智能)?(表格|文档)")
+_EDITED_DOC = re.compile(r"编辑了(智能)?(表格|文档)")
+_GENERIC_DOC = {"智能表格", "智能文档"}
+
+
+def looks_like_session_id(value: str) -> bool:
+    """企业微信内部会话号（M:/R:/S: 或纯数字），不能当展示名。"""
+    s = str(value or "").strip()
+    if not s:
+        return True
+    return bool(_ID_NAME.match(s) or _DIGITS_ID.match(s))
+
+
+def better_session_name(cur: str, cand: str) -> str:
+    c = str(cand or "").strip()
+    if not c or looks_like_session_id(c):
+        return str(cur or "").strip()
+    k = str(cur or "").strip()
+    if not k or looks_like_session_id(k):
+        return c
+    return c if len(c) > len(k) else k
+
+
+def _is_self_name(value: str, skip: set | None = None) -> bool:
+    n = str(value or "").strip()
+    if not n:
+        return True
+    for s in skip or ():
+        t = str(s or "").strip()
+        if len(t) < 2:
+            continue
+        if n == t or t in n or (len(n) >= 2 and n in t):
+            return True
+    return False
+
+
+def _human_name(value: str, skip: set | None = None) -> str:
+    from .party import clean_sender
+    s = clean_sender(value)
+    if not s or looks_like_session_id(s):
+        return ""
+    if _is_self_name(s, skip):
+        return ""
+    if s.lower() in _SKIP_JSON_NAME:
+        return ""
+    return s
+
+
+def _short_who(who: str) -> str:
+    s = str(who or "").strip()
+    s = re.split(r"[（(]", s, 1)[0].strip()
+    return s[:30]
+
+
+def doc_title_from_text(text: str) -> str:
+    """企业微信智能表格/文档会话的系统提示，不是联系人备注。"""
+    t = str(text or "").replace("\n", " ")
+    if "已导入此文档" in t:
+        return "智能文档"
+    m = _JOIN_SHARE.search(t)
+    if m:
+        who = _short_who(m.group(1))
+        kind = m.group(3) or "表格"
+        if who and not looks_like_session_id(who):
+            return who + "的" + kind
+        return "智能文档" if kind == "文档" else "智能表格"
+    m = _CREATED_DOC.search(t)
+    if m:
+        kind = m.group(2) or "表格"
+        return "智能文档" if kind == "文档" else "智能表格"
+    if _EDITED_DOC.search(t) or "加入了此表格" in t or "加入了此智能表格" in t:
+        return "智能表格"
+    if "智能文档" in t and ("创建" in t or "文档" in t):
+        return "智能文档"
+    return ""
+
+
+def _pick_doc_title(votes: Counter) -> str:
+    if not votes:
+        return ""
+    specific = [(n, c) for n, c in votes.items() if n not in _GENERIC_DOC]
+    if specific:
+        specific.sort(key=lambda kv: (-kv[1], -len(kv[0])))
+        return specific[0][0]
+    return votes.most_common(1)[0][0]
+
+
+def _meta_aliases(src: dict | None) -> set:
+    aliases = set()
+    for key in ("operator_name", "username", "computer_name"):
+        v = str((src or {}).get(key) or "").strip()
+        if v and not looks_like_session_id(v):
+            aliases.add(v)
+    return aliases
+
+
+def _source_self_aliases(source_id: str, src: dict | None = None) -> set:
+    """本机操作员在消息里的自称（常比 meta.operator_name 更长）。"""
+    sid = str(source_id or "")
+    cached = _SELF_CACHE.get(sid)
+    if cached is not None:
+        return set(cached)
+    aliases = _meta_aliases(src)
+    counts: Counter = Counter()
+    scanned = 0
+    try:
+        rows = list_sessions(sid, 120)
+    except Exception:
+        rows = []
+    for it in rows or []:
+        uid = str((it or {}).get("username") or "")
+        if not uid.startswith("M:"):
+            continue
+        path = _msg_path(sid, uid)
+        if not path:
+            continue
+        msgs, _trunc = _read_tail(path, 6)
+        seen = set()
+        for m in msgs or []:
+            if not isinstance(m, dict):
+                continue
+            who = _human_name(m.get("sender") or "", None)
+            if who and who.lower() not in _SKIP_JSON_NAME:
+                seen.add(who)
+            for n in _JSON_NAME.findall(str(m.get("text") or "")):
+                hn = str(n or "").strip()
+                if hn and not looks_like_session_id(hn) and hn.lower() not in _SKIP_JSON_NAME:
+                    seen.add(hn)
+        for x in seen:
+            counts[x] += 1
+        scanned += 1
+        if scanned >= 20:
+            break
+    thresh = max(3, scanned // 4) if scanned else 99
+    for name, n in counts.items():
+        if n >= thresh:
+            aliases.add(name)
+    _SELF_CACHE[sid] = aliases
+    return set(aliases)
+
+
+def infer_session_display_name(session_id: str, replicas: list | None = None, sources: list | None = None) -> str:
+    """单聊通讯录没解析出名时，用消息发出人 / 卡片 JSON 里的 name 补。"""
+    cid = str(session_id or "").strip()
+    if not cid:
+        return ""
+    hit = _NAME_CACHE.get(cid)
+    if hit is not None:
+        return hit
+    src_by = {}
+    for s in sources or list_sources():
+        if isinstance(s, dict) and s.get("id"):
+            src_by[str(s.get("id") or "")] = s
+    ids = []
+    for r in replicas or []:
+        sid = str((r or {}).get("source_id") or (r or {}).get("id") or "")
+        if sid and sid not in ids:
+            ids.append(sid)
+    if not ids:
+        _NAME_CACHE[cid] = ""
+        return ""
+    counts: Counter = Counter()
+    docs: Counter = Counter()
+    for sid in ids:
+        path = _msg_path(sid, cid)
+        if not path:
+            continue
+        skip = _source_self_aliases(sid, src_by.get(sid) or {})
+        msgs, _trunc = _read_tail(path, 40)
+        for m in msgs or []:
+            if not isinstance(m, dict):
+                continue
+            text = str(m.get("text") or "")
+            title = doc_title_from_text(text)
+            if title:
+                docs[title] += 3 if title not in _GENERIC_DOC else 1
+            who = _human_name(m.get("sender") or "", skip)
+            if who:
+                counts[who] += 2
+            for n in _JSON_NAME.findall(text):
+                hn = _human_name(n, skip)
+                if hn:
+                    counts[hn] += 1
+    name = _pick_doc_title(docs) or (counts.most_common(1)[0][0] if counts else "")
+    _NAME_CACHE[cid] = name
+    if len(_NAME_CACHE) > 4000:
+        for old in list(_NAME_CACHE.keys())[:800]:
+            _NAME_CACHE.pop(old, None)
+    return name
+
+
+def fill_session_names(items: list) -> list:
+    srcs = list_sources()
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        uid = str(it.get("username") or it.get("session_id") or "")
+        if not uid.startswith("M:"):
+            continue
+        name = str(it.get("display_name") or "").strip()
+        if name and not looks_like_session_id(name) and name != uid:
+            continue
+        reps = list(it.get("replicas") or [])
+        if not reps:
+            sid = str(it.get("source_id") or "")
+            if sid:
+                reps = [{"source_id": sid}]
+        guessed = infer_session_display_name(uid, reps, srcs)
+        if guessed:
+            it["display_name"] = guessed
+    return items
 
 
 def _safe_id(value: str) -> str:
@@ -47,6 +268,9 @@ def data_root() -> Path | None:
         if mode == "local":
             return None
     here = Path(__file__).resolve()
+    bundled = here.parents[1] / "parser" / "export" / "synced"
+    if _looks_synced(bundled):
+        return bundled
     work = here.parents[3] if len(here.parents) > 3 else None
     if work and work.is_dir():
         try:
@@ -344,7 +568,7 @@ def search_session(q: str, session_id: str, *, source_id: str = "", limit: int =
         for m in rows:
             blob = " ".join([
                 str(m.get("text") or ""),
-                str(m.get("sender") or ""),
+                sender_of(m),
                 str(m.get("attachment_name") or ""),
             ]).lower()
             if qn in blob:

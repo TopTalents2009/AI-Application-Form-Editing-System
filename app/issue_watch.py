@@ -2,6 +2,8 @@
 from __future__ import annotations
 import re
 
+from .party import sender_of
+
 DEFAULT_ISSUE_KEYWORDS = [
     "低级错误",
     "怎么回事",
@@ -100,7 +102,7 @@ def scan_messages(messages: list, keywords: list | None = None) -> list:
             continue
         out.append({
             "messageId": m.get("message_id") or 0,
-            "sender": str(m.get("sender") or ""),
+            "sender": sender_of(m),
             "time": str(m.get("time_text") or m.get("time") or ""),
             "text": text,
             "keywords": kws,

@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from .hj_form import remap_qm_section, is_hj_app, remap_hj_section
+from .opinion_sanitize import is_identity_meta_text
 
 _ANCHOR_RE = re.compile(r"标注原文[：:]\s*(.+?)(?:\n|$)", re.M)
 _CID_RE = re.compile(r"(?:\[|【|针对\s*)?(S\d+)(?:\]|】)?", re.I)
@@ -53,6 +54,14 @@ _QM_SLICE_BOUNDS = (
 _FIELD_LABELS = frozenset({
     "项目成果", "简述个人贡献", "副教授", "助理教授", "WorDepth:", "项目来源", "研发投入",
 })
+_PRE_RETURN_TITLE = re.compile(r"回国前职务|回国（来华）前职务|回国\(来华\)前职务")
+_EQ_DOMESTIC = re.compile(r"相当于国内职务|相当于国内职称")
+_PRE_RETURN_LABELS = (
+    "回国(来华)前职务",
+    "回国（来华）前职务",
+    "回国前职务",
+)
+_PRE_RETURN_STOPS = ("相当于国内职务情况", "相当于国内职称", "引进职务")
 
 
 def extract_anchor(opinion: str) -> str:
@@ -148,7 +157,66 @@ def _expand_short_context(app_text: str, pos: int, anchor: str, max_len: int) ->
     return snippet
 
 
-def _field_label_find(app_text: str, anchor: str, max_len: int) -> tuple[str, str]:
+def pre_return_title_span(app_text: str) -> tuple[int, int]:
+    """回国(来华)前职务栏：从栏目标题到「相当于国内职务情况」之前。"""
+    raw = str(app_text or "")
+    best = (-1, -1)
+    for key in _PRE_RETURN_LABELS:
+        start = 0
+        while True:
+            i = raw.find(key, start)
+            if i < 0:
+                break
+            head = raw[max(0, i - 40): i]
+            if "填写" in head or "须知" in head:
+                start = i + len(key)
+                continue
+            end = len(raw)
+            for stop in _PRE_RETURN_STOPS:
+                j = raw.find(stop, i + len(key))
+                if 0 <= j < end:
+                    end = j
+            if end - i > 4:
+                best = (i, end)
+                break
+            start = i + len(key)
+        if best[0] >= 0:
+            break
+    return best
+
+
+def _pre_return_title_kind(opinion: str) -> str:
+    op = str(opinion or "")
+    if re.search(r"回国前职务英文|职务英文|英文职务", op):
+        return "en"
+    if re.search(r"回国前职务中文|职务中文|中文职务", op):
+        return "zh"
+    if re.search(r"[A-Za-z]{6,}", op) and not re.search(r"[\u4e00-\u9fff]{2,}", re.sub(r"【.*?】|修改前|修改后", "", op)):
+        return "en"
+    return "all"
+
+
+def locate_pre_return_title(app_text: str, kind: str = "all", max_len: int = 160) -> tuple[str, str]:
+    start, end = pre_return_title_span(app_text)
+    if start < 0:
+        return "", ""
+    block = str(app_text[start:end]).strip()
+    lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+    if not lines:
+        return "", ""
+    vals = lines[1:]
+    en = next((x for x in vals if re.search(r"[A-Za-z]{3,}", x) and not re.search(r"[\u4e00-\u9fff]{2,}", x)), "")
+    zh = next((x for x in vals if re.search(r"[\u4e00-\u9fff]{2,}", x)), "")
+    if kind == "en" and en:
+        find = lines[0] + "\n" + en
+    elif kind == "zh" and (zh or en):
+        find = "\n".join(x for x in (lines[0], en, zh) if x)
+    else:
+        find = block
+    return find[:max_len], _hint_at(app_text, start)
+
+
+def _field_label_find(app_text: str, anchor: str, max_len: int, opinion: str = "") -> tuple[str, str]:
     if anchor not in _FIELD_LABELS and anchor not in ("项目成果", "简述个人贡献"):
         return "", ""
     if anchor.startswith("项目成果"):
@@ -163,6 +231,8 @@ def _field_label_find(app_text: str, anchor: str, max_len: int) -> tuple[str, st
                 pos = app_text.find(body)
                 return body[:max_len], _hint_at(app_text, pos if pos >= 0 else m.start())
     if anchor == "副教授":
+        if _PRE_RETURN_TITLE.search(str(opinion or "")) and not _EQ_DOMESTIC.search(str(opinion or "")):
+            return "", ""
         key = "相当于国内职务情况"
         i = app_text.find(key)
         if i >= 0:
@@ -244,14 +314,21 @@ def _pick_hit(text: str, needle: str, opinion: str = "") -> int:
 
 def locate_anchor(app_text: str, anchor: str, max_len: int = 160, section: str = "", opinion: str = "") -> tuple[str, str]:
     anchor = str(anchor or "").strip()
-    if not anchor or not app_text:
+    if not app_text:
+        return "", ""
+    op = str(opinion or "")
+    if _PRE_RETURN_TITLE.search(op) and not _EQ_DOMESTIC.search(op):
+        hit, hint = locate_pre_return_title(app_text, _pre_return_title_kind(op), max_len)
+        if hit:
+            return hit, hint
+    if not anchor:
         return "", ""
     full = app_text
     hay, offset = _prefer_hay(full, opinion, section)
 
     if anchor.startswith("项目成果"):
         proj = _slice_section(app_text, "项目")
-        hit, hint = _field_label_find(proj, anchor, max_len)
+        hit, hint = _field_label_find(proj, anchor, max_len, opinion)
         if hit:
             return hit, hint
 
@@ -278,13 +355,13 @@ def locate_anchor(app_text: str, anchor: str, max_len: int = 160, section: str =
     hit, hint = _search(hay, offset)
     if hit:
         return hit, hint
-    hit, hint = _field_label_find(hay, anchor, max_len)
+    hit, hint = _field_label_find(hay, anchor, max_len, opinion)
     if hit:
         return hit, hint
     hit, hint = _search(app_text, 0)
     if hit:
         return hit, hint
-    return _field_label_find(app_text, anchor, max_len)
+    return _field_label_find(app_text, anchor, max_len, opinion)
 
 
 def _clause_section(clause: dict, app_text: str, hj: bool) -> str:
@@ -329,7 +406,7 @@ def _collect_targets(clauses: list, edits: list, leftovers: list) -> dict[str, s
         if cid:
             c = by_id.get(cid)
             blob = (str((c or {}).get("opinion") or "") + str((c or {}).get("clause") or ""))
-            if is_rewrite_from_book(blob) or _SKIP_MANUAL_OP.search(blob):
+            if is_rewrite_from_book(blob) or _SKIP_MANUAL_OP.search(blob) or is_identity_meta_text(blob):
                 continue
             out[cid] = text
             continue
@@ -338,6 +415,8 @@ def _collect_targets(clauses: list, edits: list, leftovers: list) -> dict[str, s
                 continue
             blob = str(c.get("opinion") or "") + str(c.get("clause") or "")
             if _SKIP_MANUAL_OP.search(blob) or is_rewrite_from_book(blob):
+                continue
+            if is_identity_meta_text(blob):
                 continue
             if _UNKNOWN_OP.search(blob):
                 out[cid2] = text
@@ -350,6 +429,8 @@ def _collect_targets(clauses: list, edits: list, leftovers: list) -> dict[str, s
             continue
         blob = str(c.get("opinion") or "")
         if _SKIP_MANUAL_OP.search(blob):
+            continue
+        if is_identity_meta_text(blob):
             continue
         if _UNKNOWN_OP.search(blob) or _UNKNOWN_LO.search(blob):
             out[cid] = "意见涉及需核实/库内未知数据：" + " ".join(blob.split())[:120]

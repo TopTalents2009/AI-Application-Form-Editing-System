@@ -1,4 +1,5 @@
 'use strict';
+var currentUser = null;
 var currentDetail = null;
 var pollTimer = null;
 var currentBatch = null;
@@ -1453,6 +1454,17 @@ function openCredModal(u) {
   var mask = $('credMask');
   if (!mask) return;
   mask.hidden = false;
+  var needUser = !u.username || String(u.username).indexOf('_p') === 0;
+  var title = $('credTitle');
+  if (title) title.textContent = needUser ? '设置本系统账号' : '重新设置密码';
+  var hint = $('credHint');
+  if (hint) {
+    hint.textContent = needUser
+      ? '已用协同中心的真实姓名和部门为你开通账号。请设置用户名和密码，以后也可在本系统登录页直接登录。'
+      : '管理员已重置你的密码。请设置新密码后再继续使用，不能与临时密码相同。';
+  }
+  var userRow = $('credUserRow');
+  if (userRow) userRow.hidden = !needUser;
   var who = $('credWho');
   if (who) who.textContent = '当前身份：' + (u.realName || '') + (u.department ? ' · ' + u.department : '');
   var msg = $('credMsg');
@@ -1463,10 +1475,12 @@ function openCredModal(u) {
     var password = $('credPass') && $('credPass').value || '';
     var confirmPassword = $('credPass2') && $('credPass2').value || '';
     if (msg) msg.textContent = '';
+    var body = { password: password, confirmPassword: confirmPassword };
+    if (needUser) body.username = username;
     fetch('/api/auth/complete-credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username, password: password, confirmPassword: confirmPassword })
+      body: JSON.stringify(body)
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (x) {
         if (!x.ok) {
@@ -1489,10 +1503,13 @@ function initUserBox() {
   fetch('/api/auth/me').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
     var u = j && j.user;
     if (!u) { location.href = loginUrl(); return; }
+    currentUser = u;
     $('userName').textContent = u.realName + (u.department ? ' · ' + u.department : '');
     if (u.role === 'admin') {
       var al = $('adminLink');
       if (al) al.style.display = '';
+      var cl = $('chatinsightLink');
+      if (cl) cl.style.display = '';
     }
     box.style.display = '';
     bindUserMenu();
@@ -1505,6 +1522,7 @@ function initUserBox() {
       });
     };
     if (u.mustSetCredentials) openCredModal(u);
+    bindPsUploadModal();
     if (window.initWecomBoard) window.initWecomBoard();
   });
 }
@@ -2049,12 +2067,172 @@ function appNoOf(name) {
   return nums.join('/');
 }
 
-function taskListHtml(list, tid) {
+function bindPsUploadBtn(root, t, plan) {
+  var psBtn = root && root.querySelector('#psUploadBtn');
+  if (!psBtn) return;
+  psBtn.onclick = function () {
+    openPsUploadModal(t, root._psPlan || plan, function (ticket) {
+      if (root._psPlan) root._psPlan.psTicket = ticket;
+      if (t) t.psTicket = ticket;
+      var box = root.querySelector('.ps-box');
+      var wrap = document.createElement('div');
+      wrap.innerHTML = psTicketHtml(ticket, { showUpload: true });
+      if (box && wrap.firstChild) box.parentNode.replaceChild(wrap.firstChild, box);
+      else if (wrap.firstChild) {
+        var taskBox = root.querySelector('.task-box');
+        if (taskBox) taskBox.parentNode.insertBefore(wrap.firstChild, taskBox);
+      }
+      bindPsUploadBtn(root, t, plan);
+    });
+  };
+}
+
+function psTicketHtml(ticket, opts) {
+  ticket = ticket || {};
+  opts = opts || {};
+  var uploaded = !!(ticket.ok && ticket.id);
+  if (!uploaded && !opts.showUpload && !ticket.error) return '';
+  var st = ticket.statusLabel || ticket.status || (uploaded ? '已上传' : '未上传');
+  var cls = uploaded ? 'ps-box' : 'ps-box warn';
+  var h = '<div class="' + cls + '"><div class="task-h">PS 修图工单';
+  if (opts.showUpload) h += '<button type="button" class="mini" id="psUploadBtn">上传</button>';
+  h += '</div>';
+  if (uploaded) {
+    h += '<p class="task-lead">任务清单里改不了的扫描件已上传到 p 图工单。未点确认前不会上传。</p>';
+    h += '<div class="ps-row"><span class="ps-k">工单</span>';
+    if (ticket.url && ticket.id) {
+      h += '<a class="dl" href="' + escAttr(ticket.url) + '" target="_blank" rel="noopener">#' + esc(ticket.id) + '</a>';
+    } else {
+      h += '<b>#' + esc(ticket.id || '') + '</b>';
+    }
+    h += ' <em>' + esc(st) + '</em></div>';
+    if (ticket.actorName) h += '<div class="ps-row"><span class="ps-k">提交人</span>' + esc(ticket.actorName) + '</div>';
+    if (ticket.talentId || ticket.talentName) {
+      h += '<div class="ps-row"><span class="ps-k">人才</span>' + esc((ticket.talentId || '') + (ticket.talentName ? '　' + ticket.talentName : '')) + '</div>';
+    }
+    h += '<div class="ps-row"><span class="ps-k">原件</span>已传 ' + esc(ticket.uploaded || 0) + ' 个</div>';
+    (ticket.assets || []).forEach(function (a) {
+      if (!a) return;
+      h += '<div class="ps-file">' + esc(a.filename || a.name || '文件') + (a.kind ? ' <em>' + esc(a.kind) + '</em>' : '') + '</div>';
+    });
+    (ticket.skipped || []).forEach(function (s) {
+      h += '<div class="ps-skip">' + esc(s) + '</div>';
+    });
+    if (ticket.note) h += '<div class="task-snip">' + esc(ticket.note) + '</div>';
+  } else {
+    h += '<p class="task-lead">护照/学历/工作证明等扫描件不会自动上传。请点标题旁「上传」，填写需要修改的备注和任务提交人姓名后再确认。</p>';
+    if (ticket.error) h += '<div class="ps-err">' + esc(ticket.error) + '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+var psUploadCtx = null;
+function bindPsUploadModal() {
+  var mask = $('psUploadMask');
+  if (!mask || mask.getAttribute('data-bound')) return;
+  mask.setAttribute('data-bound', '1');
+  var close = $('psUploadClose');
+  var btn = $('psUploadConfirm');
+  var ta = $('psNoteTa');
+  var inp = $('psActorIn');
+  function sync() {
+    var ok = !!(ta && ta.value.trim() && inp && inp.value.trim());
+    if (btn) btn.disabled = !ok;
+  }
+  if (close) close.onclick = closePsUploadModal;
+  mask.addEventListener('click', function (e) { if (e.target === mask) closePsUploadModal(); });
+  if (ta) ta.addEventListener('input', sync);
+  if (inp) inp.addEventListener('input', sync);
+  if (btn) btn.onclick = submitPsUpload;
+}
+
+function closePsUploadModal() {
+  var mask = $('psUploadMask');
+  if (mask) mask.hidden = true;
+  psUploadCtx = null;
+}
+
+function slimPsNote(s) {
+  var keep = [], seen = {};
+  String(s || '').replace(/^任务提交人：.*\n*/, '').split(/\r?\n/).forEach(function (raw) {
+    var t = String(raw || '').replace(/^[\s\-•·]+/, '').trim();
+    if (!t) return;
+    if (/^申报书\s/.test(t) || /^需要修改的位置/.test(t) || /^（无具体/.test(t)) return;
+    if (/无法通过系统|无法写入申报书|请按意见|另行上传|另行准备|请下载核对|已在本机|本地「附件」|需申报人自行/.test(t)) return;
+    if (/^\d+\.\s/.test(t) && (/[（(][^）)]+\.[A-Za-z0-9]{2,4}[）)]/.test(t) || (t.length < 24 && !/改|换|补|职位|时间|职务|不清晰/.test(t)))) return;
+    if (seen[t]) return;
+    seen[t] = 1;
+    keep.push(t);
+  });
+  return keep.join('\n');
+}
+function openPsUploadModal(t, plan, after) {
+  bindPsUploadModal();
+  var mask = $('psUploadMask');
+  var ta = $('psNoteTa');
+  var inp = $('psActorIn');
+  var err = $('psUploadErr');
+  var btn = $('psUploadConfirm');
+  if (!mask || !ta || !inp) return;
+  var draft = (plan && plan.psDraft) || {};
+  var ticket = (plan && plan.psTicket) || (t && t.psTicket) || {};
+  var rawNote = ticket.note && !ticket.ok ? ticket.note : (draft.note || '');
+  ta.value = slimPsNote(rawNote);
+  inp.value = ticket.actorName || draft.actorName || (t && t.ownerName) || (currentUser && currentUser.realName) || '';
+  if (err) err.textContent = '';
+  if (btn) {
+    btn.disabled = !(ta.value.trim() && inp.value.trim());
+    btn.textContent = '确认上传';
+  }
+  psUploadCtx = { t: t, plan: plan, after: after || null };
+  mask.hidden = false;
+  inp.focus();
+  inp.select();
+}
+
+function submitPsUpload() {
+  var ctx = psUploadCtx;
+  var ta = $('psNoteTa');
+  var inp = $('psActorIn');
+  var err = $('psUploadErr');
+  var btn = $('psUploadConfirm');
+  if (!ctx || !ctx.t || !ta || !inp) return;
+  var note = ta.value.trim();
+  var actor = inp.value.trim();
+  if (err) err.textContent = '';
+  if (!note) { if (err) err.textContent = '请填写需要修改的备注'; return; }
+  if (!actor) { if (err) err.textContent = '请填写任务提交人姓名'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = '上传中…'; }
+  fetch('/api/tasks/' + ctx.t.id + '/ps-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note: note, actorName: actor })
+  }).then(readJson).then(function (j) {
+    var ticket = (j && j.psTicket) || {};
+    if (ctx.t) ctx.t.psTicket = ticket;
+    if (ctx.plan) ctx.plan.psTicket = ticket;
+    if (currentDetail && String(currentDetail.id) === String(ctx.t.id)) currentDetail.psTicket = ticket;
+    var after = ctx.after;
+    closePsUploadModal();
+    if (typeof after === 'function') after(ticket);
+    else pollDetail();
+  }).catch(function (e2) {
+    if (err) err.textContent = e2.message || String(e2);
+    if (btn) { btn.disabled = false; btn.textContent = '确认上传'; }
+  });
+}
+
+function taskListHtml(list, tid, ticket, opts) {
   list = list || [];
-  if (!list.length) return '';
+  opts = opts || {};
+  var ticketHtml = psTicketHtml(ticket, opts);
+  if (!list.length && !ticketHtml) return '';
     var srcMap = {local:'本地附件', pool:'人才库', papers:'论文系统', codebuddy:'联网检索', generate:'生成接口', wecom:'聊天记录'};
-  var h = '<div class="task-box"><div class="task-h">任务清单（系统改不了的附件）</div>';
-    h += '<p class="task-lead">护照、学历证明、工作经历证明等扫描件无法写入申报书正文。检索顺序：本机「附件」目录 → 人才库 → 聊天记录；项目证明额外走联网检索和生成接口。确认后生成 <b>任务清单.docx</b>。</p>';
+  var h = ticketHtml;
+  if (!list.length) return h;
+  h += '<div class="task-box"><div class="task-h">任务清单（系统改不了的附件）</div>';
+    h += '<p class="task-lead">护照、学历证明、工作经历证明等扫描件无法写入申报书正文。检索顺序：本机「附件」目录 → 人才库 → 聊天记录；项目证明额外走联网检索和生成接口。确认后生成 <b>任务清单.docx</b>。在「PS 修图工单」标题旁点「上传」填写备注和提交人后才会传到 PS 工单。</p>';
   if (tid) {
     h += '<p class="task-lead"><a class="dl" href="/api/tasks/' + encodeURIComponent(tid) + '/files?dir=output&name=' + encodeURIComponent('任务清单.docx') + '">下载任务清单.docx</a></p>';
   }
@@ -2063,7 +2241,14 @@ function taskListHtml(list, tid) {
     var st = it.statusLabel || (it.status === 'found' ? '已检索到参考文件' : '需另行提供');
     var seenDl = {};
     h += '<li><div class="task-ttl">' + esc(it.title || '附件') + ' <em>' + esc(st) + '</em></div>';
-    if (it.snippet) h += '<div class="task-snip">意见：' + esc(it.snippet) + '</div>';
+    var locs = (it.locations || []).filter(function (x) { return String(x || '').trim(); });
+    if (locs.length) {
+      h += '<div class="task-snip">需要修改：</div><ul class="task-loc">';
+      locs.forEach(function (loc) { h += '<li>' + esc(loc) + '</li>'; });
+      h += '</ul>';
+    } else if (it.snippet) {
+      h += '<div class="task-snip">意见：' + esc(it.snippet) + '</div>';
+    }
     if (it.action) h += '<div class="task-act">' + esc(it.action) + '</div>';
     (it.downloads || []).forEach(function (d) {
       if (!d || !d.download) return;
@@ -2144,13 +2329,14 @@ function renderDoneAttachments(t) {
   }
   var att = t.attachHit || {};
   var list = t.taskList || [];
+  var ticket = t.psTicket || {};
   box.classList.remove('hidden');
-  box.innerHTML = taskListHtml(list, t.id) + missingAttHtml(att);
-  if ((att.items && att.items.length) || (list && list.length) || box.getAttribute('data-tid') === String(t.id)) return;
+  box.innerHTML = taskListHtml(list, t.id, ticket, { showUpload: false }) + missingAttHtml(att);
+  if ((att.items && att.items.length) || (list && list.length) || ticket.id || box.getAttribute('data-tid') === String(t.id)) return;
   box.setAttribute('data-tid', String(t.id));
   fetch('/api/tasks/' + t.id + '/plan').then(function (r) { return r.ok ? r.json() : null; }).then(function (plan) {
     if (!plan || !currentDetail || String(currentDetail.id) !== String(t.id)) return;
-    box.innerHTML = taskListHtml(plan.taskList || list, t.id) + missingAttHtml(plan.attachments || att);
+    box.innerHTML = taskListHtml(plan.taskList || list, t.id, plan.psTicket || ticket, { showUpload: false }) + missingAttHtml(plan.attachments || att);
   }).catch(function () {});
 }
 
@@ -2189,15 +2375,18 @@ function buildPlanEditor(el, t, plan) {
     (attSum ? '<br>缺附件检索：' + esc(attSum) : '') +
     '<br>Gemini 已生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>为短摘要；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。' +
     (manualN ? '<br><b>人工补充：</b>有 <b>' + manualN + '</b> 条因库内无对应数据已定位原文（黄底行），「修改后」已预填原文，请直接改写。' : '') +
-    (preMiss ? '<br><b>预检警告：</b>有 <b>' + preMiss + '</b> 条改前摘录在申报书中未找到（橙底行），落盘可能失败，请先修正锚点。' : '') +
+    (preMiss ? '<br><b>预检拦截：</b>有 <b>' + preMiss + '</b> 条改前摘录在申报书中未找到（橙底行），须修正锚点或取消勾选后才能写入。' : '') +
+    (loLines && /须人工精简|须压缩/.test(loLines) ? '<br><b>限字拦截：</b>有条目超过印刷上限且未能压下，须精简「修改后」后再确认。' : '') +
     '</div>';
   h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:18%">修改前（定位用，勿改）</th><th style="width:22%">Gemini修改意见</th><th style="width:22%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
   h += '<button class="mini addrow" id="addRowBtn">新增一行</button>';
   h += missingAttHtml(att);
-  h += taskListHtml((plan && plan.taskList) || t.taskList || [], t && t.id);
+  h += taskListHtml((plan && plan.taskList) || t.taskList || [], t && t.id, (plan && plan.psTicket) || (t && t.psTicket), { showUpload: true });
   h += '<h3>遗留事项（每行一条，可编辑）</h3><textarea id="loTa" class="lo-ta"></textarea>';
   h += '<div class="actions"><button id="applyBtn" class="primary">确认无误，写入文件</button><button id="replanBtn" class="ghost">重新生成计划</button><span id="planErr" class="err"></span></div>';
   el.innerHTML = h;
+  el._psPlan = plan;
+  bindPsUploadBtn(el, t, plan);
 
   var tb = el.querySelector('#planRows');
   curPlanData.forEach(function (e, i) { tb.appendChild(buildRow(e, i)); });
@@ -2254,11 +2443,10 @@ function buildPlanEditor(el, t, plan) {
       var src = curPlanData[oi] || {};
       if (src.findOk === false) preBad.push('#' + (oi + 1));
     });
-    if (preBad.length === out.length && out.length) {
-      errEl.textContent = '所选行的改前摘录均未在申报书中匹配，请先修正锚点或取消勾选';
+    if (preBad.length) {
+      errEl.textContent = '有 ' + preBad.length + ' 行改前摘录未在申报书中匹配（' + preBad.join('、') + '），请先修正锚点或取消勾选后再写入';
       return;
     }
-    if (preBad.length && !confirm('有 ' + preBad.length + ' 行改前摘录可能无法落盘（' + preBad.join('、') + '），仍要继续写入？')) return;
     var lo = $('loTa').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
     if (!out.length && !lo.length) { errEl.textContent = '没有任何要应用的编辑或遗留事项'; return; }
     var btn = this;

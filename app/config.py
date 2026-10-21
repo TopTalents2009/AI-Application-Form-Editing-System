@@ -70,12 +70,30 @@ def llm_genai_url(base: str, model: str, *, stream: bool = False) -> str:
     return url
 
 
+def normalize_httpx_proxy(raw: str | None) -> str | None:
+    """httpx 只走 HTTP(S) 代理。Clash Verge mixed-port 的 socks5://127.0.0.1:7897 可改成 http:// 同端口。"""
+    s = str(raw or "").strip()
+    if not s or FILL_MARK in s:
+        return None
+    low = s.lower()
+    if low.startswith(("http://", "https://")):
+        return s
+    m = re.match(r"^socks5h?://([^/@\s]+)$", s, re.I)
+    if m:
+        return "http://" + m.group(1)
+    return None
+
+
 def httpx_proxy() -> str | None:
-    """只认 HTTP(S) 代理。忽略 socks ALL_PROXY，避免 httpx 因未装 socksio 直接 ImportError。"""
+    """外网代理。优先 HTTPS_PROXY；否则把 ALL_PROXY 的 socks5 转成 HTTP（Clash mixed-port）。"""
     for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
-        raw = str(os.environ.get(k) or "").strip()
-        if raw.lower().startswith(("http://", "https://")):
-            return raw
+        got = normalize_httpx_proxy(os.environ.get(k))
+        if got:
+            return got
+    for k in ("ALL_PROXY", "all_proxy"):
+        got = normalize_httpx_proxy(os.environ.get(k))
+        if got:
+            return got
     return None
 
 
@@ -193,6 +211,7 @@ def load_config() -> dict:
     mysql_user = str(mysql.get("user") or mysql.get("username") or "root").strip() or "root"
     mysql_password = str(mysql.get("password") or "")
     mysql_db = str(mysql.get("database") or "shenbaoshu").strip() or "shenbaoshu"
+    mysql_wecom = str(mysql.get("wecomDatabase") or "shenbaoshu_wecom").strip() or "shenbaoshu_wecom"
     mysql_ok = bool(mysql_host and mysql_user and mysql_db)
     raw_models = c.get("models") if isinstance(c.get("models"), list) else []
     client_inbox = str(c.get("clientInbox") or "").strip()
@@ -200,6 +219,7 @@ def load_config() -> dict:
     portal = _portal_block(c)
     wecom = _wecom_chat_block(c)
     alert = _alert_block(c)
+    ps = _ps_block(c)
     return {
         "baseUrl": base.rstrip("/"),
         "apiKey": key,
@@ -228,6 +248,7 @@ def load_config() -> dict:
         "mysqlUser": mysql_user,
         "mysqlPassword": mysql_password,
         "mysqlDatabase": mysql_db,
+        "mysqlWecomDatabase": mysql_wecom,
         "mysqlConfigured": mysql_ok,
         "clientInbox": client_inbox,
         "projectProof": project_proof,
@@ -238,6 +259,11 @@ def load_config() -> dict:
         "wecomChatGroups": wecom.get("groups") or [],
         "wecomChatConfigured": bool(wecom.get("configured")),
         "alert": alert,
+        "ps": ps,
+        "psBaseUrl": ps.get("baseUrl") or "",
+        "psApiKey": ps.get("apiKey") or "",
+        "psWebUrl": ps.get("webUrl") or "",
+        "psConfigured": bool(ps.get("configured")),
         "scanPdf": scan_pdf_settings(),
     }
 
@@ -438,11 +464,13 @@ def _wecom_intent_block(raw: dict) -> dict:
         model = TYPESAFE_INTENT_MODEL
     key = _usable_secret(w.get("apiKey") or w.get("api_key"))
     timeout = max(15, min(_as_int(w.get("timeoutSec"), 60) or 60, 180))
+    proxy = normalize_httpx_proxy(w.get("proxy"))
     return {
         "baseUrl": base,
         "apiKey": key,
         "model": model,
         "timeoutSec": timeout,
+        "proxy": proxy or "",
         "configured": bool(key and model),
         "engine": "typesafe",
     }
@@ -461,6 +489,7 @@ def resolve_intent_llm() -> dict:
         "apiKey": key,
         "model": str(intent.get("model") or TYPESAFE_INTENT_MODEL),
         "timeoutSec": max(15, min(_as_int(intent.get("timeoutSec"), 60) or 60, 180)),
+        "proxy": normalize_httpx_proxy(intent.get("proxy")) or httpx_proxy(),
         "label": "意图分析",
         "engine": "typesafe",
     }
@@ -479,6 +508,26 @@ def resolve_watch_llm() -> dict:
     prof["temperature"] = LLM_TEMPERATURE
     prof["timeoutSec"] = max(15, min(_as_int(watch.get("timeoutSec"), 60) or 60, 180))
     return prof
+
+
+def _ps_block(c: dict) -> dict:
+    """p 图工单外部 API（护照/学历/工作证明等无法改正文的附件，确认后上传）。"""
+    from .ps_tickets import DEFAULT_BASE, normalize_base
+    raw = c.get("ps") if isinstance(c.get("ps"), dict) else {}
+    base = str(raw.get("baseUrl") or "").strip()
+    web = str(raw.get("webUrl") or raw.get("web") or "").strip().rstrip("/")
+    if FILL_MARK in base:
+        base = ""
+    if FILL_MARK in web:
+        web = ""
+    base = normalize_base(base) or DEFAULT_BASE
+    key = _usable_secret(raw.get("apiKey") or raw.get("api_key"))
+    return {
+        "baseUrl": base,
+        "apiKey": key,
+        "webUrl": web,
+        "configured": bool(base and key),
+    }
 
 
 def _portal_block(c: dict) -> dict:
@@ -980,6 +1029,22 @@ def _merge_gemini(raw: dict, gemini: dict):
     raw["models"] = models
 
 
+def _merge_ps(raw: dict, ps: dict):
+    """p 图工单 API。密钥留空不改。"""
+    blob = raw.get("ps") if isinstance(raw.get("ps"), dict) else {}
+    if ps.get("baseUrl") is not None:
+        base = str(ps.get("baseUrl") or "").strip().rstrip("/")
+        if base:
+            blob["baseUrl"] = base
+    key = _usable_secret(ps.get("apiKey")) if "apiKey" in ps else ""
+    if key:
+        blob["apiKey"] = key
+    if "webUrl" in ps:
+        blob["webUrl"] = str(ps.get("webUrl") or "").strip().rstrip("/")
+    if blob:
+        raw["ps"] = blob
+
+
 def _merge_papers(raw: dict, papers: dict):
     """论文导出 API（papers 块）。留空字段保持当前值。"""
     blob = raw.get("papers") if isinstance(raw.get("papers"), dict) else {}
@@ -1157,6 +1222,8 @@ def _merge_wecom_intent(blob: dict, intent: dict):
         cur["model"] = str(intent.get("model") or TYPESAFE_INTENT_MODEL).strip() or TYPESAFE_INTENT_MODEL
     if intent.get("timeoutSec") not in (None, ""):
         cur["timeoutSec"] = max(15, min(_as_int(intent.get("timeoutSec"), 60) or 60, 180))
+    if "proxy" in intent:
+        cur["proxy"] = str(intent.get("proxy") or "").strip()
     key = _usable_secret(intent.get("apiKey")) if "apiKey" in intent else ""
     if key:
         cur["apiKey"] = key
@@ -1201,6 +1268,8 @@ def _merge_project_proof(raw: dict, incoming: dict):
         cb["maxTurns"] = max(1, min(_as_int(inc_cb.get("maxTurns"), 10), 30))
     if "model" in inc_cb:
         cb["model"] = str(inc_cb.get("model") or "").strip()
+    if "permissionMode" in inc_cb:
+        cb["permissionMode"] = str(inc_cb.get("permissionMode") or "").strip() or "bypassPermissions"
 
     base = str(inc_gen.get("baseUrl") or "").strip().rstrip("/")
     if base and FILL_MARK not in base:
@@ -1228,8 +1297,100 @@ def _merge_project_proof(raw: dict, incoming: dict):
     raw["projectProof"] = blob
 
 
+def _merge_mysql(raw: dict, incoming: dict):
+    """MySQL 连接。密码留空不改。"""
+    blob = raw.get("mysql") if isinstance(raw.get("mysql"), dict) else {}
+    host = str(incoming.get("host") or "").strip()
+    if host and FILL_MARK not in host:
+        blob["host"] = host
+    if incoming.get("port") not in (None, ""):
+        blob["port"] = max(1, min(_as_int(incoming.get("port"), 3306), 65535))
+    user = str(incoming.get("user") or incoming.get("username") or "").strip()
+    if user and FILL_MARK not in user:
+        blob["user"] = user
+    key = _usable_secret(incoming.get("password")) if "password" in incoming else ""
+    if key:
+        blob["password"] = key
+    db = str(incoming.get("database") or "").strip()
+    if db and FILL_MARK not in db:
+        blob["database"] = db
+    wdb = str(incoming.get("wecomDatabase") or "").strip()
+    if wdb and FILL_MARK not in wdb:
+        blob["wecomDatabase"] = wdb
+    if blob:
+        raw["mysql"] = blob
+
+
+def _merge_portal(raw: dict, incoming: dict):
+    blob = raw.get("portal") if isinstance(raw.get("portal"), dict) else {}
+    if "sdkUrl" in incoming:
+        sdk = str(incoming.get("sdkUrl") or incoming.get("sdk") or "").strip()
+        blob["sdkUrl"] = "" if FILL_MARK in sdk else sdk
+    if "portalId" in incoming:
+        pid = str(incoming.get("portalId") or incoming.get("id") or "").strip()
+        blob["portalId"] = "" if FILL_MARK in pid else pid
+    raw["portal"] = blob
+
+
+def _merge_scan_pdf(raw: dict, incoming: dict):
+    blob = raw.get("scanPdf") if isinstance(raw.get("scanPdf"), dict) else {}
+    hybrid = blob.get("hybrid") if isinstance(blob.get("hybrid"), dict) else {}
+    conv = str(incoming.get("converter") or "").strip().lower()
+    if conv in ("gemini", "docreconstruct", "hybrid"):
+        blob["converter"] = conv
+    mode = str(incoming.get("outputMode") or "").strip().lower()
+    if mode in ("convert", "template"):
+        blob["outputMode"] = mode
+    hy = incoming.get("hybrid") if isinstance(incoming.get("hybrid"), dict) else {}
+    if not hy:
+        hy = incoming
+    if hy.get("pageMinChars") not in (None, ""):
+        hybrid["pageMinChars"] = max(20, _as_int(hy.get("pageMinChars"), 80))
+    if hy.get("qaMinScore") not in (None, ""):
+        try:
+            hybrid["qaMinScore"] = max(0.0, min(float(hy.get("qaMinScore")), 1.0))
+        except (TypeError, ValueError):
+            pass
+    if hy.get("geminiMaxPages") not in (None, ""):
+        hybrid["geminiMaxPages"] = max(1, min(_as_int(hy.get("geminiMaxPages"), 12), 200))
+    if hy.get("timeoutSec") not in (None, ""):
+        hybrid["timeoutSec"] = max(120, min(_as_int(hy.get("timeoutSec"), 900), 3600))
+    if "languages" in hy:
+        lang = str(hy.get("languages") or "").strip()
+        if lang:
+            hybrid["languages"] = lang
+    if "tesseractCmd" in hy:
+        hybrid["tesseractCmd"] = str(hy.get("tesseractCmd") or "").strip()
+    if "tessdataPrefix" in hy:
+        hybrid["tessdataPrefix"] = str(hy.get("tessdataPrefix") or "").strip()
+    if "python" in hy:
+        hybrid["python"] = str(hy.get("python") or "").strip()
+    if "keepIntermediates" in hy or "keepIntermediates" in incoming:
+        hybrid["keepIntermediates"] = _as_bool(hy.get("keepIntermediates", incoming.get("keepIntermediates")), True)
+    if "criticalKeywords" in hy or "criticalKeywords" in incoming:
+        kraw = hy.get("criticalKeywords") if "criticalKeywords" in hy else incoming.get("criticalKeywords")
+        if isinstance(kraw, str):
+            kraw = [x.strip() for x in re.split(r"[\n,;]+", kraw) if x.strip()]
+        if isinstance(kraw, list):
+            words = [str(x).strip() for x in kraw if str(x).strip()]
+            if words:
+                hybrid["criticalKeywords"] = words
+    blob["hybrid"] = hybrid
+    raw["scanPdf"] = blob
+
+
+def _merge_client_inbox(raw: dict, incoming):
+    if isinstance(incoming, dict):
+        path = str(incoming.get("path") or incoming.get("clientInbox") or "").strip()
+    else:
+        path = str(incoming or "").strip()
+    if FILL_MARK in path:
+        path = ""
+    raw["clientInbox"] = path
+
+
 def save_config(payload: dict, save_as_default: bool = False) -> dict:
-    """合并当前正在编辑的模型 / 人才库配置，并可改默认采用模型。不改数据库配置。"""
+    """合并模型、外部 API、数据库、告警等全部后台可配项。密钥留空不改。"""
     if not isinstance(payload, dict):
         raise ValueError("配置必须是对象")
     raw, err = _read_config_file()
@@ -1252,6 +1413,9 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
     papers = payload.get("papers") if isinstance(payload.get("papers"), dict) else None
     if papers:
         _merge_papers(raw, papers)
+    ps = payload.get("ps") if isinstance(payload.get("ps"), dict) else None
+    if ps:
+        _merge_ps(raw, ps)
     proof = payload.get("projectProof") if isinstance(payload.get("projectProof"), dict) else None
     if proof:
         _merge_project_proof(raw, proof)
@@ -1261,6 +1425,17 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
     alert = payload.get("alert") if isinstance(payload.get("alert"), dict) else None
     if alert is not None:
         _merge_alert(raw, alert)
+    mysql = payload.get("mysql") if isinstance(payload.get("mysql"), dict) else None
+    if mysql:
+        _merge_mysql(raw, mysql)
+    portal = payload.get("portal") if isinstance(payload.get("portal"), dict) else None
+    if portal:
+        _merge_portal(raw, portal)
+    scan = payload.get("scanPdf") if isinstance(payload.get("scanPdf"), dict) else None
+    if scan:
+        _merge_scan_pdf(raw, scan)
+    if "clientInbox" in payload:
+        _merge_client_inbox(raw, payload.get("clientInbox"))
     classify = str(payload.get("classifyModel") or payload.get("model") or "").strip()
     if classify:
         raw["model"] = classify
@@ -1272,7 +1447,7 @@ def save_config(payload: dict, save_as_default: bool = False) -> dict:
 
 
 # 恢复默认只回滚 LLM 接入参数；数据库 / 人才库 / 论文 / 收件箱等运行时配置保留当前值
-_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "clientInbox", "projectProof", "portal", "wecomChat", "alert")
+_RESTORE_PRESERVE_KEYS = ("mysql", "pool", "papers", "ps", "clientInbox", "projectProof", "portal", "wecomChat", "alert", "scanPdf")
 
 
 def restore_default_config() -> dict:
@@ -1295,7 +1470,7 @@ def restore_default_config() -> dict:
 
 
 def editor_config() -> dict:
-    """前端编辑当前选中模型：含该模型接入参数；不含数据库配置。"""
+    """后台「模型配置」编辑器：全部运行时配置；密钥只回显是否已配置。"""
     ensure_default_config()
     cfg = load_config()
     pair = compare_model_profiles()
@@ -1367,11 +1542,19 @@ def editor_config() -> dict:
             "authMode": cfg.get("papersAuthMode") or "",
             "configured": bool(cfg.get("papersConfigured")),
         },
+        "ps": {
+            "baseUrl": (cfg.get("ps") or {}).get("baseUrl") or cfg.get("psBaseUrl") or "",
+            "hasKey": bool(cfg.get("psApiKey")),
+            "webUrl": (cfg.get("ps") or {}).get("webUrl") or cfg.get("psWebUrl") or "",
+            "configured": bool(cfg.get("psConfigured")),
+        },
         "projectProof": _pack_project_proof(cfg.get("projectProof") or {}),
         "wecomChat": {
             "baseUrl": cfg.get("wecomChatBaseUrl") or "",
             "hasKey": bool(cfg.get("wecomChatApiKey")),
             "groups": list(cfg.get("wecomChatGroups") or []),
+            "readMode": str((cfg.get("wecomChat") or {}).get("readMode") or "auto"),
+            "dataRoot": str((cfg.get("wecomChat") or {}).get("dataRoot") or ""),
             "configured": bool(cfg.get("wecomChatConfigured")),
             "watch": _pack_watch_for_editor(((cfg.get("wecomChat") or {}).get("watch")) or {}, gemini),
             "intent": _pack_wecom_intent(((cfg.get("wecomChat") or {}).get("intent")) or {}),
@@ -1386,6 +1569,22 @@ def editor_config() -> dict:
             "dueBroadcast": dict((cfg.get("alert") or {}).get("dueBroadcast") or {}, webhookReady=bool((cfg.get("alert") or {}).get("configured"))),
             "issueWatch": dict((cfg.get("alert") or {}).get("issueWatch") or {}),
         },
+        "mysql": {
+            "host": cfg.get("mysqlHost") or "127.0.0.1",
+            "port": int(cfg.get("mysqlPort") or 3306),
+            "user": cfg.get("mysqlUser") or "root",
+            "hasPassword": bool(cfg.get("mysqlPassword")),
+            "database": cfg.get("mysqlDatabase") or "shenbaoshu",
+            "wecomDatabase": cfg.get("mysqlWecomDatabase") or "shenbaoshu_wecom",
+            "configured": bool(cfg.get("mysqlConfigured")),
+        },
+        "portal": {
+            "sdkUrl": str((cfg.get("portal") or {}).get("sdkUrl") or ""),
+            "portalId": str((cfg.get("portal") or {}).get("portalId") or ""),
+            "configured": bool((cfg.get("portal") or {}).get("configured")),
+        },
+        "scanPdf": dict(cfg.get("scanPdf") or {}),
+        "clientInbox": cfg.get("clientInbox") or "",
         "classifyModel": (cfg.get("model") if model_family(cfg.get("model") or "") == "gemini" else "") or gemini["id"],
         "hasDefault": DEFAULT_CONFIG_PATH.exists(),
     }
@@ -1403,6 +1602,7 @@ def _pack_project_proof(pp: dict) -> dict:
             "timeoutSec": int(cb.get("timeoutSec") or 180),
             "maxTurns": int(cb.get("maxTurns") or 10),
             "model": str(cb.get("model") or ""),
+            "permissionMode": str(cb.get("permissionMode") or "bypassPermissions"),
         },
         "generate": {
             "baseUrl": str(gen.get("baseUrl") or ""),
@@ -1422,6 +1622,7 @@ def _pack_wecom_intent(w: dict) -> dict:
         "baseUrl": str(w.get("baseUrl") or TYPESAFE_BASE),
         "model": str(w.get("model") or TYPESAFE_INTENT_MODEL),
         "timeoutSec": int(w.get("timeoutSec") or 60),
+        "proxy": str(w.get("proxy") or ""),
         "hasKey": bool(w.get("apiKey")),
         "configured": bool(w.get("configured") or w.get("apiKey")),
         "engine": "typesafe",

@@ -356,6 +356,8 @@ class BatchStore:
             t = self.runner.create(payload, owner=b.get("owner"))
             self.runner.enqueue(t["id"])
             created.append(t["id"])
+        if not created:
+            raise ValueError("没有可启动的申报书（每本都缺少配对意见）")
         b["status"] = "started"; b["taskIds"] = created; self.persist(b)
         return created
 

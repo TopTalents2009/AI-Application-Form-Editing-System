@@ -1,7 +1,7 @@
 """企业微信聊天记录解析服务客户端（只读 /v1）。"""
 from __future__ import annotations
 import asyncio, json, re, time
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 import httpx
 from .config import load_config, httpx_trust_env
 
@@ -138,7 +138,7 @@ async def health() -> dict:
         data = await _get(PREFIX + "/health", need_key=False)
     except WecomError as e:
         out["error"] = e.message
-        out["hint"] = "请先启动企业微信聊天记录解析（start.ps1，端口 8767），并在管理后台填写 wecomChat.apiKey"
+        out["hint"] = "请先启动本仓库 parser/ 解析服务（start.cmd 会拉起 8767），并在管理后台填写 wecomChat.apiKey"
         return out
     out["service_ok"] = bool(data.get("ok") or data.get("read_api") is not False or data.get("ok") is True)
     if data.get("ok") is False and not data.get("read_api"):
@@ -246,6 +246,8 @@ def _normalize_msg(m: dict) -> dict:
     """
     if not isinstance(m, dict):
         return m
+    from .party import scrub_sender
+    scrub_sender(m)
     text = str(m.get("text") or m.get("snippet") or "")
     fname = str(m.get("attachment_name") or "").strip()
     has_url = _text_has_url_hint(text) if text else False
@@ -312,18 +314,24 @@ _MERGE_CACHE: dict[str, tuple] = {}
 _MERGE_CACHE_MAX = 16
 
 
+def _msg_day(t: object) -> str:
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", str(t or ""))
+    return m.group(1) if m else ""
+
+
 def _msg_fuse_key(m: dict) -> tuple:
     att = str(m.get("attachment_name") or "").strip()
     sender = str(m.get("sender_id") or m.get("sender") or "")
     clock = _clock(m.get("time_text"))
+    day = _msg_day(m.get("time_text"))
     typ = str(m.get("msg_type") or "")
     media = str(m.get("media_url") or "").strip()
     if media:
         return ("m", media[:160])
     if att:
-        return ("f", att.lower(), sender)
+        return ("f", att.lower(), sender, day)
     text = _WS_COLLAPSE.sub(" ", str(m.get("text") or "")).strip()[:120]
-    return ("t", clock, sender, typ, text)
+    return ("t", day, clock, sender, typ, text)
 
 
 def _merge_cache_stamp(session_id: str, start_date: str = "", end_date: str = "", source_id: str = "") -> str:
@@ -363,6 +371,7 @@ def _sync_stamp(value: str) -> str:
 
 
 def merge_groups(pairs: list) -> list:
+    from .wecom_local import better_session_name
     buckets: dict[str, dict] = {}
     for sess, src in pairs:
         if not isinstance(sess, dict) or not isinstance(src, dict):
@@ -383,8 +392,7 @@ def merge_groups(pairs: list) -> list:
             }
             buckets[uid] = b
         name = str(sess.get("display_name") or "").strip()
-        if name and (not b["display_name"] or len(name) > len(b["display_name"])):
-            b["display_name"] = name
+        b["display_name"] = better_session_name(b.get("display_name") or "", name)
         b["is_group"] = bool(b["is_group"] or is_group(sess))
         try:
             n = int(sess.get("msg_count") or 0)
@@ -527,13 +535,26 @@ async def _messages_of(source_id: str, session_id: str, *, start_date: str = "",
             return [_normalize_msg(dict(x)) for x in rows if isinstance(x, dict)]
     except WecomError:
         pass
-    data = await _get(PREFIX + "/sources/" + _enc(sid) + "/messages/" + _enc(cid), {
-        "offset": 0,
-        "limit": min(int(params["limit"]), 200),
-        **{k: params[k] for k in ("start_date", "end_date") if k in params},
-    })
-    items = data.get("data") if isinstance(data.get("data"), list) else []
-    return [_normalize_msg(dict(x)) for x in items if isinstance(x, dict)]
+    want = int(params["limit"])
+    page = min(200, max(1, want))
+    items = []
+    offset = 0
+    extra = {k: params[k] for k in ("start_date", "end_date") if k in params}
+    for _ in range(40):
+        data = await _get(PREFIX + "/sources/" + _enc(sid) + "/messages/" + _enc(cid), {
+            "offset": offset,
+            "limit": min(page, want - len(items)),
+            **extra,
+        })
+        chunk = data.get("data") if isinstance(data.get("data"), list) else []
+        chunk = [x for x in chunk if isinstance(x, dict)]
+        if not chunk:
+            break
+        items.extend(chunk)
+        if len(chunk) < page or len(items) >= want:
+            break
+        offset += len(chunk)
+    return [_normalize_msg(dict(x)) for x in items[:want]]
 
 
 async def list_merged_groups(
@@ -582,6 +603,12 @@ async def list_merged_groups(
         cap = 1000
     if limit:
         items = items[:cap]
+    from . import wecom_local as L
+    if L.available():
+        try:
+            items = await asyncio.to_thread(L.fill_session_names, items)
+        except Exception:
+            pass
     return {"items": items, "count": len(items), "source_id": want or "*", "kind": kind}
 
 
@@ -655,6 +682,7 @@ async def list_merged_messages(
     around_time: str = "",
 ) -> dict:
     from . import wecom_local as L
+    from .wecom_local import better_session_name
     cid = str(session_id or "").strip()
     if not cid:
         raise WecomError("BAD_REQUEST", "缺少 session_id")
@@ -736,12 +764,10 @@ async def list_merged_messages(
         })
         if n:
             nonempty.append((msgs, src))
-            if not display:
-                for m in msgs:
-                    name = str((m or {}).get("session_name") or (m or {}).get("display_name") or "").strip()
-                    if name:
-                        display = name
-                        break
+            for m in msgs:
+                name = str((m or {}).get("session_name") or (m or {}).get("display_name") or "").strip()
+                if name:
+                    display = better_session_name(display, name)
     merged = merge_messages(nonempty, cid)
     have = [r for r in replicas if int(r.get("msg_count") or 0) > 0]
     if full:
@@ -1242,9 +1268,37 @@ async def stream_attachment(source_id: str, message_id: int, session_id: str = "
     }
 
 
+_MEDIA_HOSTS = ("qpic.cn", "pic.weixin.qq.com")
+
+
+def media_url_allowed(url: str) -> bool:
+    """会话预览只转发企业微信图片 CDN，避免把任意 URL 交给解析服务去拉。"""
+    u = str(url or "").strip()
+    if not u.lower().startswith(("https://", "http://")):
+        return False
+    try:
+        p = urlparse(u)
+    except Exception:
+        return False
+    if p.scheme not in ("http", "https"):
+        return False
+    if p.username or p.password:
+        return False
+    host = (p.hostname or "").lower().rstrip(".")
+    if not host or host.startswith(".") or ":" in host:
+        return False
+    parts = host.split(".")
+    if len(parts) == 4 and all(x.isdigit() for x in parts):
+        return False
+    for allow in _MEDIA_HOSTS:
+        if host == allow or host.endswith("." + allow):
+            return True
+    return False
+
+
 async def proxy_media(url: str) -> dict:
     u = str(url or "").strip()
-    if not u.lower().startswith("http"):
+    if not media_url_allowed(u):
         raise WecomError("BAD_REQUEST", "无效图片地址")
     target = _root() + "/api/media/proxy"
     try:

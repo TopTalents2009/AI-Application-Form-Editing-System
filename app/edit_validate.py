@@ -880,6 +880,146 @@ def sanitize_paper_author_edits(edits: list) -> tuple[list, list[str]]:
     return out, issues
 
 
+_COVER_NAME = re.compile(
+    r"有效证件姓名|申报人姓名|Name of (?:Applicant|ID)|中文[（(]音译[）)]名"
+    r"|申\s*报\s*人\s{1,}[A-Za-z\u4e00-\u9fff]",
+    re.I,
+)
+_NAME_CLAUSE = re.compile(r"(更正|核准|修改|改为).{0,12}(申报人姓名|有效证件姓名|封面申报人|姓名)")
+_BIRTH_CLAUSE = re.compile(r"(更正|核准|修改|改为).{0,12}出生日期|出生日期.{0,12}(改为|更正|核准)")
+_BIRTH_LABEL = re.compile(r"出生日期|Date of Birth", re.I)
+_DATE_ONLY = re.compile(r"^(?:19|20)\d{2}[-./年]\s*\d{1,2}[-./月]\s*\d{1,2}日?$")
+_YEAR_HEADER_OP = re.compile(
+    r"模板修改意见|出生日期\s*[:：]\s*(?:19|20)\d{2}|申报人\s*[:：]\s*[A-Za-z\u4e00-\u9fff]"
+)
+
+
+def _compact_id(s: str) -> str:
+    return re.sub(r"\s+", "", str(s or ""))
+
+
+def form_identity_values(app_text: str) -> tuple[set[str], set[str]]:
+    """抽出申报书封面/基本信息里的姓名与出生日期，供拦截身份栏编辑。"""
+    names: set[str] = set()
+    dates: set[str] = set()
+    raw = str(app_text or "")
+    if not raw:
+        return names, dates
+    for pat in (
+        r"有效证件姓名\s*[:：\n]\s*([A-Za-z\u4e00-\u9fff·•][A-Za-z\u4e00-\u9fff·•\s.'-]{1,58})",
+        r"申报人姓名\s*[:：]\s*([^\n]{2,60})",
+        r"申\s*报\s*人\s{2,}([A-Za-z\u4e00-\u9fff·•][A-Za-z\u4e00-\u9fff·•\s.'-]{1,58})",
+        r"Name of (?:Applicant|ID)\s*[:：\n]\s*([A-Za-z][A-Za-z\s.'-]{1,58})",
+    ):
+        for m in re.finditer(pat, raw, re.I):
+            v = _compact_id(m.group(1).split("\n")[0])
+            if 4 <= len(v) <= 48:
+                names.add(v)
+    head = raw[:2800]
+    win = ""
+    m = re.search(r"(?:出生日期|Date of Birth)(.{0,260})", head, re.I | re.S)
+    if m:
+        win += m.group(1)
+    m2 = re.search(r"性别(.{0,220})国籍", head, re.S)
+    if m2:
+        win += m2.group(1)
+    for m in re.finditer(r"(?:19|20)\d{2}[-./年]\s*\d{1,2}[-./月]\s*\d{1,2}日?", win or ""):
+        dates.add(_compact_id(m.group(0)))
+    return names, dates
+
+
+def is_identity_field_edit(edit: dict, app_text: str = "") -> bool:
+    """申报人姓名、有效证件姓名、出生日期属于身份栏，不能按意见改。"""
+    if not isinstance(edit, dict):
+        return False
+    find = str(edit.get("find") or "")
+    replace = str(edit.get("replace") or "")
+    clause = str(edit.get("clause") or "")
+    opinion = str(edit.get("opinion") or edit.get("clause") or "")
+    if _compact_id(find) == _compact_id(replace):
+        return False
+    if _COVER_NAME.search(find) or _NAME_CLAUSE.search(clause):
+        return True
+    if _BIRTH_CLAUSE.search(clause):
+        return True
+    if _BIRTH_LABEL.search(find) and not re.search(r"出生年月在.{0,16}以前", opinion):
+        return True
+    find_d, replace_d = _compact_id(find), _compact_id(replace)
+    if _DATE_ONLY.match(find_d) and _DATE_ONLY.match(replace_d) and (
+        _BIRTH_CLAUSE.search(clause) or _BIRTH_LABEL.search(clause + opinion)
+    ):
+        return True
+    if _YEAR_HEADER_OP.search(opinion) and not re.search(r"修改前|修改后", opinion):
+        if _COVER_NAME.search(find + clause) or _BIRTH_LABEL.search(clause + opinion):
+            return True
+        if _DATE_ONLY.match(find_d) and _DATE_ONLY.match(replace_d):
+            return True
+    names, dates = form_identity_values(app_text)
+    if names and find_d in names and len(find_d) >= 6:
+        return True
+    if dates and _DATE_ONLY.match(find_d) and find_d in dates:
+        return True
+    return False
+
+
+def retarget_pre_return_title_edits(edits: list, app_text: str = "") -> tuple[list, list[str]]:
+    """意见改回国前职务时，禁止锚到「相当于国内职务情况」。"""
+    from .manual_fill import (
+        _EQ_DOMESTIC, _PRE_RETURN_TITLE, _pre_return_title_kind, locate_pre_return_title,
+    )
+
+    issues: list[str] = []
+    out = []
+    for i, e in enumerate(edits or [], 1):
+        if not isinstance(e, dict):
+            continue
+        ne = dict(e)
+        blob = str(ne.get("opinion") or "") + str(ne.get("clause") or "")
+        find = str(ne.get("find") or "")
+        if not _PRE_RETURN_TITLE.search(blob) or _EQ_DOMESTIC.search(blob):
+            out.append(ne)
+            continue
+        if not _EQ_DOMESTIC.search(find) and "相当于国内" not in find:
+            out.append(ne)
+            continue
+        kind = _pre_return_title_kind(blob)
+        hit, _ = locate_pre_return_title(app_text, kind)
+        if not hit:
+            issues.append("【回国前职务定位】第 %d 条已剔除：锚到了「相当于国内职务」，无法改写回国前职务栏" % i)
+            continue
+        old_part = find.split("相当于国内")[0].strip()
+        old_lines = [ln.strip() for ln in old_part.splitlines() if ln.strip()]
+        old = old_lines[-1] if old_lines else ""
+        new_part = str(ne.get("replace") or "").split("相当于国内")[0].strip()
+        new_lines = [ln.strip() for ln in new_part.splitlines() if ln.strip()]
+        new = new_lines[-1] if new_lines else str(ne.get("replace") or "")
+        if old and old in hit and new:
+            ne["find"] = hit
+            ne["replace"] = hit.replace(old, new, 1)
+        else:
+            ne["find"] = hit
+            ne["replace"] = hit if not new else (hit.rsplit("\n", 1)[0] + "\n" + new if "\n" in hit else new)
+        issues.append("【回国前职务定位】第 %d 条已改锚到「回国(来华)前职务」，不再改相当于国内职务" % i)
+        out.append(ne)
+    return out, issues
+
+
+def sanitize_identity_edits(edits: list, app_text: str = "") -> tuple[list, list[str]]:
+    """剔除改申报人姓名 / 出生日期的编辑。"""
+    issues: list[str] = []
+    out = []
+    for i, e in enumerate(edits or [], 1):
+        if not isinstance(e, dict):
+            continue
+        if is_identity_field_edit(e, app_text=app_text):
+            issues.append(
+                "【身份栏不可改】第 %d 条已剔除：申报人姓名与出生日期不能按意见或人才库改写" % i
+            )
+            continue
+        out.append(e)
+    return out, issues
+
+
 def sanitize_declaring_company_edits(edits: list, app_text: str, extra_names: list | None = None) -> tuple[list, list[str]]:
     """正文里的申报企业全称改为「申报企业」；去掉虚构合作与「过往中试发生在拟入职企业」。"""
     names = declaring_company_names(app_text, extra_names)

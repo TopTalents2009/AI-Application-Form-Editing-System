@@ -19,8 +19,10 @@ def rule_opinion_ids(messages: list, kind_of=None) -> list:
         if kind in ("opinion", "text"):
             hits.append(m)
             continue
+        if kind in ("app", "ignore"):
+            continue
         text = str(m.get("text") or m.get("snippet") or "").strip()
-        if text and len(text) >= 8 and not _CHATTER.match(text) and is_opinion_text(text):
+        if text and is_opinion_text(text):
             hits.append(m)
     return hits
 

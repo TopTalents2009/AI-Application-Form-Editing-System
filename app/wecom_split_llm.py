@@ -5,6 +5,7 @@ from .config import LLM_TIMEOUT_CLASSIFY, resolve_gemini
 from .llm import LlmError, chat, extract_json_lenient
 from .pdf_app import ALLOWED_APP_EXT, ext_of
 from .opinion_extract import ALLOWED_OPINION_EXT
+from .party import sender_of
 from .wecom_cases import (
     _APP_NAME,
     _CHATTER,
@@ -26,7 +27,7 @@ from .wecom_cases import (
 _PROMPT = """你在拆企业微信群聊天记录，找出「已填写的申报书」和对应的「修改意见」。
 
 申报书：文件名含申报书/申请表，或几乎只有人名的 PDF/Word。下面这些不是申报书：资料清单、填表须知、聘用意向书、意向协议、合同/协议、模板/模版、唯一申报承诺、护照、学历、简历。
-修改意见：审核/辅导意见文档，或聊天里具体要求改哪些字段、补哪些材料的文字。「收到」「好的」不是意见。
+修改意见：审核/辅导/反馈意见文档，或聊天里具体要求改哪些字段、补哪些材料的文字。「收到」「好的」「请查收申报书」「护照扫描件」「会议纪要」「智能表格」不是意见。
 把意见配到对应申报书（同一人、相近时间、同一份材料）。
 
 输入是 messages 数组。id 必须原样引用，禁止编造。
@@ -75,7 +76,7 @@ def _catalog(messages: list, *, max_files: int = 80, max_texts: int = 80, kind_o
             "filename": fn,
             "text": text[:280],
             "time": str(m.get("time_text") or m.get("time") or ""),
-            "sender": str(m.get("sender") or ""),
+            "sender": sender_of(m),
             "rule": _resolved_kind(m, kind_of),
         })
     return out

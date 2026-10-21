@@ -1,5 +1,6 @@
 """FastAPI 入口：路由挂载、静态托管、恢复中断任务"""
 from fastapi import FastAPI, Request
+from urllib.parse import quote
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from .config import STATIC_DIR, DATA_DIR
@@ -15,6 +16,7 @@ from .routes import agent_review as agent_review_routes
 from .routes import openapi as openapi_routes
 from .routes import api_apply as api_apply_routes
 from .routes import talent_files as talent_files_routes
+from .routes import chatinsight as chatinsight_routes
 
 runner = TaskStore()
 batches = BatchStore(runner=runner)
@@ -26,6 +28,9 @@ def _is_app_shell(p: str) -> bool:
     p = str(p or "").rstrip("/") or "/"
     if p in ("/", "/admin"):
         return True
+    if p.startswith("/admin/"):
+        slug = p[7:]
+        return slug in admin_routes.ADMIN_PAGES and "/" not in slug
     if p.startswith("/t/"):
         tid = p[3:]
         return bool(tid) and "/" not in tid
@@ -36,7 +41,7 @@ class NoCacheStatic(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
         p = request.url.path
-        if p == "/" or p.startswith("/public") or p.startswith("/t/"):
+        if p == "/" or p.startswith("/public") or p.startswith("/t/") or p.startswith("/admin"):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
@@ -75,11 +80,17 @@ class AuthGate(BaseHTTPMiddleware):
             return JSONResponse({"detail": "数据库不可用：" + str(e)[:160]}, status_code=503)
         if request.state.user or _is_public(p):
             return await call_next(request)
-        if p.startswith("/api"):
+        if p.startswith("/api") or p.startswith("/parser-api"):
             return JSONResponse({"detail": "未登录"}, status_code=401)
         # iframe 里 cookie 常被浏览器丢掉；主页面仍下发 HTML，由前端带 Bearer 续上会话
         if request.method in ("GET", "HEAD") and _is_app_shell(p):
             return await call_next(request)
+        if request.method in ("GET", "HEAD") and p.startswith("/chatinsight"):
+            from .routes.chatinsight import looks_like_asset
+            nxt = "/chatinsight/"
+            if not looks_like_asset(p) and p.rstrip("/") != "/chatinsight":
+                nxt = p if p.startswith("/") else "/" + p
+            return RedirectResponse("/login?next=" + quote(nxt, safe="/"), status_code=303)
         return RedirectResponse("/login", status_code=303)
 
 app.add_middleware(AuthGate)
@@ -97,6 +108,7 @@ app.include_router(agent_review_routes.router)
 app.include_router(openapi_routes.create_router(runner))
 app.include_router(api_apply_routes.router)
 app.include_router(talent_files_routes.router)
+app.include_router(chatinsight_routes.router)
 
 @app.get("/api/config")
 def api_config(request: Request):
@@ -164,6 +176,11 @@ async def api_pool_health():
 @app.get("/api/papers/health")
 async def api_papers_health():
     from .papers import health
+    return await health()
+
+@app.get("/api/ps/health")
+async def api_ps_health():
+    from .ps_tickets import health
     return await health()
 
 @app.post("/api/project-proof/probe")
@@ -238,14 +255,34 @@ def _startup():
     except Exception as e:
         print("[auth] MySQL 初始化失败，登录功能不可用：" + str(e)[:200], flush=True)
     try:
+        from .wecom_talent_db import init_db as init_wecom_talent_db
+        winfo = init_wecom_talent_db()
+        note = "入库库 " + str(winfo.get("database") or "") + " 已就绪"
+        if winfo.get("migrated"):
+            note += "，迁入旧记录 " + str(winfo.get("migrated")) + " 条"
+        print("[wecom-talent] " + note, flush=True)
+    except Exception as e:
+        print("[wecom-talent] 本地入库库初始化失败：" + str(e)[:200], flush=True)
+    try:
         from .wecom_watch import start_watch
         start_watch(asyncio.get_running_loop())
         print("[wecom-watch] 值班已启动：聊天记录同步后增量扫描", flush=True)
     except Exception as e:
         print("[wecom-watch] 启动失败：" + str(e)[:200], flush=True)
+        try:
+            from . import alert as AL
+            AL.ops_fault(kind="wecom_watch", title="企微值班启动失败", lines=[str(e)[:200]])
+        except Exception:
+            pass
     try:
         from .due_broadcast import start_due_broadcast
         start_due_broadcast(asyncio.get_running_loop())
         print("[due-broadcast] 交付播报调度已启动", flush=True)
     except Exception as e:
         print("[due-broadcast] 启动失败：" + str(e)[:200], flush=True)
+    try:
+        loop = asyncio.get_running_loop()
+        from .parser_proc import ensure_parser
+        loop.create_task(asyncio.to_thread(ensure_parser, wait_sec=8))
+    except Exception as e:
+        print("[parser] 未能安排启动 8767：" + str(e)[:200], flush=True)

@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """未读反馈修复的回归：批注锚点、编号切分、企业名脱敏、整列覆盖。"""
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from app.inline_opinions import extract_comment_items, is_column_wide_opinion, count_project_rows
 from app.runner import split_source_units, _split_inline_numbered
@@ -8,10 +12,13 @@ from app.matcher import split_opinion_blocks, keep_blocks_for_app
 from app.edit_validate import (
     is_question_only_opinion, sanitize_declaring_company_edits, _employer_support_span,
     sanitize_paper_author_edits, sanitize_editorial_board_edits,
+    is_identity_field_edit, sanitize_identity_edits, retarget_pre_return_title_edits,
+)
+from app.opinion_sanitize import (
+    is_year_template_meta, is_identity_meta_text, strip_year_template_header,
+    sanitize_opinion_blocks,
 )
 from app.hj_form import remap_qm_section
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_word_point_comment_anchors():
@@ -283,6 +290,156 @@ def test_project_paper_opinion_split():
     print("project+paper opinion split ok", labels)
 
 
+def test_year_template_header_not_identity_edit():
+    header = (
+        "【26年 QM → 27年模板修改意见】\n"
+        "申报人：PHAM BAO TRUNG\n"
+        "申报 ID：42413\n"
+        "库内 id：126"
+    )
+    birth = (
+        "出生日期：1986-02-13\n"
+        "模板：QM\n"
+        "来源：26年\n"
+        "请按下列条款修改申报书原文；「修改前」用于定位，「修改后」为写入内容。"
+    )
+    real = "1. 【申报类型】\n   修改前：青年人才\n   修改后：创新人才"
+    proof = "2. 出生年月在1987年1月1日以前的，同步将职位修改为副高级以上职位（与申报书「回国前职务」一致）。"
+    assert is_year_template_meta(header)
+    assert is_year_template_meta(birth)
+    assert is_identity_meta_text("申报人出生日期（1986-02-13）及模板修改指引")
+    assert is_identity_meta_text("更正封面申报人姓名")
+    assert not is_year_template_meta(real)
+    assert not is_year_template_meta(proof)
+    assert not is_identity_meta_text(real)
+    mixed = header + "\n" + real
+    assert "创新人才" in strip_year_template_header(mixed)
+    assert "PHAM BAO TRUNG" not in strip_year_template_header(mixed)
+    blocks, notes = sanitize_opinion_blocks([
+        {"id": "S1", "name": "42413_修改意见.txt", "text": header},
+        {"id": "S2", "name": "42413_修改意见.txt", "text": birth},
+        {"id": "S3", "name": "42413_修改意见.txt", "text": real},
+        {"id": "S4", "name": "42413_修改意见.txt", "text": proof},
+    ])
+    texts = [b["text"] for b in blocks]
+    assert real in texts
+    assert proof in texts
+    assert all("PHAM BAO TRUNG" not in t or "修改前" in t for t in texts)
+    assert any("出生日期" in n and "不改" in n for n in notes)
+    edits = [
+        {
+            "find": "申 报 人    ANGELOPOULOS IOANNIS",
+            "replace": "申 报 人    PHAM BAO TRUNG",
+            "clause": "更正封面申报人姓名",
+            "opinion": header,
+        },
+        {
+            "find": "有效证件姓名\nANGELOPOULOS IOANNIS",
+            "replace": "有效证件姓名\nPHAM BAO TRUNG",
+            "clause": "更正有效证件姓名",
+            "opinion": header,
+        },
+        {
+            "find": "1984.07.30",
+            "replace": "1986-02-13",
+            "clause": "核准出生日期为1986-02-13",
+            "opinion": birth,
+        },
+        {
+            "find": "青年人才",
+            "replace": "创新人才",
+            "clause": "申报类型由青年人才修改为创新人才",
+            "opinion": real,
+        },
+        {
+            "find": "功率芯片应用工程师",
+            "replace": "首席功率芯片应用工程师",
+            "clause": "回国前职务修改为首席功率芯片应用工程师",
+            "opinion": "4. 【回国前职务】\n   修改前：功率芯片应用工程师\n   修改后：首席功率芯片应用工程师",
+        },
+    ]
+    app = (
+        "申 报 人    ANGELOPOULOS IOANNIS\n"
+        "有效证件姓名\nANGELOPOULOS IOANNIS\n性别\n1986-02-13\n越南\n1984.07.30\n国籍地区\n希腊\n"
+    )
+    assert is_identity_field_edit(edits[0], app)
+    assert is_identity_field_edit(edits[1], app)
+    assert is_identity_field_edit(edits[2], app)
+    assert is_identity_field_edit({
+        "find": "ANGELOPOULOS IOANNIS",
+        "replace": "PHAM BAO TRUNG",
+        "clause": "申报人及项目ID基础信息说明",
+        "opinion": header,
+    }, app)
+    assert is_identity_field_edit({
+        "find": "1984.07.30",
+        "replace": "1986-02-13",
+        "clause": "申报人出生日期（1986-02-13）及模板修改指引",
+        "opinion": birth,
+    }, app)
+    assert not is_identity_field_edit(edits[3], app)
+    assert not is_identity_field_edit(edits[4], app)
+    out, issues = sanitize_identity_edits(edits, app)
+    assert len(out) == 2, [e.get("clause") for e in out]
+    assert {e["replace"] for e in out} == {"创新人才", "首席功率芯片应用工程师"}
+    assert any("身份栏不可改" in x for x in issues)
+    raw = (
+        "【26年 QM → 27年模板修改意见】\n"
+        "申报人：KRISTEN NICOLE PARRISH\n"
+        "申报 ID：54578\n"
+        "库内 id：829\n"
+        "出生日期：1986-01-01\n"
+        "模板：QM\n"
+        "来源：26年\n\n"
+        "请按下列条款修改申报书原文；「修改前」用于定位，「修改后」为写入内容。\n\n"
+        "1. 【申报类型】\n"
+        "   修改前：青年人才\n"
+        "   修改后：创新人才\n\n"
+        "2. 【回国前职务中文】\n"
+        "   修改前：功率芯片应用工程师\n"
+        "   修改后：首席功率芯片应用工程师\n"
+    )
+    units = split_source_units(raw)
+    cleaned, _ = sanitize_opinion_blocks([{"id": "S" + str(i), "name": "op.txt", "text": u} for i, u in enumerate(units, 1)])
+    cleaned_txt = "\n".join(b["text"] for b in cleaned)
+    assert "创新人才" in cleaned_txt
+    assert "首席功率芯片应用工程师" in cleaned_txt
+    assert not any(is_year_template_meta(b["text"]) for b in cleaned)
+    print("year-template identity guard ok", len(out), issues)
+
+
+def test_pre_return_title_not_domestic_equiv():
+    from app.manual_fill import locate_anchor, locate_pre_return_title
+
+    app = (
+        "现工作单位\n亚里士多德大学\n"
+        "回国(来华)前职务\nAssociate Professor\n副教授\n"
+        "相当于国内职务情况\n引进职务\n技术总监\n"
+    )
+    zh, hint = locate_anchor(app, "", opinion="2. 【回国前职务中文】\n   修改前：研究员\n   修改后：首席研究员")
+    assert "回国(来华)前职务" in zh, zh
+    assert "相当于国内职务情况" not in zh, zh
+    assert "副教授" in zh, zh
+    en, _ = locate_anchor(app, "", opinion="3. 【回国前职务英文】\n   修改前：Researcher\n   修改后：Chief Researcher")
+    assert "Associate Professor" in en, en
+    assert "相当于国内职务情况" not in en, en
+    hit, _ = locate_pre_return_title(app, "zh")
+    assert hit.startswith("回国(来华)前职务"), hit
+    wrong = [{
+        "find": "副教授\n相当于国内职务情况",
+        "replace": "首席研究员\n相当于国内职务情况",
+        "clause": "回国前职务中文修改为首席研究员",
+        "opinion": "2. 【回国前职务中文】\n   修改前：研究员\n   修改后：首席研究员",
+    }]
+    fixed, issues = retarget_pre_return_title_edits(wrong, app)
+    assert len(fixed) == 1
+    assert "相当于国内职务情况" not in fixed[0]["find"], fixed[0]
+    assert "回国(来华)前职务" in fixed[0]["find"]
+    assert "首席研究员" in fixed[0]["replace"]
+    assert any("回国前职务定位" in x for x in issues)
+    print("pre-return title locate ok", fixed[0]["find"].replace("\n", "|"))
+
+
 if __name__ == "__main__":
     test_word_point_comment_anchors()
     test_split_wecom_screenshot_ocr()
@@ -295,4 +452,6 @@ if __name__ == "__main__":
     test_editorial_board_is_stable()
     test_split_multi_person_summary_by_id()
     test_project_paper_opinion_split()
+    test_year_template_header_not_identity_edit()
+    test_pre_return_title_not_domestic_equiv()
     print("ALL OK")

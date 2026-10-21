@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timedelta
 from . import matcher as M
 from .llm import created_key
+from .party import sender_of
 from .pdf_app import is_backup_output, is_edited_output
 from .pool import _norm_name, talent_attach_id
 
@@ -120,7 +121,7 @@ def extract_keys(body: dict) -> dict:
         "names": names[:8],
         "nums": nums[:6],
         "time": str(body.get("time") or body.get("time_text") or "").strip(),
-        "sender": str(body.get("sender") or "").strip(),
+        "sender": sender_of(body),
         "group": str(body.get("group") or body.get("session_name") or "").strip(),
         "text": text[:400],
     }

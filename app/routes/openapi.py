@@ -364,7 +364,11 @@ def create_router(runner):
         if not edits and not leftovers:
             raise HTTPException(400, "没有可应用的编辑")
         actor = "API:" + str(_key_row(request).get("name") or "")
-        await runner.apply_confirmed(t, edits, leftovers, actor=actor)
+        from ..runner import ApplyBusy
+        try:
+            await runner.apply_confirmed(t, edits, leftovers, actor=actor)
+        except ApplyBusy as e:
+            raise HTTPException(409, str(e))
         out = public_task(t)
         if t["status"] == "failed":
             raise HTTPException(400, str(t.get("error") or "写入失败"))
