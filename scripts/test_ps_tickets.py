@@ -12,6 +12,7 @@ from app.ps_tickets import (
     build_note,
     collect_download_refs,
     compose_note,
+    draft_for_task,
     normalize_base,
     public_ticket,
     slim_ps_note,
@@ -78,6 +79,14 @@ def test_build_note():
         "   - 请按意见更正后另行上传\n"
     )
     assert slim_ps_note(verbose) == "发文时间改为2027年2月-3月"
+    miss = build_note(items=[{
+        "title": "身份证明",
+        "snippet": "未检索到可下载文件",
+        "locations": ["未检索到可下载文件", "需要补充材料"],
+        "downloads": [],
+    }])
+    assert miss == ""
+    assert "未检索到" not in slim_ps_note("未检索到可下载文件\n需要补充材料\n发文时间改为2027年2月-3月")
 
 
 def test_collect_download_refs():
@@ -115,6 +124,22 @@ def test_public_ticket():
     assert public_ticket("x") == {}
 
 
+def test_draft_note_from_real_plan():
+    import json
+    plan_path = ROOT / "tasks" / "1a16120140a-25f044" / "work" / "tmp" / "plan.json"
+    if not plan_path.is_file():
+        return
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    draft = draft_for_task({"id": "1a16120140a-25f044", "app": plan.get("app") or {}}, plan.get("taskList") or [], plan=plan)
+    note = draft.get("note") or ""
+    assert "ALESSANDRO MAGNANI" in note or "YB2396205" in note
+    assert "未检索到可下载" not in note
+    assert "需要补充材料" not in note
+    names = " ".join(str(x.get("filename") or "") for x in (draft.get("files") or []))
+    assert "护照" in names or "身份证或护照" in names
+    assert "p008.pdf" not in names
+
+
 def test_ticket_web_url_empty_without_id():
     assert ticket_web_url("") == ""
     assert ticket_web_url(None) == ""
@@ -126,10 +151,10 @@ def test_static_ui():
     css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
     admin = (ROOT / "static" / "admin.html").read_text(encoding="utf-8")
     admin_js = (ROOT / "static" / "admin-config.js").read_text(encoding="utf-8")
-    assert "app.js?v=py83" in index
+    assert "app.js?v=py85" in index
     assert "function slimPsNote" in js
     assert 'id="psUploadBtn">上传' in js
-    assert "style.css?v=py130" in index
+    assert "style.css?v=py135" in index
     assert "PS 修图工单" in js
     assert "function psTicketHtml" in js
     assert "function openPsUploadModal" in js
@@ -137,6 +162,8 @@ def test_static_ui():
     assert "任务提交人姓名" in index
     assert "/api/tasks/' + ctx.t.id + '/ps-upload" in js or "ps-upload" in js
     assert "plan.psTicket" in js
+    assert "draft.note" in js
+    assert "未检索到可下载" in js
     assert ".ps-box" in css
     assert 'id="psCfgCard"' in admin
     assert "renderPsCard" in admin_js
@@ -147,6 +174,7 @@ if __name__ == "__main__":
     test_normalize_base()
     test_allowed_filename()
     test_build_note()
+    test_draft_note_from_real_plan()
     test_collect_download_refs()
     test_public_ticket()
     test_ticket_web_url_empty_without_id()

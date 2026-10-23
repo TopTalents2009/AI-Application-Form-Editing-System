@@ -748,6 +748,12 @@ function taskOrigin(t) {
   if (name) return name;
   var src = String(t.source || '');
   if (src === 'wecom' || src === 'wecom-watch') return '会话';
+  var apiName = String(t.apiKeyName || '').trim();
+  if (!apiName) {
+    var actor = String(t.apiActor || '');
+    if (/^API:/i.test(actor)) apiName = actor.replace(/^API:/i, '').trim();
+  }
+  if (src === 'openapi' || t.apiKeyId || apiName) return apiName || '开放API';
   return '人工提交';
 }
 function taskOriginDetail(t) {
@@ -2090,8 +2096,11 @@ function bindPsUploadBtn(root, t, plan) {
 function psTicketHtml(ticket, opts) {
   ticket = ticket || {};
   opts = opts || {};
+  var draft = opts.draft || {};
+  var draftNote = slimPsNote((ticket.note && !ticket.ok ? ticket.note : '') || draft.note || opts.draftNote || '');
+  var draftFiles = (ticket.ok && ticket.id ? (ticket.assets || []) : (draft.files || opts.files || []));
   var uploaded = !!(ticket.ok && ticket.id);
-  if (!uploaded && !opts.showUpload && !ticket.error) return '';
+  if (!uploaded && !opts.showUpload && !ticket.error && !draftNote && !draftFiles.length) return '';
   var st = ticket.statusLabel || ticket.status || (uploaded ? '已上传' : '未上传');
   var cls = uploaded ? 'ps-box' : 'ps-box warn';
   var h = '<div class="' + cls + '"><div class="task-h">PS 修图工单';
@@ -2118,10 +2127,15 @@ function psTicketHtml(ticket, opts) {
     (ticket.skipped || []).forEach(function (s) {
       h += '<div class="ps-skip">' + esc(s) + '</div>';
     });
-    if (ticket.note) h += '<div class="task-snip">' + esc(ticket.note) + '</div>';
+    if (ticket.note) h += '<div class="task-snip">' + esc(ticket.note).replace(/\n/g, '<br>') + '</div>';
   } else {
-    h += '<p class="task-lead">护照/学历/工作证明等扫描件不会自动上传。请点标题旁「上传」，填写需要修改的备注和任务提交人姓名后再确认。</p>';
+    h += '<p class="task-lead">下面是扫描件上需要修改的内容。点标题旁「上传」，核对备注和任务提交人后再确认。</p>';
     if (ticket.error) h += '<div class="ps-err">' + esc(ticket.error) + '</div>';
+    (draftFiles || []).forEach(function (a) {
+      if (!a) return;
+      h += '<div class="ps-file">' + esc(a.filename || a.name || a.title || '文件') + (a.title && a.title !== a.filename ? ' <em>' + esc(a.title) + '</em>' : '') + '</div>';
+    });
+    if (draftNote) h += '<div class="task-snip">' + esc(draftNote).replace(/\n/g, '<br>') + '</div>';
   }
   h += '</div>';
   return h;
@@ -2159,7 +2173,8 @@ function slimPsNote(s) {
     var t = String(raw || '').replace(/^[\s\-•·]+/, '').trim();
     if (!t) return;
     if (/^申报书\s/.test(t) || /^需要修改的位置/.test(t) || /^（无具体/.test(t)) return;
-    if (/无法通过系统|无法写入申报书|请按意见|另行上传|另行准备|请下载核对|已在本机|本地「附件」|需申报人自行/.test(t)) return;
+    if (/无法通过系统|无法写入申报书|请按意见|另行上传|另行准备|请下载核对|已在本机|本地「附件」|需申报人自行|未检索到可下载|需要补充材料|【缺附件|下载链接|ext-files/.test(t)) return;
+    if (/^(请)?(补充|补传|缺少|缺失|需补充)/.test(t) && !/翻译|标亮|改为|不清晰|清晰|时间|日期|职位|姓名|国籍|出生|证件号码|护照号码|有效期/.test(t)) return;
     if (/^\d+\.\s/.test(t) && (/[（(][^）)]+\.[A-Za-z0-9]{2,4}[）)]/.test(t) || (t.length < 24 && !/改|换|补|职位|时间|职务|不清晰/.test(t)))) return;
     if (seen[t]) return;
     seen[t] = 1;
@@ -2241,12 +2256,17 @@ function taskListHtml(list, tid, ticket, opts) {
     var st = it.statusLabel || (it.status === 'found' ? '已检索到参考文件' : '需另行提供');
     var seenDl = {};
     h += '<li><div class="task-ttl">' + esc(it.title || '附件') + ' <em>' + esc(st) + '</em></div>';
-    var locs = (it.locations || []).filter(function (x) { return String(x || '').trim(); });
+    var locs = (it.locations || []).filter(function (x) {
+      var s = String(x || '').trim();
+      if (!s) return false;
+      if (/未检索到可下载|需要补充材料|【缺附件|下载链接|ext-files/.test(s)) return false;
+      return true;
+    });
     if (locs.length) {
       h += '<div class="task-snip">需要修改：</div><ul class="task-loc">';
       locs.forEach(function (loc) { h += '<li>' + esc(loc) + '</li>'; });
       h += '</ul>';
-    } else if (it.snippet) {
+    } else if (it.snippet && !/未检索到可下载|需要补充材料|【缺附件/.test(String(it.snippet))) {
       h += '<div class="task-snip">意见：' + esc(it.snippet) + '</div>';
     }
     if (it.action) h += '<div class="task-act">' + esc(it.action) + '</div>';
@@ -2331,12 +2351,12 @@ function renderDoneAttachments(t) {
   var list = t.taskList || [];
   var ticket = t.psTicket || {};
   box.classList.remove('hidden');
-  box.innerHTML = taskListHtml(list, t.id, ticket, { showUpload: false }) + missingAttHtml(att);
+  box.innerHTML = taskListHtml(list, t.id, ticket, { showUpload: false, draft: t.psDraft || {} }) + missingAttHtml(att);
   if ((att.items && att.items.length) || (list && list.length) || ticket.id || box.getAttribute('data-tid') === String(t.id)) return;
   box.setAttribute('data-tid', String(t.id));
   fetch('/api/tasks/' + t.id + '/plan').then(function (r) { return r.ok ? r.json() : null; }).then(function (plan) {
     if (!plan || !currentDetail || String(currentDetail.id) !== String(t.id)) return;
-    box.innerHTML = taskListHtml(plan.taskList || list, t.id, plan.psTicket || ticket, { showUpload: false }) + missingAttHtml(plan.attachments || att);
+    box.innerHTML = taskListHtml(plan.taskList || list, t.id, plan.psTicket || ticket, { showUpload: false, draft: plan.psDraft || {} }) + missingAttHtml(plan.attachments || att);
   }).catch(function () {});
 }
 
@@ -2373,7 +2393,7 @@ function buildPlanEditor(el, t, plan) {
     '<br>来源：' + esc(taskOriginDetail(t)) +
     (poolSum ? '<br>库内检索：' + esc(poolSum) : '') +
     (attSum ? '<br>缺附件检索：' + esc(attSum) : '') +
-    '<br>Gemini 已生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>为短摘要；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。' +
+    '<br>Gemini 已生成修改意见，共 <b>' + curPlanData.length + '</b> 条。请逐条核对：<b>意见条款</b>对应原修改意见序号与原文；<b>修改前</b>为定位锚点（只读），<b>修改后</b>为实际写入内容（可点「采用」或直接改写）。取消勾选＝放弃该条。全部确认后才会写入文件。' +
     (manualN ? '<br><b>人工补充：</b>有 <b>' + manualN + '</b> 条因库内无对应数据已定位原文（黄底行），「修改后」已预填原文，请直接改写。' : '') +
     (preMiss ? '<br><b>预检拦截：</b>有 <b>' + preMiss + '</b> 条改前摘录在申报书中未找到（橙底行），须修正锚点或取消勾选后才能写入。' : '') +
     (loLines && /须人工精简|须压缩/.test(loLines) ? '<br><b>限字拦截：</b>有条目超过印刷上限且未能压下，须精简「修改后」后再确认。' : '') +
@@ -2381,7 +2401,7 @@ function buildPlanEditor(el, t, plan) {
   h += '<div class="ptable-wrap"><table class="ptable"><thead><tr><th style="width:34px">用</th><th style="width:88px">编号</th><th style="width:70px">章节</th><th>意见条款</th><th style="width:18%">修改前（定位用，勿改）</th><th style="width:22%">Gemini修改意见</th><th style="width:22%">修改后（可编辑）</th><th style="width:36px"></th></tr></thead><tbody id="planRows"></tbody></table></div>';
   h += '<button class="mini addrow" id="addRowBtn">新增一行</button>';
   h += missingAttHtml(att);
-  h += taskListHtml((plan && plan.taskList) || t.taskList || [], t && t.id, (plan && plan.psTicket) || (t && t.psTicket), { showUpload: true });
+  h += taskListHtml((plan && plan.taskList) || t.taskList || [], t && t.id, (plan && plan.psTicket) || (t && t.psTicket), { showUpload: true, draft: (plan && plan.psDraft) || {} });
   h += '<h3>遗留事项（每行一条，可编辑）</h3><textarea id="loTa" class="lo-ta"></textarea>';
   h += '<div class="actions"><button id="applyBtn" class="primary">确认无误，写入文件</button><button id="replanBtn" class="ghost">重新生成计划</button><span id="planErr" class="err"></span></div>';
   el.innerHTML = h;

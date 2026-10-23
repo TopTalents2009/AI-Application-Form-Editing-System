@@ -112,7 +112,6 @@ class PresenceHub:
         agent_version: str = "",
     ) -> dict:
         source_id = str(source_id or "").strip() or "pc"
-        who = display_who(operator_name, computer_name)
         status = str(status or "online").strip() or "online"
         if status not in ("online", "updating"):
             status = "online"
@@ -125,11 +124,21 @@ class PresenceHub:
                 prev.get("status") or "",
             )
             version = (agent_version or "").strip() or ((prev or {}).get("agent_version") or "")
+            host = (host or "").strip()
+            computer = (computer_name or "").strip()
+            incoming = (operator_name or "").strip()
+            prev_name = str((prev or {}).get("operator_name") or "").strip()
+            try:
+                from shared.operator_alias import resolve_operator_name
+                who_name = resolve_operator_name(host, computer, incoming or prev_name)
+            except Exception:
+                who_name = incoming or prev_name
+            who = display_who(who_name, computer)
             self._clients[source_id] = {
                 "source_id": source_id,
-                "operator_name": (operator_name or "").strip(),
-                "computer_name": (computer_name or "").strip(),
-                "host": (host or "").strip(),
+                "operator_name": who_name,
+                "computer_name": computer,
+                "host": host,
                 "last_seen": now.strftime(TIME_FMT),
                 "status": status,
                 "agent_version": version,
@@ -177,6 +186,18 @@ class PresenceHub:
             )
             self._save_unlocked()
         return {"ok": True, "online": False, "alert": alert}
+
+    def forget(self, source_id: str) -> bool:
+        """Drop a computer from presence without an offline balloon."""
+        source_id = str(source_id or "").strip()
+        if not source_id:
+            return False
+        with self._lock:
+            prev = self._clients.pop(source_id, None)
+            if not prev:
+                return False
+            self._save_unlocked()
+            return True
 
     def note_sync(
         self,

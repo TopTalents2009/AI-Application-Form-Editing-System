@@ -7,18 +7,103 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.inline_opinions import extract_comment_items, is_column_wide_opinion, count_project_rows
-from app.runner import split_source_units, _split_inline_numbered
+from app.runner import (
+    split_source_units, _split_inline_numbered, clause_display,
+    sort_edits_by_clauses,
+)
 from app.matcher import split_opinion_blocks, keep_blocks_for_app
 from app.edit_validate import (
     is_question_only_opinion, sanitize_declaring_company_edits, _employer_support_span,
     sanitize_paper_author_edits, sanitize_editorial_board_edits,
     is_identity_field_edit, sanitize_identity_edits, retarget_pre_return_title_edits,
+    sanitize_grounded_edits, detect_work_plan_gaps,
+    enforce_no_merge, is_heading_only_edit, filter_heading_only_edits,
+    collapse_duplicate_find_edits,
 )
 from app.opinion_sanitize import (
     is_year_template_meta, is_identity_meta_text, strip_year_template_header,
     sanitize_opinion_blocks,
 )
 from app.hj_form import remap_qm_section
+
+
+def test_feedback44_45_46_grounding():
+    app = (
+        "申报人拟实现工作目标及可行性论证\n"
+        "（一）未来三年工作目标\n研发目标：申报人将于X年加入公司。\n"
+        "（五）可行性论证分析\n申报人在该领域研发经验和工作基础。\n"
+        "七、用人单位情况及承诺\n"
+        "综合效益：实现总产值5000万元的目标。\n"
+        "将相关工序人工成本降低了约30%\n"
+        "Angewandte Chemie, 2015, (14139-14142)\n"
+        "Green Chemistry, 2023\n"
+        "主持过由比利时领头大学资助的泰捷光伏专项项目，具备扎实的产业落地经验。\n"
+    )
+    papers = [{
+        "find": "Discovery of a Potent Allosteric Kinase Modulator (Angewandte Chemie), 2015, (14139-14142). 30. 16.9",
+        "replace": "Discovery of a Potent Allosteric Kinase Modulator (Angewandte Chemie（德国应用化学）), 2015, (14139-14142). 30. 16.9",
+        "section": "论文",
+    }]
+    out, issues = sanitize_grounded_edits(papers, app)
+    if out:
+        assert "德国应用化学" not in out[0]["replace"], out[0]["replace"]
+    assert any("期刊名" in x or "无依据改写" in x for x in issues), issues
+
+    vague = [{
+        "find": "将相关工序人工成本降低了约30%，显著提升了航空作业的安全标准与生产效能。",
+        "replace": (
+            "将相关工序人工成本降低了约30%，显著提升了作业安全标准与生产效能，"
+            "实现了显著的工程应用价值。"
+        ),
+        "section": "专长成果",
+    }]
+    out, issues = sanitize_grounded_edits(vague, app)
+    assert "显著" not in out[0]["replace"], out[0]["replace"]
+    assert "30%" in out[0]["replace"]
+
+    fake_co = [{
+        "find": "综合效益：实现总产值5000万元的目标。",
+        "replace": (
+            "产业化效益：依托与中国民航技术装备材料有限公司战略合作及既有示范工程，"
+            "在2023年700万元销售额基础上稳步提升产能，推动自动接机系统市场占有率达到50%，"
+            "实现规模化产业化落地。"
+        ),
+        "section": "工作设想",
+    }]
+    out, issues = sanitize_grounded_edits(fake_co, app)
+    assert out, issues
+    rep = out[0]["replace"]
+    assert "中国民航" not in rep, rep
+    assert "700万" not in rep, rep
+    assert "50%" not in rep, rep
+
+    salt = [{
+        "find": "主持过由比利时领头大学资助的泰捷光伏专项项目，具备扎实的产业落地经验。",
+        "replace": (
+            "主持过由比利时领头大学资助的泰捷光伏专项项目，具备扎实的产业落地经验，"
+            "已形成工业级生产闭环基础。产品通过600小时超长盐雾测试，产能提升300%，年产2亿元。"
+        ),
+        "section": "工作计划",
+    }]
+    out, issues = sanitize_grounded_edits(salt, app)
+    rep = out[0]["replace"] if out else ""
+    assert "600小时" not in rep, rep
+    assert "300%" not in rep, rep
+    assert "2亿" not in rep, rep
+    assert any("无依据数据" in x for x in issues), issues
+
+    clauses = [{
+        "cid": "S1", "section": "工作计划",
+        "clause": "补充工作计划", "opinion": "工作计划大部分没改，比如说研发目标",
+    }]
+    edits = [{
+        "clauseId": "S1",
+        "find": "（五）可行性论证分析\n申报人在该领域研发经验和工作基础。",
+        "replace": "（五）可行性论证分析\n申报人具备该领域研发经验和工作基础。",
+    }]
+    gaps = detect_work_plan_gaps(clauses, edits, app)
+    assert any(str(g).startswith("【研发目标漏改】") for g in gaps), gaps
+    print("feedback44-46 grounding ok", issues[-3:])
 
 
 def test_word_point_comment_anchors():
@@ -259,6 +344,18 @@ def test_split_multi_person_summary_by_id():
     print("multi-person summary ok", len(units), notes)
 
 
+def test_feedback43_project_proof_kinds():
+    from app.attachments import extract_needed_kinds
+
+    labels = [k["label"] for k in extract_needed_kinds(["4.承担项目需要证明材料;", "6.成果转化缺少证明;"])]
+    assert "项目证明" in labels, labels
+    assert "成果转化证明" in labels, labels
+    leftover = "需线下补充提供申报人主持/参与代表性科研项目的立项通知书、任务书或项目资助机构出具的主持人身份证明等扫描件"
+    labels2 = [k["label"] for k in extract_needed_kinds([leftover])]
+    assert "身份证明" not in labels2, labels2
+    print("feedback43 kinds ok", labels)
+
+
 def test_project_paper_opinion_split():
     from app.attachments import extract_needed_kinds, format_attach_prompt, catalog_from_attach_items
     from app.runner import expand_qm_paper_project_clauses
@@ -440,7 +537,161 @@ def test_pre_return_title_not_domestic_equiv():
     print("pre-return title locate ok", fixed[0]["find"].replace("\n", "|"))
 
 
+def test_feedback47_no_split_summary_counts():
+    find = "成功主持过NIH R01等多项高水平科研项目，其深厚的国际化视野与科技成果转化经验，"
+    rep = (
+        "先后主持及参与美国国立卫生研究院（NIH）、哈佛医学院等重点前沿科研项目4项，"
+        "在Biomaterials等权威学术期刊发表代表性论文4篇，获授权发明专利7项，"
+        "其深厚的国际化视野与科技成果转化经验。"
+    )
+    out, issues = enforce_no_merge([{
+        "find": find, "replace": rep, "clause": "成果汇总补充亮点学术成果及字数要求",
+        "opinion": "专长及代表性成果中成果汇总信息不全，所有亮点学术成果都要放到里面。",
+    }], find + "\n" + "申报人曾创办两家生物技术公司")
+    assert len(out) == 1, (len(out), issues, [x.get("replace") for x in out])
+    assert "项目4项" in out[0]["replace"]
+    assert "论文4篇" in out[0]["replace"]
+    assert not any("正序拆分" in x for x in issues), issues
+    print("feedback47 no split summary counts ok")
+
+
+def test_feedback47_split_handwritten_paragraphs():
+    raw = (
+        "审查意见（仅供参考）\n"
+        "专长及代表性成果中成果汇总信息不全，所有亮点学术成果都要放到里面，举例：发表了多少篇论文；字数不少于4000字。\n"
+        "代表性论著中的申报人角色一栏填通讯作者或其他，论文顺序按照QR排序，并在申报人角色一栏附上每篇论文QR。\n"
+        "回国时间写到月即可，例如2026.1。"
+    )
+    units = split_source_units(raw)
+    assert len(units) >= 3, units
+    blob = "\n".join(units)
+    assert "成果汇总信息不全" in blob
+    assert "按照QR排序" in blob
+    assert "回国时间写到月" in blob
+    print("feedback47 split handwritten paragraphs ok", len(units))
+
+
+def test_feedback48_drop_heading_only():
+    e1 = {"find": "一、未来三年工作目标", "replace": "（一）未来三年工作目标",
+          "clause": "(一)未来三年工作目标：按年度分项或合并撰写", "opinion": "可按年度分项撰写"}
+    e2 = {"find": "五、可行性论证", "replace": "（五）可行性论证分析",
+          "clause": "(五)可行性论证分析框架整理", "opinion": "(五)可行性论证分析"}
+    e3 = {
+        "find": "五、可行性论证\n1.申报人研发基础：深耕MCR领域30年。",
+        "replace": "（五）可行性论证分析\n1.申报人在该领域研发经验和工作基础：深耕MCR领域30年，发表论文432篇。",
+        "clause": "补充研发基础", "opinion": "小标题，请按此更新并补充研发投入",
+    }
+    assert is_heading_only_edit(e1)
+    assert is_heading_only_edit(e2)
+    assert not is_heading_only_edit(e3)
+    kept, issues = filter_heading_only_edits([e1, e2, e3])
+    assert len(kept) == 1, kept
+    assert kept[0] is e3
+    assert len(issues) == 2
+    print("feedback48 drop heading-only ok")
+
+
+def test_feedback49_clause_order_and_label():
+    clauses = [
+        {"cid": "S1", "opinion": "FULVIO DACQUISTO常州恒邦药业有限公司:\n1.科研情况及代表性成果中--创新成果缺论文支持;"},
+        {"cid": "S7", "opinion": "7.研究目标的创新型不够;"},
+        {"cid": "S8", "opinion": "8.研发内容写的风湿性关节炎与企业不相关;"},
+        {"cid": "S9", "opinion": "9.拟解决的关键问题太学术，不够产业化。"},
+    ]
+    assert clause_display(clauses[0]).startswith("1. ")
+    assert "创新成果缺论文支持" in clause_display(clauses[0])
+    assert clause_display(clauses[1]).startswith("7. ")
+    edits = [
+        {"clauseId": "S7", "find": "b", "clause": "提升研究目标创新性"},
+        {"clauseId": "S9", "find": "d", "clause": "调整拟解决关键问题1"},
+        {"clauseId": "S8", "find": "c", "clause": "删除风湿性关节炎"},
+        {"clauseId": "S1", "find": "a", "clause": "创新成果补充论文支持"},
+    ]
+    from app.runner import relabel_edit_clauses
+    labeled = relabel_edit_clauses(edits, clauses)
+    ordered = sort_edits_by_clauses(labeled, clauses)
+    assert [e["clauseId"] for e in ordered] == ["S1", "S7", "S8", "S9"]
+    assert ordered[0]["clause"].startswith("1. ")
+    assert ordered[1]["clause"].startswith("7. ")
+    print("feedback49 clause order and label ok")
+
+
+def test_feedback50_intro_fans_out_projects():
+    from app.runner import expand_qm_mixed_profile_clauses
+    op = (
+        "48615申报书写的倒是很工整，个人简介哪里，申报人掌握什么技术，精通什么，"
+        "描述太普通，参与重点项目情况也少，项目效益换算成人民币。"
+        "1.把引进企业拟攻关的技术目标抄成了人才现在的成果，第21页三、拟解决的关键技术问题，"
+        "指标一模一样容易雷同。"
+    )
+    out = expand_qm_mixed_profile_clauses([{
+        "cid": "S1", "sourceId": "S1", "section": "基本信息",
+        "clause": "个人简介描述太普通", "opinion": op,
+    }])
+    secs = {c["section"] for c in out}
+    assert "基本信息" in secs, out
+    assert "项目" in secs, out
+    assert "工作计划" in secs, out
+    print("feedback50 intro fans out project+work-plan ok", [c["section"] for c in out])
+    only_intro = expand_qm_mixed_profile_clauses([{
+        "cid": "S1", "sourceId": "S1", "section": "基本信息",
+        "clause": "个人简介", "opinion": "个人简介描述太普通，参与重点项目情况也少，项目效益换算成人民币。",
+    }])
+    secs2 = {c["section"] for c in only_intro}
+    assert secs2 == {"基本信息", "项目"}, only_intro
+
+
+def test_feedback51_work_plan_merged_limit():
+    from app.form_reqs import apply_edits_to_text, char_count, enforce_merged_char_limits, parse_fields
+    body = "甲" * 1400
+    app = (
+        "填表须知\n一、按栏填写。\n"
+        "一、基本信息\n"
+        "申报人拟实现工作目标及可行性论证（限1500字）\n"
+        + body + "\n"
+        "七、用人单位情况及承诺\n企业名称\n"
+    )
+    _, fields = parse_fields(app)
+    assert any("工作目标及可行性" in str(f.get("title")) and int(f.get("n") or 0) == 1500 for f in fields), fields
+    edits = [{"find": body[:30], "replace": body[:30] + ("乙" * 250), "section": "工作计划"}]
+    notes = enforce_merged_char_limits(edits, app)
+    block = body
+    applied, _ = apply_edits_to_text(block, edits)
+    assert char_count(applied) <= 1500, (char_count(applied), notes, edits[0]["replace"][:40])
+    assert notes
+    print("feedback51 merged work-plan limit ok", notes[0], char_count(applied))
+
+
+def test_feedback52_collapse_same_find():
+    gem = (
+        "先后主持及参与美国国立卫生研究院（NIH）、哈佛医学院等重点前沿科研项目4项，"
+        "在Biomaterials等权威学术期刊发表代表性论文4篇，获授权发明专利7项，"
+        "其深厚的国际化视野与科技成果转化经验。"
+    )
+    find = "成功主持过NIH R01等多项高水平科研项目，其深厚的国际化视野与科技成果转化经验，"
+    edits = [
+        {"find": find, "replace": gem[:20], "opinionGemini": gem, "_k": "k1"},
+        {"find": find, "replace": "项目4项，在Biomaterials", "opinionGemini": gem, "_k": "k1"},
+        {"find": find, "replace": "论文4篇，获授权发明", "opinionGemini": gem, "_k": "k1"},
+        {"find": "申报人曾创办两家生物技术公司并担任CEO，" + find, "replace": "专利7项，其深厚的国际化视野", "opinionGemini": gem, "_k": "k1"},
+    ]
+    out, issues = collapse_duplicate_find_edits(edits)
+    assert len(out) == 1, out
+    assert "项目4项" in out[0]["replace"] and "论文4篇" in out[0]["replace"]
+    assert any("重复锚点" in x for x in issues)
+    print("feedback52 collapse same find ok")
+
+
+def test_feedback53_connect_retryable():
+    from app.opinion_extract import _payload_shape_retryable
+    from app.llm import _is_connect_err
+    assert _payload_shape_retryable("无法连接 cdn.12ai.org：ConnectError")
+    assert _is_connect_err(Exception("无法连接 cdn.12ai.org：ConnectError"))
+    print("feedback53 connect retryable ok")
+
+
 if __name__ == "__main__":
+    test_feedback44_45_46_grounding()
     test_word_point_comment_anchors()
     test_split_wecom_screenshot_ocr()
     test_question_unit_and_remap()
@@ -451,7 +702,16 @@ if __name__ == "__main__":
     test_keep_corresponding_author_on_same_paper()
     test_editorial_board_is_stable()
     test_split_multi_person_summary_by_id()
+    test_feedback43_project_proof_kinds()
     test_project_paper_opinion_split()
     test_year_template_header_not_identity_edit()
     test_pre_return_title_not_domestic_equiv()
+    test_feedback47_no_split_summary_counts()
+    test_feedback47_split_handwritten_paragraphs()
+    test_feedback48_drop_heading_only()
+    test_feedback49_clause_order_and_label()
+    test_feedback50_intro_fans_out_projects()
+    test_feedback51_work_plan_merged_limit()
+    test_feedback52_collapse_same_find()
+    test_feedback53_connect_retryable()
     print("ALL OK")

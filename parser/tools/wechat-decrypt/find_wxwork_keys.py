@@ -550,7 +550,10 @@ def save_wxwork_results(db_files, salt_to_dbs, key_map, db_dir, out_file, print_
 
     if not result:
         print_fn(f"\n[!] 未提取到任何密钥，保留已有的 {out_file}（如存在）")
-        raise RuntimeError("未能从任何企业微信进程中提取到密钥")
+        raise RuntimeError(
+            "未能从任何企业微信进程中提取到密钥。"
+            "请确认企业微信已登录、助手与企微是同一 Windows 账号，并以管理员运行后再解密"
+        )
 
     result["_db_dir"] = db_dir
     # 写文件含明文 raw key,先 atomic write 到 tmp 再 rename,中途 chmod 0600

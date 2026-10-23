@@ -177,7 +177,7 @@ def check_text_limits(app_text: str) -> list:
         if not f:
             continue
         block = _slice_between(glued, start, end)
-        n = _content_chars(block)
+        n = char_count(block) if "工作目标及可行性" in title else _content_chars(block)
         if n > f["n"]:
             issues.append(
                 "「%s」现 %d 字，超过申报书印刷上限 %d 字（合格带 %d–%d 字），须压缩后再落盘。"
@@ -510,6 +510,78 @@ def enforce_edit_limits(edits, app_text: str) -> list:
             notes.append(
                 "第 %d 条「%s」超过印刷上限 %d 字，已压缩（%s）。"
                 % (i, lim["title"], cap, "，".join(changed))
+            )
+    notes.extend(enforce_merged_char_limits(edits, app_text))
+    return notes
+
+
+def apply_edits_to_text(text: str, edits: list) -> tuple[str, list[int]]:
+    body = str(text or "")
+    used = []
+    for i, e in enumerate(edits or []):
+        if not isinstance(e, dict):
+            continue
+        find = str(e.get("find") or "")
+        rep = str(e.get("replace") or "")
+        if not find or find not in body:
+            continue
+        body = body.replace(find, rep, 1)
+        used.append(i)
+    return body, used
+
+
+def enforce_merged_char_limits(edits, app_text: str) -> list:
+    """多条编辑写入同一限字栏后，按整栏合计压缩，避免工作计划 1500 字超限。"""
+    notes = []
+    glued, fields = parse_fields(app_text)
+    by_title = {(f["title"], f["kind"]): f for f in fields}
+    specs = [
+        ("申报人拟实现工作目标及可行性论证", r"申报人拟实现工作目标及可行性论证（限\d+字）", r"六、|用人单位|企业基本情况|七、"),
+        ("申报人基本情况", r"申报人基本情况（\d+字以内）", r"引进企业基本情况|二、"),
+        ("引进企业基本情况", r"引进企业基本情况（\d+字以内）", r"二、|主要学历"),
+        ("申报人推荐理由", r"（四）?申报人推荐理由（限\d+字）", r"（五）|拟提供申报人支持条件"),
+        ("拟提供申报人支持条件", r"（五）?拟提供申报人支持条件（\d+字以内）", r"申报人和本企业|特推荐"),
+    ]
+    for title, start, end in specs:
+        f = by_title.get((title, "chars"))
+        if not f:
+            continue
+        cap = int(f["n"])
+        block = _slice_between(glued, start, end)
+        if not block.strip():
+            continue
+        applied, used = apply_edits_to_text(block, edits)
+        n = char_count(applied) if "工作目标及可行性" in title else _content_chars(applied)
+        if n <= cap or not used:
+            continue
+        overflow = n - cap
+        for i in reversed(used):
+            if overflow <= 0:
+                break
+            e = edits[i]
+            find = str(e.get("find") or "")
+            rep = str(e.get("replace") or "")
+            extra = char_count(rep) - char_count(find)
+            if extra <= 0:
+                continue
+            new_cap = max(8, char_count(rep) - min(extra, overflow))
+            compressed = compress_to_chars(rep, new_cap)
+            n1 = char_count(compressed)
+            if n1 >= char_count(rep):
+                continue
+            overflow -= char_count(rep) - n1
+            e["replace"] = compressed
+        applied2, _ = apply_edits_to_text(block, edits)
+        n2 = char_count(applied2) if "工作目标及可行性" in title else _content_chars(applied2)
+        if n2 > cap:
+            notes.append(
+                "「%s」多条合计后仍 %d 字，超过上限 %d 字，须人工精简后再确认落盘。"
+                % (title, n2, cap)
+            )
+        else:
+            notes.append(
+                "「%s」多条合计 %d 字超过上限 %d 字，已压缩至 %d 字。"
+                % (title, n, cap, n2)
             )
     return notes
 

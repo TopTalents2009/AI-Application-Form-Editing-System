@@ -122,6 +122,8 @@ def init_db() -> None:
             con.execute("ALTER TABLE pipeline_hits ADD COLUMN skip_jev INTEGER")
         if "seq" not in cols:
             con.execute("ALTER TABLE pipeline_hits ADD COLUMN seq INTEGER")
+        if "media" not in cols:
+            con.execute("ALTER TABLE pipeline_hits ADD COLUMN media TEXT")
         rcols = {r[1] for r in con.execute("PRAGMA table_info(intent_reviews)").fetchall()}
         if "selected_intent" not in rcols:
             con.execute("ALTER TABLE intent_reviews ADD COLUMN selected_intent TEXT")
@@ -159,6 +161,42 @@ def _bool(value) -> int | None:
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _media_json(it: dict) -> str:
+    media = it.get("media") if isinstance(it.get("media"), dict) else {}
+    if not media:
+        copies = it.get("copies") if isinstance(it.get("copies"), list) else []
+        media = {
+            "media_url": str(it.get("media_url") or "")[:500],
+            "msg_type": it.get("msg_type") or 0,
+            "msg_type_label": str(it.get("msg_type_label") or "")[:20],
+            "has_attachment": bool(it.get("has_attachment")),
+            "copies": copies[:8],
+        }
+    slim = {}
+    url = str(media.get("media_url") or "")[:500]
+    if url:
+        slim["media_url"] = url
+    try:
+        typ = int(media.get("msg_type") or 0)
+    except (TypeError, ValueError):
+        typ = 0
+    if typ:
+        slim["msg_type"] = typ
+    label = str(media.get("msg_type_label") or "").strip()[:20]
+    if label:
+        slim["msg_type_label"] = label
+    if media.get("has_attachment"):
+        slim["has_attachment"] = True
+    copies = media.get("copies") if isinstance(media.get("copies"), list) else []
+    kept = []
+    for c in copies[:8]:
+        if isinstance(c, dict) and c.get("source_id"):
+            kept.append(c)
+    if kept:
+        slim["copies"] = kept
+    return json.dumps(slim, ensure_ascii=False) if slim else ""
 
 
 def hit_shown(row: dict) -> bool:
@@ -216,6 +254,7 @@ def save_hits(session_id: str, source_id: str, items: list[dict]) -> int:
                 seq = None if seq in (None, "") else int(seq)
             except (TypeError, ValueError):
                 seq = None
+            media_json = _media_json(it)
             row = (
                 str(source_id or it.get("source_id") or "*"),
                 sid,
@@ -238,13 +277,14 @@ def save_hits(session_id: str, source_id: str, items: list[dict]) -> int:
                 json.dumps(cands[:5], ensure_ascii=False),
                 skip_jev,
                 seq,
+                media_json,
             )
             con.execute(
                 """
                 INSERT INTO pipeline_hits (
                     source_id, session_id, message_id, sender, time_text, text, filename, party,
-                    gemini_useful, gemini_reason, intent, intent_label, need, action, score, shown, error, updated_at, candidates, skip_jev, seq
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    gemini_useful, gemini_reason, intent, intent_label, need, action, score, shown, error, updated_at, candidates, skip_jev, seq, media
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(session_id, message_id) DO UPDATE SET
                     source_id=excluded.source_id,
                     sender=excluded.sender,
@@ -264,7 +304,8 @@ def save_hits(session_id: str, source_id: str, items: list[dict]) -> int:
                     updated_at=excluded.updated_at,
                     candidates=excluded.candidates,
                     skip_jev=excluded.skip_jev,
-                    seq=COALESCE(excluded.seq, pipeline_hits.seq)
+                    seq=COALESCE(excluded.seq, pipeline_hits.seq),
+                    media=CASE WHEN excluded.media!='' THEN excluded.media ELSE pipeline_hits.media END
                 """,
                 row,
             )
@@ -666,6 +707,25 @@ def _dump_hit(row: dict, review: dict | None = None) -> dict:
     row["shown"] = bool(row.get("shown"))
     row["skip_jev"] = bool(row.get("skip_jev"))
     row["candidates"] = candidates_of(row)
+    media = row.get("media")
+    if isinstance(media, str) and media.strip():
+        try:
+            media = json.loads(media)
+        except json.JSONDecodeError:
+            media = {}
+    if not isinstance(media, dict):
+        media = {}
+    row["media"] = media
+    if media.get("media_url") and not row.get("media_url"):
+        row["media_url"] = media.get("media_url")
+    if media.get("msg_type") and not row.get("msg_type"):
+        row["msg_type"] = media.get("msg_type")
+    if media.get("msg_type_label") and not row.get("msg_type_label"):
+        row["msg_type_label"] = media.get("msg_type_label")
+    if media.get("has_attachment"):
+        row["has_attachment"] = True
+    if media.get("copies") and not row.get("copies"):
+        row["copies"] = media.get("copies")
     rev = review or {}
     row["review"] = rev
     row["reviewed"] = hit_reviewed(rev)

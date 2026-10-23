@@ -18,7 +18,8 @@ _NOT_FORM = re.compile(
     r"意向书|意向协议|意向合同|聘用|劳动合同|合同范本|协议书|协议|合同|"
     r"承诺书|承诺函|承诺|唯一申报|"
     r"推荐信|简历|护照|学历|身份证|户口|证件照|营业执照|"
-    r"供应统计|引进名单|汇总表|摸排表|走访表|人才统计",
+    r"供应统计|引进名单|汇总表|摸排表|走访表|人才统计|"
+    r"公司介绍|企业介绍|单位介绍|简介",
 )
 _COMPANY_APP = re.compile(r"有限责任公司|股份有限公司|有限公司|股份公司")
 _ROLE_CUE_APP = re.compile(r"^(新)?申报书$")
@@ -192,7 +193,7 @@ def _company_app(name: str) -> bool:
     ext = ext_of(n)
     if ext not in (WORD_APP_EXT | {".pdf"}):
         return False
-    if _DONE_NAME.search(n) or _OPINION_NAME.search(n) or _is_not_form(n):
+    if _DONE_NAME.search(n) or _OPINION_NAME.search(n) or _is_not_form(n) or _DOC_TITLE.search(n):
         return False
     return bool(_COMPANY_APP.search(n))
 

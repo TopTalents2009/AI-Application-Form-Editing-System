@@ -508,6 +508,26 @@ async def api_health(request: Request):
     return await W.health()
 
 
+@router.get("/api/wecom/id-trace")
+async def api_id_trace(request: Request, q: str = Query(""), lite: bool = Query(False)):
+    """无编号时返回全部编号总览；有编号时汇总该 ID 的群、文件、交付和各版意见。"""
+    _user(request)
+    from ..wecom_id_trace import attach_gemini_kinds, collect, overview
+    raw = str(q or "").strip()
+    if not raw:
+        return await asyncio.to_thread(overview)
+    try:
+        data = await asyncio.to_thread(collect, raw, lite=bool(lite))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    try:
+        data = await attach_gemini_kinds(data)
+    except Exception:
+        data.setdefault("fileOpinions", [])
+        data.setdefault("geminiNote", "")
+    return data
+
+
 @router.get("/api/wecom/watch")
 async def api_watch_status(request: Request):
     _user(request)

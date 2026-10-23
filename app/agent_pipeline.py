@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from .agent_extract import filename_of, is_delivery_name, is_system, text_of
+from .agent_extract import filename_of, is_delivery_name, is_image_message, is_system, text_of
 from .agent_review import (
     SCORE_MIN,
     analyzed_ids,
@@ -95,10 +95,41 @@ def needs_gemini(message: dict) -> bool:
     return True
 
 
+def _media_fields(message: dict) -> dict:
+    copies = []
+    raw = message.get("copies") or message.get("replicas") or []
+    if isinstance(raw, list):
+        for c in raw[:8]:
+            if not isinstance(c, dict):
+                continue
+            sid = str(c.get("source_id") or "").strip()
+            mid = c.get("message_id")
+            if not sid:
+                continue
+            copies.append({
+                "source_id": sid,
+                "message_id": mid,
+                "session_id": str(c.get("session_id") or ""),
+                "source_label": str(c.get("source_label") or c.get("label") or "")[:40],
+            })
+    try:
+        typ = int(message.get("msg_type") or 0)
+    except (TypeError, ValueError):
+        typ = 0
+    return {
+        "media_url": str(message.get("media_url") or "")[:500],
+        "msg_type": typ,
+        "msg_type_label": str(message.get("msg_type_label") or "")[:20],
+        "has_attachment": bool(message.get("has_attachment") or filename_of(message)),
+        "copies": copies,
+    }
+
+
 def _pack_hit(message: dict, party: dict, filt: dict, judged: dict | None, *, skip_jev: bool = False, seq: int | None = None) -> dict:
     judged = judged or {}
     text = text_of(message)
     fname = filename_of(message)
+    media = _media_fields(message)
     return {
         "message_id": str(message.get("message_id") or ""),
         "sender": clean_sender(message.get("sender")) or "未知",
@@ -117,6 +148,12 @@ def _pack_hit(message: dict, party: dict, filt: dict, judged: dict | None, *, sk
         "candidates": judged.get("candidates") if isinstance(judged.get("candidates"), list) else [],
         "skip_jev": bool(skip_jev),
         "seq": seq,
+        "media_url": media["media_url"],
+        "msg_type": media["msg_type"],
+        "msg_type_label": media["msg_type_label"],
+        "has_attachment": media["has_attachment"],
+        "copies": media["copies"],
+        "media": media,
     }
 
 
@@ -148,7 +185,7 @@ def place_messages(
         platform = infer_platform(msg, sess)
         party = classify(msg.get("sender"), platform)
         party_stats[party["party"]] = party_stats.get(party["party"], 0) + 1
-        if is_system(msg) or (not text_of(msg) and not filename_of(msg)):
+        if is_system(msg) or (not text_of(msg) and not filename_of(msg) and not is_image_message(msg)):
             skipped += 1
             continue
         mid = str(msg.get("message_id") or "").strip()

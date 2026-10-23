@@ -343,7 +343,7 @@ def papers_json_from_search(data: dict) -> list:
     return out
 
 
-async def search_author(author: str, *, per_page: int = 50) -> dict:
+async def search_author(author: str, *, per_page: int = 50, timeout: float = 90.0) -> dict:
     """POST /api/search：OpenAlex 作者检索，返回 papers[]。"""
     name = _clean_author_name(author)
     if len(name) < 3:
@@ -351,19 +351,22 @@ async def search_author(author: str, *, per_page: int = 50) -> dict:
     return await _v1_http(
         "POST", "/api/search",
         data={"author": name, "per_page": str(max(5, min(int(per_page or 50), 100)))},
-        timeout=90.0,
+        timeout=float(timeout or 90.0),
     )
 
 
-async def search_authors(names: list) -> tuple[list, str]:
+async def search_authors(names: list, *, timeout: float = 90.0, max_names: int = 4) -> tuple[list, str]:
     tried = []
+    cap = max(1, int(max_names or 4))
     for raw in names or []:
+        if len(tried) >= cap:
+            break
         nm = _clean_author_name(raw)
         if len(nm) < 3 or nm in tried:
             continue
         tried.append(nm)
         try:
-            data = await search_author(nm)
+            data = await search_author(nm, timeout=timeout)
         except PapersError as e:
             if e.code in ("AUTH", "FORBIDDEN", "NOT_CONFIGURED"):
                 raise
@@ -429,6 +432,7 @@ async def ensure_talent(
     name: str = "",
     names: list | None = None,
     timeout_sec: int = 600,
+    search_timeout: float = 90.0,
 ) -> tuple[dict, str]:
     """先 GET 档案；没有 PDF 时作者检索 + POST /api/v1/papers/jobs 再拉取。"""
     aid = norm_attach_id(attach_id)
@@ -457,7 +461,9 @@ async def ensure_talent(
             name_list.append(nm)
     search_note = ""
     if not extra and name_list:
-        extra, used = await search_authors(name_list)
+        extra, used = await search_authors(
+            name_list, timeout=float(search_timeout or 90.0), max_names=2,
+        )
         if extra:
             search_note = "作者检索「" + used + "」命中 " + str(len(extra)) + " 篇"
         else:

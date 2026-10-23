@@ -17,7 +17,7 @@ NEED_RE = re.compile(
     r"更正|校正|改为|改成|改至|有误|错误|不符|不一致"
 )
 _PASSPORT_FORM_RE = re.compile(r"护照\s*(号码|号)|护照号")
-_PASSPORT_SCAN_RE = re.compile(r"扫描|复印|附件|证明|不清晰|缺|上传|补传|材料")
+_PASSPORT_SCAN_RE = re.compile(r"扫描|复印|附件|证明|不清晰|缺|上传|补传|材料|翻译|标亮")
 # 证明材料上的栏位（时间、日期等）系统改不了申报书正文
 _PROOF_ATTR_RE = re.compile(
     r"时间|日期|起止|入职|离职|到职|任期|任职期限|年限|年月|签发|有效期|单位名称|任职单位"
@@ -75,6 +75,9 @@ KIND_FOLDERS = {
 }
 LOCAL_ATTACH_ROOT = Path(__file__).resolve().parent.parent / "附件"
 LOCAL_EXT = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".zip", ".xls", ".xlsx"}
+# 生成计划前不得空等论文系统构建；档案已有 PDF 会立刻返回，否则最多等这么久
+PAPERS_PLAN_WAIT_SEC = 40
+PAPERS_PLAN_SEARCH_SEC = 20
 
 URL_KEYS = ("url", "file_url", "download_url", "pdf_url", "href", "link", "path", "file_path", "download")
 NAME_KEYS = ("filename", "file_name", "name", "title", "title_zh", "原始文件名", "文件名", "附件名称")
@@ -116,7 +119,13 @@ def classify_talent_filename(filename: str) -> tuple[str, str]:
 
 
 def extract_needed_kinds(texts) -> list:
-    blob = "\n".join(str(x or "") for x in (texts or []) if str(x or "").strip())
+    parts = []
+    for x in texts or []:
+        s = str(x or "").strip()
+        if not s or s.startswith("【缺附件"):
+            continue
+        parts.append(s)
+    blob = "\n".join(parts)
     if not blob:
         return []
     out, seen = [], set()
@@ -140,6 +149,15 @@ def _kind_needed(blob: str, kind: dict) -> bool:
             if i < 0:
                 break
             window = blob[max(0, i - 36): i + len(kw) + 48]
+            if re.search(r"【缺附件", window):
+                start = i + len(kw)
+                continue
+            if kind["id"] == "id_doc" and re.search(r"身份证或护照|护照扫描", window) and "身份证明" not in window:
+                start = i + len(kw)
+                continue
+            if kind["id"] == "id_doc" and re.search(r"(主持人|负责人|课题|项目).{0,8}身份证明", window):
+                start = i + len(kw)
+                continue
             if not _skip_form_field(kind, window) and (NEED_RE.search(window) or _proof_attr_hit(kind, window)):
                 return True
             start = i + len(kw)
@@ -168,6 +186,11 @@ def _kind_needed(blob: str, kind: dict) -> bool:
         if re.search(r"(主持.{0,6}项目|立项|科研项目).{0,16}(证明|批文|批复|附件材料)", blob):
             if NEED_RE.search(blob) or re.search(r"必须提供|须提供|应提供|请提供|严禁用论文代替", blob):
                 return True
+        if re.search(
+            r"(承担|主持).{0,6}项目.{0,12}(需要|需补|补充|请提供|缺少|须提供).{0,12}(证明|材料)",
+            blob,
+        ):
+            return True
         if re.search(
             r"项目论文|补充.{0,24}项目.{0,16}(材料|证明|模块)|项目.{0,6}模块|两个模块|两个栏目",
             blob,
@@ -986,9 +1009,12 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
             by_kind.setdefault(pub["kind"], []).append(pub)
 
     paper_kind = next((k for k in needed if k["id"] == "paper"), None)
+    paper_already = bool(by_kind.get("论文全文"))
     if paper_kind and not result.get("papersFetched"):
         result["papersFetched"] = True
-        if not cfg.get("papersConfigured"):
+        if paper_already:
+            result["notes"].append("论文全文已在本地/人才库/聊天记录中定位，跳过论文系统构建等待")
+        elif not cfg.get("papersConfigured"):
             result["papersError"] = "论文 API 未配置（config.json papers.apiKey）"
             result["notes"].append(result["papersError"])
         else:
@@ -1010,6 +1036,8 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                             papers_json=papers_json or None,
                             name=person,
                             names=names,
+                            timeout_sec=PAPERS_PLAN_WAIT_SEC,
+                            search_timeout=PAPERS_PLAN_SEARCH_SEC,
                         )
                     except P.PapersError as e:
                         if e.code == "NOT_FOUND":
@@ -1083,7 +1111,15 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
     project_kind = next((k for k in needed if k["id"] == "project"), None)
     pool_project_ok = bool(by_kind.get("项目证明")) or ("project" in local_found_ids)
     work_root = Path(task_dir) / "work" / "tmp" / "project_proof" if task_dir else Path(".")
-    opinion_blob = "\n".join(str(x or "") for x in (texts if isinstance(texts, (list, tuple)) else [texts]))
+    opinion_parts = []
+    for x in (texts if isinstance(texts, (list, tuple)) else [texts]):
+        s = str(x or "").strip()
+        if not s or s.startswith("【"):
+            continue
+        if re.search(r"项目证明策略|联网检索未找到|人才库附件包|解析服务不可达|CodeBuddy 联网", s):
+            continue
+        opinion_parts.append(s)
+    opinion_blob = "\n".join(opinion_parts)
     want_search = bool(re.search(r"联网检索", opinion_blob))
     want_generate = bool(re.search(r"系统生成项目证明|生成项目证明|调用生成接口", opinion_blob))
     skip_search = bool(re.search(r"不必再联网检索|直接生成项目证明", opinion_blob)) and not want_search
@@ -1140,9 +1176,13 @@ async def resolve_missing(tid: str, texts, snap: dict, app_no: str, prev: dict |
                     n_cb += 1
                 if n_cb:
                     result["notes"].append("CodeBuddy 联网检索命中 " + str(n_cb) + " 个项目证明")
-                else:
+                elif prior.get("ok") and company:
                     result["notes"].append("CodeBuddy 联网检索未命中公开证明，继续调用生成接口")
-        if not result.get("generateFetched"):
+                else:
+                    result["notes"].append("CodeBuddy 联网检索未命中公开证明")
+        has_gen_item = any(str(it.get("source") or "") == "generate" for it in (result.get("items") or []))
+        retry_skip = bool(result.get("generateFetched")) and (not has_gen_item) and (not result.get("generateError")) and prior.get("ok") and bool(company)
+        if (not result.get("generateFetched")) or retry_skip:
             result["generateFetched"] = True
             if not prior.get("ok") or not company:
                 if not prior.get("note"):
@@ -1300,15 +1340,27 @@ def _task_snip(texts: list, kind: dict, limit: int = 90) -> str:
 
 _LOC_KEEP_RE = re.compile(
     r"改为|改成|改至|修改为|更正|更换|替换|重传|不清晰|时间|日期|职位|"
-    r"签发|有效期|起止|入职|离职|至今|毕业|入学|单位名称|扫描|复印"
+    r"签发|有效期|起止|入职|离职|至今|毕业|入学|单位名称|扫描|复印|"
+    r"翻译|标亮|姓名（|国籍（|出生日期|证件号码|护照号码"
 )
 _LOC_SKIP_RE = re.compile(
     r"总体要求|按下列条款执行|合计\s*\d+\s*处需修改|^请同步修改|"
-    r"对应待修改附件|缺失附件已检索|请下载|下载链接|ext-files"
+    r"对应待修改附件|缺失附件已检索"
+)
+_LOC_RETRIEVE_RE = re.compile(
+    r"未检索到可下载|需要补充材料|【缺附件|"
+    r"下载链接|ext-files|/api/tasks/"
+)
+_LOC_EDIT_RE = re.compile(
+    r"翻译|标亮|改为|改成|改至|修改为|更正|更换|替换|不清晰|清晰版|清晰件|"
+    r"姓名（|国籍（|出生日期|证件号码|护照号码|有效期|时间|日期|职位|职务"
+)
+_LOC_BARE_SUPPLEMENT_RE = re.compile(
+    r"^(?:请)?(?:补充|补传|补交|缺少|缺失|需补充)"
 )
 _LOC_PREFIX_RE = re.compile(
     r"^(?:【[^】]+】)+|"
-    r"^(?:\[S\d+\]|S\d+)\s*|"
+    r"^[、,，]?(?:\[S\d+\]|S\d+)(?:[、,，](?:\[S\d+\]|S\d+))*\s*|"
     r"^(?:护照|学历证明|工作证明|工作经历证明|在职证明|身份证明|意向协议|证件照|电子签|项目证明|成果转化证明|论文全文)"
     r"(?:材料)?(?:同步修改)?要求\d*[：:]|"
     r"^要求\d+[：:]|"
@@ -1340,7 +1392,40 @@ def _clean_location(s: str) -> str:
         if nxt == t:
             break
         t = nxt
+    t = re.sub(r"^针对\[[^\]]+\](?:与\[[^\]]+\])*(?:[（(]原文[：:][^）)]*[）)])?[：:]?", "", t).strip(" ：:。;；,，")
     return t
+
+
+def _strip_retrieve_wrapper(s: str) -> str:
+    """去掉检索/下载套话，留下扫描件上要改的内容。"""
+    t = str(s or "")
+    t = re.sub(r"已检索到[^。；\n]{0,200}?(?:下载链接|[→]|ext-files|/api/tasks/)[^。；\n]*", "", t)
+    t = re.sub(r"系统已检索到[^。；\n]{0,120}", "", t)
+    t = re.sub(r"下载链接为：[^\s。；]*", "", t)
+    t = re.sub(r"/api/tasks/\S+", "", t)
+    t = re.sub(r"请下载该附件[，,、]?并?", "", t)
+    t = re.sub(r"请下载并上传该[\w\u4e00-\u9fff]{0,16}扫描件[，,、]?同时?", "", t)
+    t = re.sub(r"(?:后)?上传至系统附件", "", t)
+    t = re.sub(r"\s+", " ", t)
+    return t.strip(" ：:。;；,，")
+
+
+def _location_is_retrieve_noise(s: str) -> bool:
+    t = str(s or "").strip()
+    if not t:
+        return True
+    if _LOC_RETRIEVE_RE.search(t):
+        return True
+    if t in ("未检索到可下载文件", "需要补充材料", "需另行提供"):
+        return True
+    if _LOC_BARE_SUPPLEMENT_RE.search(t) and not _LOC_EDIT_RE.search(t):
+        return True
+    return False
+
+
+def _location_has_concrete(s: str) -> bool:
+    t = str(s or "")
+    return bool(re.search(r"[（(][^）)]{2,}[）)]|\d{4}\s*[.\-年]|翻译|标亮", t))
 
 
 _TITLE_GENERIC_RE = re.compile(r"副高级以上职位|副高以上|同步将职位修改|职位同步修改")
@@ -1448,31 +1533,52 @@ def collect_kind_locations(kind: dict | None, *, clauses=None, leftovers=None, e
     out, seen = [], []
 
     def hit_kind(text: str) -> bool:
-        return any(k in (text or "") for k in keys)
+        t = text or ""
+        if (kind or {}).get("id") == "id_doc":
+            t = re.sub(r"身份证或护照", "", t)
+        return any(k in t for k in keys)
 
     def skip_noise(text: str) -> bool:
         s = text or ""
         if _skip_form_field(kind, s):
             return True
-        if _LOC_SKIP_RE.search(s) and not re.search(r"改为|改成|改至|修改为", s):
+        if _location_is_retrieve_noise(s):
             return True
-        if re.search(r"下载链接|ext-files|已检索到文件|请下载并", s):
+        if _LOC_SKIP_RE.search(s) and not re.search(r"改为|改成|改至|修改为|翻译|标亮", s):
             return True
         return False
 
     def add(raw: str):
-        s = _clean_location(raw)
+        s = _strip_retrieve_wrapper(_clean_location(raw))
         if len(s) < 4:
+            return
+        if _location_is_retrieve_noise(s):
             return
         if skip_noise(s) and not _LOC_KEEP_RE.search(s):
             return
-        if _LOC_SKIP_RE.search(s) and not re.search(r"改为|改成|改至|修改为", s):
+        if _LOC_SKIP_RE.search(s) and not re.search(r"改为|改成|改至|修改为|翻译|标亮", s):
             return
         key = _norm_loc_key(s)
         if not key or any(key == x or key in x or x in key for x in seen):
             return
         seen.append(key)
-        out.append(s[:200])
+        out.append(s[:240])
+
+    def harvest_blob(raw: str, *, require_kind_in_sent: bool = True):
+        s = str(raw or "").strip()
+        if not s or "意见未覆盖" in s or s.startswith("【缺附件"):
+            return
+        if not hit_kind(s):
+            return
+        s = _strip_retrieve_wrapper(s)
+        for sent in re.split(r"(?<=[。；;\n])", s):
+            bit = _strip_retrieve_wrapper(_clean_location(sent))
+            if len(bit) < 4 or skip_noise(bit):
+                continue
+            if require_kind_in_sent and not (hit_kind(bit) or _LOC_EDIT_RE.search(bit)):
+                continue
+            if hit_kind(bit) or _LOC_KEEP_RE.search(bit) or _location_has_concrete(bit):
+                add(bit)
 
     for c in clauses or []:
         if not isinstance(c, dict):
@@ -1494,27 +1600,40 @@ def collect_kind_locations(kind: dict | None, *, clauses=None, leftovers=None, e
             if hit_kind(line) or _LOC_KEEP_RE.search(line):
                 add(line)
 
-    if not out:
-        for raw in leftovers or []:
-            s = str(raw or "").strip()
-            if not s or not hit_kind(s) or skip_noise(s):
-                continue
-            if "意见未覆盖" in s or re.search(r"要求\d+|改为|修改为", s):
-                add(s)
+    for raw in leftovers or []:
+        harvest_blob(str(raw or ""), require_kind_in_sent=False)
 
     if not out:
         for raw in extra_texts or []:
-            s = str(raw or "").strip()
-            if not s or not hit_kind(s):
+            harvest_blob(str(raw or ""), require_kind_in_sent=True)
+
+    if any(_location_has_concrete(x) for x in out):
+        kept = []
+        for x in out:
+            if _location_is_retrieve_noise(x):
                 continue
-            for sent in re.split(r"(?<=[。；;\n])", s):
-                bit = str(sent or "").strip()
-                if hit_kind(bit) and not skip_noise(bit) and (_LOC_KEEP_RE.search(bit) or NEED_RE.search(bit)):
-                    add(bit)
+            if _LOC_BARE_SUPPLEMENT_RE.search(x) and not re.search(r"姓名（|国籍（|证件号码|护照号码|改为|改成|不清晰|清晰", x):
+                continue
+            kept.append(x)
+        if kept:
+            out[:] = kept
 
     titles = extract_gemini_job_titles(edits=edits, clauses=clauses, leftovers=leftovers)
     out = align_locations_with_gemini(out, titles)
-    return out[:12]
+    merged = []
+    for s in out:
+        keys = set(re.findall(r"[A-Z][A-Z .]{3,}[A-Z]|[A-Z]{2}\d{5,}|\d{4}\.\d{1,2}\.\d{1,2}", s))
+        hit = False
+        for i, prev in enumerate(merged):
+            prev_keys = set(re.findall(r"[A-Z][A-Z .]{3,}[A-Z]|[A-Z]{2}\d{5,}|\d{4}\.\d{1,2}\.\d{1,2}", prev))
+            if keys and prev_keys and keys & prev_keys:
+                if len(s) > len(prev):
+                    merged[i] = s
+                hit = True
+                break
+        if not hit:
+            merged.append(s)
+    return merged[:12]
 
 
 def attach_item_locations(items, *, clauses=None, leftovers=None, extra_texts=None, edits=None) -> list:
@@ -1529,8 +1648,16 @@ def attach_item_locations(items, *, clauses=None, leftovers=None, extra_texts=No
                 kind, clauses=clauses, leftovers=leftovers, extra_texts=extra_texts, edits=edits,
             )
         else:
-            locs = [str(x).strip() for x in (row.get("locations") or []) if str(x).strip()]
+            locs = []
+            for x in (row.get("locations") or []):
+                s = _strip_retrieve_wrapper(_clean_location(str(x or "").strip()))
+                if s and not _location_is_retrieve_noise(s):
+                    locs.append(s)
         row["locations"] = locs
+        if locs:
+            row["snippet"] = "；".join(locs)[:240]
+        elif _location_is_retrieve_noise(str(row.get("snippet") or "")):
+            row["snippet"] = ""
         out.append(row)
     return out
 
@@ -1615,6 +1742,8 @@ def build_task_list(texts=None, *, attach: dict | None = None, leftovers=None, c
             kind, clauses=clauses, leftovers=leftovers, extra_texts=blob_parts, edits=edits,
         )
         snippet = "；".join(locations)[:240] if locations else _task_snip(blob_parts, kind)
+        if snippet and _location_is_retrieve_noise(snippet):
+            snippet = "；".join(locations)[:240] if locations else ""
         out.append({
             "id": kid,
             "title": lab,

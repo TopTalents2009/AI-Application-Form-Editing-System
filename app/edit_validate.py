@@ -7,7 +7,12 @@ import re
 from .form_reqs import char_count, resolve_limit
 from .hj_form import is_hj_app, remap_hj_section, remap_qm_section
 
-_ITEM_MARK = re.compile(r"(论文\s*\d+|项目\s*\d+|专利\s*\d+|论著\s*\d+)", re.I)
+# 只认表格行号「论文1 / 项目 2」，不认成果汇总里的「项目4项、论文4篇、专利7项」
+_ITEM_MARK = re.compile(r"(?:论文|项目|专利|论著)\s*\d+(?!\s*[项篇个件次])", re.I)
+_HEAD_PREFIX = re.compile(
+    r"^[（(]?\s*[一二三四五六七八九十0-9]{1,3}\s*[)）、.．]\s*"
+)
+_HEADING_RENAME_OP = re.compile(r"更新小标题|规范标题|小标题.{0,6}更新|标题改为")
 _CHRON_N = re.compile(
     r"(?:补充|填写|列出|增加|新增|梳理)?\s*(\d+)\s*条.*?(?:正序|顺序)"
     r"|(?:正序|顺序).*?(\d+)\s*条"
@@ -186,7 +191,45 @@ def try_split_merged_edit(edit: dict, app_text: str) -> list[dict]:
         ne["find"] = anchor
         ne["replace"] = part
         new_edits.append(ne)
-    return new_edits if len(new_edits) >= 2 else [edit]
+    if len(new_edits) < 2:
+        return [edit]
+    finds = {re.sub(r"\s+", "", str(x.get("find") or "")) for x in new_edits}
+    if len(finds) <= 1:
+        return [edit]
+    return new_edits
+
+
+def collapse_duplicate_find_edits(edits: list) -> tuple[list, list[str]]:
+    """同一改前摘录被拆成多条（成果汇总「项目4项/论文4篇」）时合并为一条。"""
+    out: list = []
+    issues: list[str] = []
+    seen: dict[str, dict] = {}
+    merged = 0
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        key = str(e.get("_k") or "").strip() or _norm_find(e.get("find"))
+        if not key:
+            out.append(e)
+            continue
+        prev = seen.get(key)
+        if prev is None:
+            ne = dict(e)
+            seen[key] = ne
+            out.append(ne)
+            continue
+        merged += 1
+        gem = str(e.get("opinionGemini") or prev.get("opinionGemini") or "")
+        if len(str(e.get("find") or "")) > len(str(prev.get("find") or "")):
+            prev["find"] = e.get("find")
+        for cand in (str(e.get("replace") or ""), gem):
+            if len(cand) > len(str(prev.get("replace") or "")):
+                prev["replace"] = cand
+        if gem:
+            prev["opinionGemini"] = gem
+    if merged:
+        issues.append("【重复锚点】同一改前摘录的 %d 条拆分编辑已合并为 1 条" % (merged + 1))
+    return out, issues
 
 
 def enforce_no_merge(edits: list, app_text: str) -> tuple[list, list[str]]:
@@ -363,6 +406,53 @@ def filter_question_only_edits(edits: list, clauses: list) -> tuple[list, list[s
                 "【疑问式意见·已剔除】" + (cid or "?") + "："
                 + str(c.get("clause") or e.get("clause") or "")[:40]
                 + "（核对类问题不自动改正文，请人工确认或写 leftovers）"
+            )
+            continue
+        kept.append(e)
+    return kept, issues
+
+
+def _heading_core(s: str) -> str:
+    s = str(s or "").strip().splitlines()[0].strip()
+    s = _HEAD_PREFIX.sub("", s)
+    return re.sub(r"[\s（）()【】\[\]]+", "", s)
+
+
+def is_heading_only_edit(edit: dict) -> bool:
+    """只改了「一、标题」↔「（一）标题」这类小标题，正文没有实质改写。"""
+    if not isinstance(edit, dict):
+        return False
+    find = str(edit.get("find") or "").strip()
+    rep = str(edit.get("replace") or "").strip()
+    if not find or not rep:
+        return False
+    op = str(edit.get("opinion") or "") + str(edit.get("clause") or "")
+    if _HEADING_RENAME_OP.search(op):
+        return False
+    cf, cr = _heading_core(find), _heading_core(rep)
+    if len(cf) < 4 or len(cr) < 4:
+        return False
+    if not (cf == cr or cf in cr or cr in cf):
+        return False
+    find_body = "\n".join(find.splitlines()[1:]).strip()
+    rep_body = "\n".join(rep.splitlines()[1:]).strip()
+    extra = abs(len(re.sub(r"\s+", "", rep_body)) - len(re.sub(r"\s+", "", find_body)))
+    if extra >= 24:
+        return False
+    if abs(len(re.sub(r"\s+", "", rep)) - len(re.sub(r"\s+", "", find))) >= 40 and len(rep) > 40:
+        return False
+    return True
+
+
+def filter_heading_only_edits(edits: list) -> tuple[list, list[str]]:
+    kept, issues = [], []
+    for i, e in enumerate(edits or [], 1):
+        if not isinstance(e, dict):
+            continue
+        if is_heading_only_edit(e):
+            issues.append(
+                "【仅改小标题】第 %d 条只改了章节标题格式，未按意见改写正文，已剔除"
+                % i
             )
             continue
         kept.append(e)
@@ -598,12 +688,24 @@ def detect_work_plan_gaps(clauses: list, edits: list, app_text: str, hj: bool = 
             meta.append(c)
     if not meta:
         return []
-    if any(_edit_in_work_plan(e, wp_span) for e in edits or []):
-        return []
     cids = "、".join(str(c.get("cid") or c.get("sourceId") or "") for c in meta[:5])
-    return [
-        "【工作计划漏改】" + cids + "：修改意见要求调整1500字「工作目标及可行性论证」栏，但未生成锚定该栏的编辑"
-    ]
+    if not any(_edit_in_work_plan(e, wp_span) for e in edits or []):
+        return [
+            "【工作计划漏改】" + cids + "：修改意见要求调整1500字「工作目标及可行性论证」栏，但未生成锚定该栏的编辑"
+        ]
+    wants_rd = any(
+        re.search(r"研发目标|三年目标|未来三年|工作目标|工作计划|1500", str(c.get("opinion") or "") + str(c.get("clause") or ""))
+        for c in meta
+    )
+    has_rd = any(
+        _edit_in_work_plan(e, wp_span) and _RD_GOAL.search(str(e.get("find") or "") + str(e.get("replace") or ""))
+        for e in (edits or [])
+    )
+    if wants_rd and not has_rd:
+        return [
+            "【研发目标漏改】" + cids + "：工作计划意见须改「（一）未来三年工作目标」中的研发目标段，不能只改其他小节"
+        ]
+    return []
 
 
 def detect_row_coverage_gaps(clauses: list, edits: list, app_text: str, hj: bool = False) -> list[str]:
@@ -1054,6 +1156,131 @@ def sanitize_declaring_company_edits(edits: list, app_text: str, extra_names: li
     return out, issues
 
 
+_VAGUE_DEGREE = re.compile(r"显著[的地]?")
+_CO_NAME = re.compile(r"[\u4e00-\u9fffA-Za-z0-9（）()]{2,40}(?:股份)?有限公司")
+_ZH_JOURNAL_GLOSS = re.compile(r"[（(][\u4e00-\u9fff]{2,16}[）)]")
+_METRIC_TOKEN = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:%|％)"
+    r"|\d+(?:\.\d+)?\s*亿(?:元)?"
+    r"|\d+(?:\.\d+)?\s*万(?:元)?"
+    r"|\d+(?:\.\d+)?\s*小时"
+)
+_RD_GOAL = re.compile(r"研发目标|未来三年工作目标|（一）\s*未来三年")
+
+
+def _norm_metric(tok: str) -> str:
+    return re.sub(r"\s+", "", tok or "")
+
+
+def _metric_set(text: str) -> set[str]:
+    return {_norm_metric(m.group(0)) for m in _METRIC_TOKEN.finditer(str(text or ""))}
+
+
+def _tidy_grounded(text: str) -> str:
+    s = str(text or "")
+    s = re.sub(r"[，,]{2,}", "，", s)
+    s = re.sub(r"[。．]{2,}", "。", s)
+    s = re.sub(r"^[，,。；;\s]+", "", s)
+    s = re.sub(r"[，,；;\s]+$", "。", s)
+    s = re.sub(r"\s{2,}", "", s)
+    return s.strip()
+
+
+def _strip_unknown_companies(text: str, allowed: str) -> str:
+    s = str(text or "")
+    for m in list(_CO_NAME.finditer(s)):
+        name = m.group(0)
+        if name and name in allowed:
+            continue
+        s = re.sub(
+            r"(?:依托与|联合|与)?" + re.escape(name) + r"(?:战略合作|合作)?(?:及既有示范工程)?",
+            "",
+            s,
+        )
+    s = re.sub(r"依托与[，,]?", "", s)
+    s = re.sub(r"战略合作及既有示范工程[，,]?", "", s)
+    return s
+
+
+def _strip_new_metrics(text: str, allowed: set[str]) -> str:
+    parts = re.split(r"([。；;，,])", str(text or ""))
+    kept = []
+    skip_punct = False
+    for part in parts:
+        if part in "。；;，,":
+            if skip_punct:
+                skip_punct = False
+                continue
+            if kept:
+                kept.append(part)
+            continue
+        toks = _metric_set(part)
+        if toks and any(t not in allowed for t in toks):
+            skip_punct = True
+            continue
+        kept.append(part)
+        skip_punct = False
+    return "".join(kept)
+
+
+def _strip_journal_gloss(find: str, replace: str) -> str:
+    if not re.search(r"[A-Za-z]{4,}", find or ""):
+        return replace
+    out = replace
+    for m in list(_ZH_JOURNAL_GLOSS.finditer(replace or "")):
+        gloss = m.group(0)
+        if gloss and gloss not in (find or ""):
+            out = out.replace(gloss, "")
+    return out
+
+
+def sanitize_grounded_edits(edits: list, app_text: str, pool_text: str = "") -> tuple[list, list[str]]:
+    """去掉原文/人才库没有的公司名、新量化数字、期刊中文译名和「显著」。"""
+    allowed_blob = str(app_text or "") + "\n" + str(pool_text or "")
+    issues: list[str] = []
+    out = []
+    for i, e in enumerate(edits or [], 1):
+        if not isinstance(e, dict):
+            continue
+        ne = dict(e)
+        find = str(ne.get("find") or "")
+        rep = str(ne.get("replace") or "")
+        if not rep.strip():
+            out.append(ne)
+            continue
+        allowed_metrics = _metric_set(find + "\n" + allowed_blob)
+        new = _VAGUE_DEGREE.sub("", rep)
+        if new != rep:
+            issues.append("【空泛措辞】第 %d 条已去掉「显著」等程度词" % i)
+            rep = new
+        new = _strip_journal_gloss(find, rep)
+        if new != rep:
+            issues.append("【期刊名】第 %d 条已去掉原文没有的中文译名括注" % i)
+            rep = new
+        new = _strip_unknown_companies(rep, find + "\n" + allowed_blob)
+        if new != rep:
+            issues.append("【无关企业】第 %d 条已去掉申报书未出现的公司全称" % i)
+            rep = new
+        new = _strip_new_metrics(rep, allowed_metrics)
+        if new != rep:
+            issues.append("【无依据数据】第 %d 条已去掉原文/附件没有的量化数字" % i)
+            rep = new
+        rep = _tidy_grounded(rep)
+        if not rep or _norm_find(rep) == _norm_find(find):
+            issues.append("【无依据改写】第 %d 条清洗后与原文无实质差异，已跳过" % i)
+            continue
+        ne["replace"] = rep
+        for key in ("opinionGemini", "opinionGrok", "opinionDoubao"):
+            raw = str(ne.get(key) or "")
+            if raw.strip():
+                ne[key] = _tidy_grounded(_strip_new_metrics(
+                    _strip_unknown_companies(_strip_journal_gloss(find, _VAGUE_DEGREE.sub("", raw)), find + "\n" + allowed_blob),
+                    allowed_metrics,
+                )) or raw
+        out.append(ne)
+    return out, issues
+
+
 _BOARD_ASK = re.compile(r"编委|客座编辑|特约主编")
 _BOARD_LIST = re.compile(r"列出|要列|补充|写上|体现")
 _GUEST_TOPIC = re.compile(r"策划并主编([^。；;\n]{2,80}?专题)")
@@ -1191,7 +1418,10 @@ def validate_structured_edits(
     issues: list[str] = []
     hj = hj or is_hj_app(app_text=app_text)
 
-    edits, merge_issues = enforce_no_merge(list(edits or []), app_text)
+    edits, dup_issues = collapse_duplicate_find_edits(list(edits or []))
+    issues.extend(dup_issues)
+
+    edits, merge_issues = enforce_no_merge(edits, app_text)
     issues.extend(merge_issues)
 
     edits, contrib_issues = filter_contribution_edits(edits, clauses)
@@ -1199,6 +1429,9 @@ def validate_structured_edits(
 
     edits, q_issues = filter_question_only_edits(edits, clauses)
     issues.extend(q_issues)
+
+    edits, head_issues = filter_heading_only_edits(edits)
+    issues.extend(head_issues)
 
     if not hj:
         edits, feas_drop = remediate_feasibility_edits(edits, clauses, app_text, hj=hj)

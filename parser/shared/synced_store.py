@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import socket
 from datetime import datetime
 from typing import List, Optional
@@ -97,6 +98,19 @@ def _read_json(path: str, default):
     return default if data is None else data
 
 
+def _aliased_operator(meta: dict) -> str:
+    current = str((meta or {}).get("operator_name") or "").strip()
+    try:
+        from shared.operator_alias import resolve_operator_name
+        return resolve_operator_name(
+            (meta or {}).get("host") or "",
+            (meta or {}).get("computer_name") or "",
+            current,
+        )
+    except Exception:
+        return current
+
+
 def _write_json(path: str, data) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -124,7 +138,7 @@ def list_sources() -> List[dict]:
             "id": name,
             "kind": "remote",
             "computer_name": meta.get("computer_name") or name,
-            "operator_name": meta.get("operator_name") or "",
+            "operator_name": _aliased_operator(meta),
             "username": meta.get("username") or "",
             "account_id": meta.get("account_id") or "",
             "host": meta.get("host") or "",
@@ -151,6 +165,15 @@ def save_ingest(payload: dict) -> dict:
     old_meta = _read_json(os.path.join(folder, "meta.json"), {})
     if not operator_name:
         operator_name = (old_meta.get("operator_name") or "").strip()
+    try:
+        from shared.operator_alias import resolve_operator_name
+        operator_name = resolve_operator_name(
+            payload.get("host") or old_meta.get("host") or "",
+            computer_name,
+            operator_name,
+        )
+    except Exception:
+        pass
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sync_seq = int(old_meta.get("sync_seq") or 0) + 1
 
@@ -207,6 +230,26 @@ def save_ingest(payload: dict) -> dict:
         "session_count": len(sessions),
         "last_sync": meta["last_sync"],
     }
+
+
+def delete_source(source_id: str) -> bool:
+    """Remove one remote computer's synced folder. Local source cannot be deleted."""
+    sid = _safe_id(source_id)
+    if not sid or sid.lower() == "local":
+        return False
+    folder = os.path.abspath(_source_dir(sid))
+    root = os.path.abspath(SYNCED_ROOT)
+    try:
+        if os.path.commonpath([root, folder]) != os.path.abspath(root):
+            return False
+    except ValueError:
+        return False
+    if folder == os.path.abspath(root):
+        return False
+    if not os.path.isdir(folder):
+        return False
+    shutil.rmtree(folder)
+    return True
 
 
 def get_source(source_id: str) -> Optional[dict]:

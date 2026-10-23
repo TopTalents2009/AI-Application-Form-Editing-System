@@ -6,7 +6,7 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.default.json"
 FILL_MARK = "填入"
-APP_VERSION = "2.7.2"
+APP_VERSION = "2.7.3"
 
 LLM_TEMPERATURE = 0.1
 LLM_RETRIES = 4

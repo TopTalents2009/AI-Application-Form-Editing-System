@@ -267,6 +267,38 @@ def task_owner_of(row: dict) -> str:
     return "api:" + name[:28]
 
 
+def is_openapi_task(t: dict | None) -> bool:
+    """8091 等开放 API 创建的任务，登录用户都可见。"""
+    if not isinstance(t, dict):
+        return False
+    if str(t.get("source") or "") == "openapi":
+        return True
+    try:
+        if int(t.get("apiKeyId") or 0):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
+def openapi_label(t: dict | None) -> str:
+    """任务列表「来源」：显示创建该任务的 API Key 名称。"""
+    if not isinstance(t, dict):
+        return ""
+    name = str(t.get("apiKeyName") or "").strip()
+    if name:
+        return name
+    actor = str(t.get("apiActor") or "").strip()
+    if actor.lower().startswith("api:"):
+        actor = actor[4:].strip()
+    if actor:
+        return actor
+    owner = str(t.get("owner") or "").strip()
+    if owner.lower().startswith("api:"):
+        owner = owner[4:].strip()
+    return owner or "开放API"
+
+
 def client_ip(request) -> str:
     xff = ""
     try:

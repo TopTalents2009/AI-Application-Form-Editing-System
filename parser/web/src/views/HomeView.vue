@@ -13,15 +13,23 @@
           <p class="text-sm text-slate-500">
             版本 {{ latestAgentVersion }}<span v-if="agentSizeLabel"> · {{ agentSizeLabel }}</span>。
             下载后发给对方电脑运行，填写「同步与接口设置」里的 API 地址和令牌。
+            需要卸掉时，把卸载程序发到同一台电脑运行即可。
           </p>
           <p v-if="latestAgentNotes" class="text-xs text-slate-500 mt-2 whitespace-pre-line">{{ latestAgentNotes }}</p>
         </div>
-        <a
-          v-if="agentPublished"
-          :href="agentDownloadHref"
-          class="shrink-0 text-sm px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
-        >下载 WeComSyncAgent.exe</a>
-        <span v-else class="text-sm text-amber-700">尚未打包，请在分析机运行 parser\build_agent.bat</span>
+        <div class="flex flex-col items-end gap-2 shrink-0">
+          <a
+            v-if="agentPublished"
+            :href="agentDownloadHref"
+            class="text-sm px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+          >下载 WeComSyncAgent.exe</a>
+          <a
+            v-if="uninstallPublished"
+            :href="uninstallDownloadHref"
+            class="text-sm px-3 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
+          >下载卸载程序</a>
+          <span v-if="!agentPublished" class="text-sm text-amber-700">尚未打包，请在分析机运行 parser\build_agent.bat</span>
+        </div>
       </div>
     </div>
 
@@ -60,6 +68,7 @@
         <p class="text-sm text-slate-500 mb-3">
           把 <code class="bg-slate-100 px-1 rounded">WeComSyncAgent.exe</code> 装到对方电脑。
           助手填写的是 API 地址（8767），会同步全部群聊和单聊到这里。
+          卸掉时运行 <code class="bg-slate-100 px-1 rounded">WeComSyncUninstall.exe</code>。
         </p>
         <div class="grid md:grid-cols-2 gap-3 text-sm">
           <div>
@@ -219,6 +228,13 @@
               :disabled="!isOnline(source) || logBusy"
               @click="requestLogs(source)"
             >回传日志</button>
+            <button
+              v-if="canDeleteSource(source)"
+              type="button"
+              class="text-xs px-2 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="Boolean(deleteBusy[source.id])"
+              @click="deleteSource(source)"
+            >{{ deleteBusy[source.id] ? '删除中' : '删除' }}</button>
           </div>
         </div>
       </div>
@@ -270,6 +286,13 @@
             :disabled="!isOnline(selectedSource) || logBusy"
             @click="requestLogs(selectedSource)"
           >回传日志</button>
+          <button
+            v-if="selectedSource && canDeleteSource(selectedSource)"
+            type="button"
+            class="text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            :disabled="Boolean(deleteBusy[selectedSource.id])"
+            @click="deleteSource(selectedSource)"
+          >{{ deleteBusy[selectedSource.id] ? '删除中' : '删除电脑' }}</button>
           <input
             v-model="sessionQuery"
             type="search"
@@ -389,6 +412,7 @@ const logViewer = ref<{
 const logBusy = ref(false)
 const syncBusy = ref<Record<string, boolean>>({})
 const pushBusy = ref<Record<string, boolean>>({})
+const deleteBusy = ref<Record<string, boolean>>({})
 const pushNotice = ref('')
 let logSeq = 0
 let timer: ReturnType<typeof setInterval> | null = null
@@ -449,6 +473,12 @@ const agentSizeLabel = computed(() => {
   if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB'
   if (n >= 1024) return Math.round(n / 1024) + ' KB'
   return n + ' B'
+})
+const uninstallPublished = computed(() => Boolean(ingest.value?.uninstall_published))
+const uninstallDownloadHref = computed(() => {
+  const rel = ingest.value?.uninstall_download_url || '/api/agent-uninstall-exe'
+  if (rel.startsWith('http://') || rel.startsWith('https://')) return rel
+  return PARSER_API + rel.replace(/^\/api/, '')
 })
 
 async function copyText(value: string) {
@@ -633,6 +663,36 @@ async function pushUpdate(source: Source | null) {
     const next = { ...pushBusy.value }
     delete next[source.id]
     pushBusy.value = next
+  }
+}
+
+function canDeleteSource(source: Source | null) {
+  if (!source) return false
+  if (source.kind === 'local' || source.id === 'local') return false
+  return true
+}
+
+async function deleteSource(source: Source | null) {
+  if (!source || !canDeleteSource(source) || deleteBusy.value[source.id]) return
+  const title = sourceTitle(source)
+  const ok = window.confirm(
+    `确定删除「${title}」？\n会从分析机去掉这台电脑的聊天记录。助手如果还在运行，下次心跳会再次出现。`,
+  )
+  if (!ok) return
+  deleteBusy.value = { ...deleteBusy.value, [source.id]: true }
+  try {
+    await chatApi.deleteSource(source.id)
+    sources.value = sources.value.filter((item) => item.id !== source.id)
+    if (selectedSource.value?.id === source.id) {
+      clearSelectedSource()
+    }
+    showPushNotice(`已删除 ${title}`)
+  } catch (err) {
+    showPushNotice(axiosDetail(err, '删除失败'))
+  } finally {
+    const next = { ...deleteBusy.value }
+    delete next[source.id]
+    deleteBusy.value = next
   }
 }
 

@@ -208,7 +208,7 @@ class AgentLogProcessTests(unittest.TestCase):
                 return FakeResp()
 
             with mock.patch.object(agent, "LOG_FILE", log_path):
-                with mock.patch.object(agent.request, "urlopen", side_effect=fake_urlopen):
+                with mock.patch.object(agent, "_urlopen", side_effect=fake_urlopen):
                     status = agent.process_file_job("http://x", "tok", {
                         "job_id": "log1",
                         "kind": "log",

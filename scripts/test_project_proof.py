@@ -205,6 +205,45 @@ def _boeing_snap() -> dict:
     }
 
 
+def test_prior_from_hj_app_when_pool_empty() -> None:
+    """反馈#43：人才库失败时仍从 HJ 申报书抽来华前单位并生成项目清单。"""
+    app_path = ROOT / "tasks" / "1a1615218f7-afb774" / "work" / "txt" / "1-【HJ】42616-2026申报书.txt"
+    if app_path.is_file():
+        app_text = app_path.read_text(encoding="utf-8")
+    else:
+        app_text = (
+            "*\t申报人姓名(中文名)\t\t\t富尔维奥·达基斯托\n"
+            "*\tName of Applicant\t\t\tFULVIO D'ACQUISTO\n"
+            "依托单位名称\t\t常州恒邦药业有限公司\t\t请输入依托单位全称\n"
+            "回国（来华）前所在国家（地区）：英国\n"
+            "回国（来华）前工作单位（英文）：罗汉普顿大学\n"
+            "回国（来华）前职务（中文）：教授\n"
+            "Former Employer (English)：University of Roehampton\n"
+            "Former Position (English)：Professor\n"
+            "2.代表性科研项目(主持/参与)\n"
+            "2016-03-01 00:00:00\t\t2017-03-05 00:00:00\t\t项目性质：基础研究\n"
+            "项目来源：医学研究理事会\t\t276\t\t6/6\t\t具体职务：项目主持人\n"
+            "任务：申报人负责环境丰富化（EE）对小鼠炎症免疫反应影响的总体实验构思，确立研究框架。\n"
+        )
+    snap = {"talent": None, "keys": {"names": ["(中文名) 富尔维奥·达基斯托"], "company": "始终锚定以原始创新引领。当下，全球医药市场。", "attachIds": ["42616"]}}
+    ident = PP.identity_from_app_text(app_text)
+    assert "恒邦" in (ident.get("company") or ""), ident
+    assert "ACQUISTO" in (ident.get("name") or ident.get("name_en") or "").upper(), ident
+    ctx = PP.prior_work_context(snap, app_text)
+    assert ctx.get("ok"), ctx
+    assert "Roehampton" in (ctx.get("company") or "") or "罗汉普顿" in (ctx.get("company") or ""), ctx
+    assert "恒邦" not in (ctx.get("company") or "")
+    assert "ACQUISTO" in str(ctx.get("person") or "").upper(), ctx.get("person")
+    assert ctx.get("projects"), ctx
+    names = " ".join(str(p.get("name") or "") for p in ctx["projects"])
+    assert "环境丰富化（EE）" in names, names
+    roles = " ".join(str(p.get("担任角色") or p.get("role") or "") for p in ctx["projects"])
+    assert "主持" in roles, roles
+    forbidden = ctx.get("forbidden") or []
+    assert any("恒邦" in str(x) for x in forbidden), forbidden
+    print("[OK] 空人才库仍从来华前栏位签发", ctx.get("company"), "projects=", len(ctx["projects"]))
+
+
 def test_feedback_project_sanitize() -> None:
     """回归：同阶段双负责人、博士期高职级、汇总含项目来源、签发日不早于项目。"""
     app_text = "申报企业：苏州启明智造科技有限公司"
@@ -504,6 +543,7 @@ def main() -> int:
     test_prompt_and_filter()
     test_autoref_contract()
     test_prior_employer_and_html()
+    test_prior_from_hj_app_when_pool_empty()
     test_feedback_project_sanitize()
     person, projects, snap = test_detect_and_extract()
     asyncio.run(test_resolve_skip_external())

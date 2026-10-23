@@ -24,6 +24,7 @@ def get_module_9_prompt(applicant_name,job_skeleton_9):
 
             【计划阶段补充（非 JSON 输出，供按章出 edit 时遵守）】
             - 意见要求「补充个人贡献 / 角色与贡献」：find 必须锚定该论文对应行的贡献单元格原文，replace 只写贡献内容，不得改写题名/期刊/作者排序。
+            - 期刊名保持申报书原文（如 Angewandte Chemie、Green Chemistry），禁止括注中文译名（如「德国应用化学」「绿色化学」），除非意见明确要求改期刊。
             - 意见要求「N 条正序」：必须产出 N 条独立 edit，每条只改一个论文条目，禁止合并到一条 replace。
 
             【执行规范要求（须作为绝对指令予以执行）】：

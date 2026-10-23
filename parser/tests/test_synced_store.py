@@ -221,6 +221,23 @@ class SyncedStoreTests(unittest.TestCase):
             "SKY-PC-1688850000000001",
         )
 
+    def test_delete_source_removes_folder(self):
+        result = synced_store.save_ingest({
+            "computer_name": "PC-DEL",
+            "operator_name": "alice",
+            "sessions": [{"id": "S:1", "display_name": "家", "messages": [{"text": "hi"}]}],
+        })
+        sid = result["source_id"]
+        self.assertTrue(os.path.isdir(os.path.join(synced_store.SYNCED_ROOT, sid)))
+        self.assertTrue(synced_store.delete_source(sid))
+        self.assertFalse(os.path.isdir(os.path.join(synced_store.SYNCED_ROOT, sid)))
+        self.assertEqual(synced_store.list_sources(), [])
+        self.assertFalse(synced_store.delete_source(sid))
+
+    def test_delete_source_rejects_local(self):
+        self.assertFalse(synced_store.delete_source("local"))
+        self.assertFalse(synced_store.delete_source("../local"))
+
     def test_list_sources_skips_corrupt_meta(self):
         synced_store.save_ingest({
             "computer_name": "PC-OK",

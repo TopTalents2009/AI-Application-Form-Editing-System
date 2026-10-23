@@ -186,6 +186,15 @@ async def _read_sse(resp: httpx.Response) -> tuple[str, dict]:
             pass
     return "".join(parts), usage
 
+def _is_connect_err(e: Exception) -> bool:
+    if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return True
+    if isinstance(e, httpx.ProxyError):
+        return True
+    m = str(e or "")
+    return "无法连接" in m or "ConnectError" in m or "ConnectTimeout" in m or "ProxyError" in m
+
+
 def _explain(e: Exception, url: str, timeout_s: float) -> LlmError:
     host = urlparse(url).hostname or ""
     where = host or "模型服务"
@@ -310,6 +319,9 @@ async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, ret
     n_try = int(retries) if retries is not None else LLM_RETRIES
     if n_try < 1:
         n_try = 1
+    proxy = httpx_proxy()
+    if proxy:
+        n_try = max(n_try, 2)
     for attempt in range(1, n_try + 1):
         payload = {"model": prof["model"], "messages": messages, "temperature": _temp_of(prof), "stream": use_stream}
         if use_stream and with_stream_opts:
@@ -325,7 +337,7 @@ async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, ret
         elif with_search and search_style == "type":
             payload["tools"] = [{"type": "google_search"}]
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=trust, proxy=httpx_proxy()) as client:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=trust, proxy=proxy) as client:
                 if use_stream:
                     async with client.stream("POST", url, headers=headers, json=payload) as r:
                         if r.status_code >= 400:
@@ -367,6 +379,9 @@ async def _chat_openai(prof, messages, *, json_mode: bool, timeout_s: float, ret
             if use_stream and m.startswith("HTTP 400") and re.search("stream", m, re.I):
                 use_stream = False
                 continue
+            if proxy and _is_connect_err(e):
+                proxy = None
+                continue
             if isinstance(e, (asyncio.TimeoutError, httpx.TimeoutException)):
                 break
             if m.startswith("HTTP 4") and "HTTP 429" not in m:
@@ -395,6 +410,9 @@ async def _chat_genai(prof, messages, *, json_mode: bool, timeout_s: float, retr
     n_try = int(retries) if retries is not None else LLM_RETRIES
     if n_try < 1:
         n_try = 1
+    proxy = httpx_proxy()
+    if proxy:
+        n_try = max(n_try, 2)
     body_base = _openai_to_genai_body(messages)
     for attempt in range(1, n_try + 1):
         url = llm_genai_url(prof.get("baseUrl") or "", prof.get("model") or prof.get("id") or "", stream=use_stream)
@@ -412,7 +430,7 @@ async def _chat_genai(prof, messages, *, json_mode: bool, timeout_s: float, retr
         elif with_search and search_style == "retrieval":
             payload["tools"] = [{"google_search_retrieval": {}}]
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=trust, proxy=httpx_proxy()) as client:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=trust, proxy=proxy) as client:
                 if use_stream:
                     async with client.stream("POST", url, headers=headers, json=payload) as r:
                         if r.status_code >= 400:
@@ -449,6 +467,9 @@ async def _chat_genai(prof, messages, *, json_mode: bool, timeout_s: float, retr
                 continue
             if use_stream and m.startswith("HTTP 400") and re.search("stream|sse|alt", m, re.I):
                 use_stream = False
+                continue
+            if proxy and _is_connect_err(e):
+                proxy = None
                 continue
             if isinstance(e, (asyncio.TimeoutError, httpx.TimeoutException)):
                 break

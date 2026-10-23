@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py130">
+<link rel="stylesheet" href="/public/style.css?v=py135">
 <style>
 #errbar{display:none;position:fixed;top:0;left:0;right:0;z-index:99;background:#fde9e8;color:#c5221f;
 font-size:12px;padding:6px 14px;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
@@ -261,6 +261,15 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
         </div>
       </div>
     </aside>
+  </div>
+  <div class="id-trace-wrap" id="idTracePanel">
+    <h3 class="id-trace-title">编号足迹</h3>
+    <p class="wecom-lead id-trace-lead">从全部关注会话归纳编号，每页 10 条。点编号展开，查看对应群聊以及各版修改意见。搜索框可筛选编号或姓名。</p>
+    <div class="id-trace-bar">
+      <input type="search" id="idTraceQ" placeholder="筛选编号或姓名" maxlength="40" autocomplete="off">
+      <button type="button" class="mini primary" id="idTraceGo">查询</button>
+    </div>
+    <div id="idTraceBox" class="id-trace-box"><div class="wecom-empty">正在查阅全部关注会话，归纳编号…</div></div>
   </div>
 </section>
 
@@ -563,8 +572,8 @@ window.addEventListener("unhandledrejection",function(e){var b=document.getEleme
 </div>
 
 <script src="/public/session.js?v=py55"></script>
-<script src="/public/wecom-board.js?v=py86"></script>
-<script src="/public/agent-review.js?v=py38"></script>
-<script src="/public/app.js?v=py83"></script>
+<script src="/public/wecom-board.js?v=py95"></script>
+<script src="/public/agent-review.js?v=py40"></script>
+<script src="/public/app.js?v=py86"></script>
 </body>
 </html>

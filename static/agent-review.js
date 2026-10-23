@@ -264,10 +264,12 @@
     return (el && el.checked) ? "group" : "all";
   }
   function arWatched(name, sid) {
-    if (typeof window.wecomGroupWatched === "function") {
+    // 先用本页接口带回的关注名单。上方看板的名单要等登录后才灌入，
+    // AI 审核会先跑完加载，若先问看板会把列表滤空。
+    var groups = state.watchGroups || [];
+    if (!groups.length && typeof window.wecomGroupWatched === "function") {
       return window.wecomGroupWatched(name, sid);
     }
-    var groups = state.watchGroups || [];
     if (!groups.length) return false;
     name = String(name || "");
     sid = String(sid || "");
@@ -323,10 +325,81 @@
         '<button type="button" class="wecom-item"><b>' + esc(name) + "</b><span>" + esc(meta) + "</span></button></div>";
     }).join("");
   }
+  function arHitMedia(hit) {
+    var media = hit && hit.media;
+    if (typeof media === "string") {
+      try { media = JSON.parse(media); } catch (e) { media = {}; }
+    }
+    if (!media || typeof media !== "object") media = {};
+    var cur = currentSession();
+    return {
+      filename: (hit && (hit.filename || hit.attachment_name)) || media.filename || "",
+      attachment_name: (hit && (hit.filename || hit.attachment_name)) || media.attachment_name || "",
+      media_url: (hit && hit.media_url) || media.media_url || "",
+      message_id: hit && hit.message_id,
+      messageId: hit && hit.message_id,
+      msg_type: (hit && hit.msg_type) || media.msg_type,
+      msg_type_label: (hit && hit.msg_type_label) || media.msg_type_label,
+      text: hit && hit.text,
+      copies: (hit && hit.copies) || media.copies || [],
+      sessionId: (hit && hit.session_id) || (cur && cur.session_id) || "",
+      source_id: (hit && hit.source_id) || (cur && cur.source_id) || "",
+      isImage: true
+    };
+  }
+  function arIsImage(hit) {
+    var m = arHitMedia(hit);
+    if (typeof window.wecomIsImage === "function") return window.wecomIsImage(m);
+    var name = String(m.filename || "");
+    if (/\.(png|jpe?g|gif|webp|bmp|tif|tiff)$/i.test(name) || /截图/.test(name) || name === "图片") return true;
+    var t = Number(m.msg_type || 0);
+    if (t === 4 || t === 15) return true;
+    var lab = String(m.msg_type_label || "");
+    if (lab === "图片" || /^(image|photo)$/i.test(lab)) return true;
+    return !!(m.media_url && /qpic\.cn|pic\.weixin/i.test(m.media_url));
+  }
+  function arThumbHtml(hit) {
+    if (!arIsImage(hit)) return "";
+    var m = arHitMedia(hit);
+    var src = "";
+    var fb = [];
+    if (typeof window.wecomThumbSrcFromLocal === "function") src = window.wecomThumbSrcFromLocal(m) || "";
+    if (typeof window.wecomThumbSrcFromMedia === "function") {
+      var mu = window.wecomThumbSrcFromMedia(m.media_url);
+      if (mu) fb.push(mu);
+    } else if (m.media_url && /qpic\.cn|pic\.weixin/i.test(m.media_url)) {
+      fb.push("/api/wecom/media?url=" + encodeURIComponent(m.media_url));
+    }
+    if (!src && !fb.length) {
+      var q = [];
+      if (m.filename) q.push("name=" + encodeURIComponent(m.filename));
+      if (m.message_id) q.push("message_id=" + encodeURIComponent(String(m.message_id)));
+      if (m.sessionId) q.push("session_id=" + encodeURIComponent(m.sessionId));
+      if (m.source_id && m.source_id !== "*") q.push("source_id=" + encodeURIComponent(m.source_id));
+      if (q.length) src = "/api/wecom/local-image?" + q.join("&");
+    }
+    if (typeof window.wecomThumbHtml === "function") return window.wecomThumbHtml(src, "预览", "", fb);
+    if (!src && !fb.length) return "";
+    var extra = "";
+    if (fb.length) extra += ' data-media="' + esc(fb.join("\n")) + '"';
+    if (src) extra += ' data-file-srcs="' + esc(src) + '"';
+    return '<span class="wecom-thumb-box wecom-thumb-box-chat"' + extra + '><img class="wecom-thumb" alt="预览" hidden referrerpolicy="no-referrer"></span>';
+  }
+  function arBindThumbs(el) {
+    if (el && typeof window.wecomBindThumbs === "function") window.wecomBindThumbs(el);
+  }
+  function arHitBody(hit) {
+    var thumb = arThumbHtml(hit);
+    var text = hit.text || "";
+    var fileLine = "";
+    if (hit.filename && !thumb) fileLine = "【文件】" + hit.filename;
+    else if (hit.filename && thumb) fileLine = hit.filename;
+    var msg = fileLine && text ? (fileLine + "\n" + text) : (fileLine || text);
+    return (thumb || "") + (msg ? '<div class="ar-msg">' + esc(msg) + "</div>" : "");
+  }
   function renderHit(hit) {
     var review = hit.review || {};
     var selected = state.selected && String(state.selected.message_id) === String(hit.message_id);
-    var body = (hit.filename ? "【文件】" + hit.filename + "\n" : "") + (hit.text || "");
     var skipJev = !!(hit.skip_jev || hit.party === "乙方");
     var chatter = !skipJev && (hit.intent === "confirm" || hit.intent === "chat" || !hit.gemini_useful);
     var useful = skipJev ? "原位展示" : (chatter ? "闲聊/确认" : "已评分");
@@ -363,7 +436,7 @@
       '<span class="ar-note" style="margin:0">' + esc(hit.time_text) + "</span>" +
       reviewChip +
       "</div>" +
-      '<div class="ar-msg">' + esc(body) + "</div>" +
+      arHitBody(hit) +
       "<div>" + extra + "</div>" +
       (!skipJev && hit.gemini_reason ? '<div class="ar-note" style="margin:6px 0 0">' + esc(hit.gemini_reason) + "</div>" : "") +
       (!skipJev && hit.action ? '<div class="ar-note" style="margin:4px 0 0">Jev：' + esc(hit.action) + "</div>" : "") +
@@ -483,6 +556,7 @@
       return;
     }
     el.innerHTML = '<div class="wecom-stream-list">' + items.map(renderHit).join("") + "</div>";
+    arBindThumbs(el);
     if (keepScroll) {
       el.scrollTop = top;
       requestAnimationFrame(function () { el.scrollTop = top; });
@@ -864,13 +938,13 @@
     state.selected = hit;
     $("arReviewTitle").textContent = senderLabel(hit.sender) + " · " + (hit.time_text || "");
     $("arReviewerLine").textContent = "审核人：" + (state.reviewer || "当前登录用户");
-    var body = (hit.filename ? "【文件】" + hit.filename + "\n" : "") + (hit.text || "");
     $("arReviewBody").innerHTML = '<article class="ar-hit ar-pop-quote">' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
       '<span class="ar-chip ' + (hit.party === "甲方" ? "jia" : "yi") + '">' + esc(hit.party || "") + "</span>" +
       "<strong>" + esc(senderLabel(hit.sender)) + "</strong>" +
       '<span class="ar-note" style="margin:0">' + esc(hit.time_text) + "</span></div>" +
-      '<div class="ar-msg">' + esc(body) + "</div></article>";
+      arHitBody(hit) + "</article>";
+    arBindThumbs($("arReviewBody"));
     var review = hit.review || {};
     var picked = pickedCodes(review);
     if (!picked.length && hit.intent) picked = [String(hit.intent)];

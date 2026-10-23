@@ -7,7 +7,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from app.agent_pipeline import _after_cursor, fallback_filter, is_chatter_text, needs_gemini, parse_filter_json, place_messages
+from app.agent_extract import is_image_message
+from app.agent_pipeline import _after_cursor, _pack_hit, fallback_filter, is_chatter_text, needs_gemini, parse_filter_json, place_messages
 from app.agent_review import (
     SCORE_MIN,
     add_example,
@@ -262,6 +263,37 @@ def test_fallback_candidates():
     one = candidates_of({"intent": "形式审核缺项", "intent_label": "形式审核缺项", "score": 80})
     assert len(one) == 1
     assert one[0]["intent"] == "形式审核缺项"
+
+
+def test_image_hits_keep_preview():
+    assert is_image_message({"media_url": "https://wework.qpic.cn/orig/a", "msg_type": 4})
+    assert is_image_message({"attachment_name": "企业微信截图_1.png"})
+    assert not is_image_message({"text": "请改护照号"})
+    img = {
+        "message_id": "88", "sender": "宝珠", "text": "",
+        "media_url": "https://wework.qpic.cn/orig/abc",
+        "msg_type": 4, "msg_type_label": "图片",
+        "attachment_name": "图片.png", "time_text": "2026-10-23 09:00",
+    }
+    got = place_messages([img], done=set(), session={"username": "R_img"})
+    assert len(got["pending"]) == 1
+    only_url = {
+        "message_id": "89", "sender": "宝珠", "text": "",
+        "media_url": "https://wework.qpic.cn/orig/x", "msg_type": 4,
+    }
+    got2 = place_messages([only_url], done=set(), session={"username": "R_img"})
+    assert len(got2["pending"]) == 1
+    packed = _pack_hit(img, {"party": "甲方"}, {"useful": True, "reason": "有附件"}, None, seq=0)
+    assert packed["media_url"].startswith("https://wework.qpic.cn")
+    assert packed["filename"] == "图片.png"
+    sid = "_test_ar_img"
+    save_hits(sid, "*", [packed])
+    hit = get_hit(sid, "88")
+    media = hit.get("media") or {}
+    assert (hit.get("media_url") or media.get("media_url")) == packed["media_url"]
+    with connect() as con:
+        con.execute("DELETE FROM pipeline_hits WHERE session_id=?", (sid,))
+        con.commit()
 
 
 def test_place_messages_yi_not_in_jev():
@@ -908,6 +940,7 @@ if __name__ == "__main__":
     test_rank_questions_has_specific_labels()
     test_ranked_intents_top5()
     test_fallback_candidates()
+    test_image_hits_keep_preview()
     test_place_messages_yi_not_in_jev()
     test_hits_keep_original_order()
     test_sort_hits_without_seq_uses_message_id()

@@ -4380,6 +4380,608 @@
       say(false, e.message || 'AI 解读失败');
     });
   }
+  function idTraceOpText(op) {
+    if (!op) return '修改意见';
+    if (typeof op === 'string') return op;
+    if (op.kind === 'text' || (op.text && !op.name && !op.snippet)) {
+      return wecomAiCollapseRepeatedText(String(op.text || '')) || op.filename || '文本意见';
+    }
+    return op.name || op.filename || op.snippet || op.text || '修改意见';
+  }
+  function idTraceOpMeta(op) {
+    if (!op || typeof op !== 'object') return '';
+    var bits = [op.sender, op.time, op.snippet && op.name ? op.snippet : ''].filter(Boolean);
+    return bits.join(' · ');
+  }
+  function idTraceCell(s) { return '<td>' + (s || '—') + '</td>'; }
+  function idTraceActs(items) {
+    var bits = (items || []).filter(Boolean);
+    return bits.length ? bits.join(' ') : '—';
+  }
+  function idTraceSessAttrs(sid, name) {
+    if (!sid && !name) return '';
+    return ' data-id-trace-sid="' + escAttr(sid || '') + '" data-id-trace-sname="' + escAttr(name || '') + '"';
+  }
+  function idTraceTable(cols, rows, emptyText) {
+    if (!(rows || []).length) return '<div class="id-trace-miss">' + esc(emptyText || '暂无') + '</div>';
+    return '<div class="id-trace-table-wrap"><table class="id-trace-list"><thead><tr>' +
+      cols.map(function (c) { return '<th>' + esc(c) + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>';
+  }
+  function idTraceRow(cells, sid, name, aid) {
+    var extra = idTraceSessAttrs(sid, name);
+    if (aid) extra += ' data-id-trace-aid="' + escAttr(aid) + '"';
+    return '<tr' + extra + '>' + cells.map(idTraceCell).join('') + '</tr>';
+  }
+  function idTraceOpenSess(sid, name) {
+    if (!sid && !name) return '';
+    return '<button type="button" class="mini"' + idTraceSessAttrs(sid, name) + '>打开会话</button>';
+  }
+  function idTraceOpinionList(ops, clauses, dedupe) {
+    var rows = [];
+    var list = ops || [];
+    if (dedupe) list = wecomAiBindDedupeOpinions(list);
+    list.forEach(function (op) {
+      rows.push({
+        kind: (op && op.kind === 'text') ? '文本意见' : '修改意见',
+        text: idTraceOpText(op),
+        meta: idTraceOpMeta(op)
+      });
+    });
+    (clauses || []).forEach(function (c) {
+      var line = (c && (c.clause || c.opinion)) || '';
+      if (line) rows.push({ kind: '条款', text: line, meta: (c && c.opinion && c.clause) ? c.opinion : '' });
+    });
+    return rows;
+  }
+  function idTraceIsOpinion(f) {
+    var kind = String((f && (f.kind || f.type)) || '');
+    var label = String((f && f.label) || '');
+    return kind === 'opinion' || label === '修改意见';
+  }
+  function idTraceByGroupHtml(d) {
+    d = d || {};
+    var html = '';
+    if (d.geminiNote) html += '<p class="id-trace-sub">' + esc(d.geminiNote) + '</p>';
+    html += '<div class="id-trace-sec"><h4>对应群聊</h4>';
+    var groups = d.sessions || [];
+    if (!groups.length) {
+      var seenG = {};
+      (d.chatVersions || []).forEach(function (v) {
+        var sid0 = v.sessionId || '';
+        var name0 = v.sessionName || '';
+        var gk = sid0 + '|' + name0;
+        if (!sid0 && !name0 || seenG[gk]) return;
+        seenG[gk] = true;
+        groups.push({ sessionId: sid0, sessionName: name0, isDelivery: v.isDelivery, lastTime: v.time || '' });
+      });
+    }
+    if (!groups.length) {
+      if (!(d.versions || []).length && !(d.chatVersions || []).length) {
+        html += '<div class="id-trace-miss">未在群聊里找到该编号</div>';
+      }
+      html += '</div>';
+    } else {
+      groups.forEach(function (s) {
+        var sid = s.sessionId || '';
+        var name = s.sessionName || '';
+        var gfiles = [];
+        var gvers = [];
+        var boundOpFn = {};
+        function markOpFn(v) {
+          (v.opinions || []).forEach(function (op) {
+            var fn = String((op && (op.filename || op.name)) || '').toLowerCase();
+            if (fn) boundOpFn[fn] = true;
+          });
+        }
+        (d.chatVersions || []).forEach(function (v) {
+          if ((sid && v.sessionId === sid) || (name && v.sessionName === name)) {
+            gvers.push(v);
+            markOpFn(v);
+          }
+        });
+        (d.versions || []).forEach(function (v) {
+          if (name && v.sessionName === name) {
+            gvers.push(v);
+            markOpFn(v);
+          }
+        });
+        (d.files || []).forEach(function (f) {
+          (f.copies || []).forEach(function (c) {
+            if ((sid && c.sessionId === sid) || (name && c.sessionName === name)) {
+              var row = {
+                filename: f.filename || '',
+                kind: c.kind || f.kind || '',
+                label: c.label || f.label || f.kind || '',
+                sender: c.sender || '',
+                time: c.time || '',
+                sessionId: c.sessionId,
+                sessionName: c.sessionName,
+                classReason: c.classReason || f.classReason || ''
+              };
+              if (idTraceIsOpinion(row)) {
+                var fnk = String(row.filename || '').toLowerCase();
+                if (fnk && boundOpFn[fnk]) return;
+                if (fnk) boundOpFn[fnk] = true;
+                gvers.push({
+                  version: '修改意见',
+                  filename: row.filename,
+                  time: row.time,
+                  sender: row.sender,
+                  sessionId: row.sessionId,
+                  sessionName: row.sessionName,
+                  opinions: [{ kind: 'file', filename: row.filename, sender: row.sender, time: row.time, text: row.classReason }]
+                });
+                return;
+              }
+              gfiles.push(row);
+            }
+          });
+        });
+        (d.fileOpinions || []).forEach(function (op) {
+          var fnk = String(op.filename || '').toLowerCase();
+          if (fnk && boundOpFn[fnk]) return;
+          if ((sid && op.sessionId === sid) || (name && op.sessionName === name)) {
+            if (fnk) boundOpFn[fnk] = true;
+            gvers.push({
+              version: '修改意见',
+              filename: op.filename || '',
+              time: op.time || '',
+              sender: op.sender || '',
+              sessionId: op.sessionId,
+              sessionName: op.sessionName,
+              opinions: [op]
+            });
+          }
+        });
+        var opN = 0;
+        gvers.forEach(function (v) { opN += (v.opinions || []).length + (v.clauses || []).length; });
+        html += '<details class="id-trace-g" open>' +
+          '<summary>' + esc(name || sid || '未命名') +
+          (s.isDelivery ? ' <span class="tag deliv">交付</span>' : '') +
+          '<em>' + gfiles.length + ' 个文件 · ' + (gvers.length || opN ? (gvers.length + ' 个版本 / ' + opN + ' 条意见') : '暂无意见') + '</em>' +
+          (s.lastTime ? '<em>' + esc(s.lastTime) + '</em>' : '') +
+          '</summary>';
+        html += idTraceTable(
+          ['类型', '文件', '发送人', '时间'],
+          gfiles.map(function (f) {
+            return idTraceRow([
+              esc(f.label || '文件'), esc(f.filename || ''), esc(f.sender || ''),
+              esc(f.time || '') + (f.classReason ? '<div class="id-trace-sub">' + esc(f.classReason) + '</div>' : '')
+            ], f.sessionId, f.sessionName);
+          }),
+          '该群暂无对应文件'
+        );
+        var verRows = [];
+        gvers.forEach(function (v) {
+          var ops = idTraceOpinionList(v.opinions, v.clauses, true);
+          var ver = esc(v.chatVersion || v.version || '版本');
+          var fn = esc(v.filename || v.appName || '');
+          if (!ops.length) {
+            verRows.push(idTraceRow([ver, fn, '—', '本版无对应修改意见', esc(v.time || v.at || '')]));
+            return;
+          }
+          ops.forEach(function (op) {
+            verRows.push(idTraceRow([ver, fn, esc(op.kind), esc(op.text), esc(op.meta || v.time || v.at || '')]));
+          });
+        });
+        html += idTraceTable(
+          ['版本', '申报书', '类别', '修改意见', '时间'],
+          verRows,
+          '该群暂无对应修改意见版本'
+        );
+        html += '</details>';
+      });
+      html += '</div>';
+    }
+    var unbound = (d.versions || []).filter(function (v) { return !v.sessionName; });
+    if (unbound.length) {
+      var verRows = [];
+      unbound.forEach(function (v) {
+        var ops = idTraceOpinionList(v.opinions, v.clauses, false);
+        var ver = esc(v.version || ('v' + (v.versionN || '')));
+        var fn = esc(v.filename || v.appName || '申报书');
+        var acts = idTraceActs([
+          v.url ? '<a class="mini" href="' + escAttr(v.url) + '" target="_blank" rel="noopener">打开文件</a>' : '',
+          v.taskId ? '<a class="mini" href="/t/' + encodeURIComponent(v.taskId) + '" target="_blank" rel="noopener">打开任务</a>' : ''
+        ]);
+        if (!ops.length) {
+          verRows.push(idTraceRow([ver, fn, '—', '本版无对应修改意见', esc(v.at || ''), acts]));
+          return;
+        }
+        ops.forEach(function (op) {
+          verRows.push(idTraceRow([ver, fn, esc(op.kind), esc(op.text), esc(op.meta || v.at || ''), acts]));
+        });
+      });
+      html += '<div class="id-trace-sec"><h4>各版本修改意见</h4>' + idTraceTable(
+        ['版本', '申报书', '类别', '意见', '时间', '操作'],
+        verRows
+      ) + '</div>';
+    }
+    return html;
+  }
+  function idTraceDetailHtml(d, opts) {
+    opts = opts || {};
+    d = d || {};
+    var html = '';
+    if (opts.embedded) return idTraceByGroupHtml(d);
+    if (!opts.embedded) {
+      var person = d.personName ? (' · ' + d.personName) : '';
+      html += '<div class="id-trace-head"><button type="button" class="mini" data-id-trace-back="1">返回总览</button><b>' + esc(d.attachId || '') + '</b>' + esc(person) +
+        '<span class="id-trace-stats">' +
+        (d.sessionCount || 0) + ' 个群 · ' +
+        (d.fileCount || 0) + ' 个同一文件 · ' +
+        (d.versionCount || 0) + ' 个版本 · ' +
+        ((d.deliveries || []).length) + ' 条交付</span></div>';
+    }
+
+    html += '<div class="id-trace-sec"><h4>出现过的群</h4>' + idTraceTable(
+      ['群', '类型', '痕迹', '最近时间'],
+      (d.sessions || []).map(function (s) {
+        return idTraceRow([
+          esc(s.sessionName || s.sessionId || '未命名'),
+          s.isDelivery ? '<span class="tag deliv">交付</span>' : '群聊',
+          String(s.hitCount || 0),
+          esc(s.lastTime || '')
+        ], s.sessionId, s.sessionName);
+      }),
+      '未在群聊里找到该编号'
+    ) + '</div>';
+
+    html += '<div class="id-trace-sec"><h4>交付记录</h4>' + idTraceTable(
+      ['群 / 任务', '文件', '时间', '状态', '操作'],
+      (d.deliveries || []).map(function (s) {
+        return idTraceRow([
+          esc(s.sessionName || '交付'),
+          esc(s.filename || ''),
+          esc(s.lastTime || ''),
+          STATUS[s.status] ? badge(s.status) : esc(s.status || '交付'),
+          idTraceActs([
+            idTraceOpenSess(s.sessionId, s.sessionName),
+            s.taskId ? '<a class="mini" href="/t/' + encodeURIComponent(s.taskId) + '" target="_blank" rel="noopener">打开任务</a>' : ''
+          ])
+        ], s.sessionId, s.sessionName);
+      }),
+      '没有带「交付」的会话或任务'
+    ) + '</div>';
+
+    var fileRows = [];
+    (d.files || []).forEach(function (f) {
+      var copies = f.copies || [];
+      if (!copies.length) {
+        fileRows.push(idTraceRow([
+          esc(f.label || f.kind || '文件'),
+          esc(f.filename || ''),
+          '—', '', '', '1 处'
+        ]));
+        return;
+      }
+      copies.forEach(function (c) {
+        fileRows.push(idTraceRow([
+          esc(f.label || f.kind || '文件'),
+          esc(f.filename || ''),
+          esc(c.sessionName || c.sessionId || '未命名群') + (c.isDelivery ? ' <span class="tag deliv">交付</span>' : ''),
+          esc(c.sender || ''),
+          esc(c.time || ''),
+          esc(c.source || '') + (copies.length > 1 ? ' · ' + copies.length + ' 处' : '')
+        ], c.sessionId, c.sessionName));
+      });
+    });
+    html += '<div class="id-trace-sec"><h4>同一文件（跨群）</h4>' + idTraceTable(
+      ['类型', '文件', '所在群', '发送人', '时间', '来源'],
+      fileRows,
+      '没有跨群出现的同一文件'
+    ) + '</div>';
+
+    var verRows = [];
+    (d.versions || []).forEach(function (v) {
+      var ops = idTraceOpinionList(v.opinions, v.clauses, false);
+      var acts = idTraceActs([
+        v.url ? '<a class="mini" href="' + escAttr(v.url) + '" target="_blank" rel="noopener">打开文件</a>' : '',
+        v.taskId ? '<a class="mini" href="/t/' + encodeURIComponent(v.taskId) + '" target="_blank" rel="noopener">打开任务</a>' : ''
+      ]);
+      var ver = esc(v.version || ('v' + (v.versionN || '')));
+      var fn = esc(v.filename || v.appName || '申报书');
+      if (!ops.length) {
+        verRows.push(idTraceRow([ver, fn, '—', '本版无对应修改意见', esc(v.at || ''), acts]));
+        return;
+      }
+      ops.forEach(function (op) {
+        verRows.push(idTraceRow([
+          ver, fn, esc(op.kind), esc(op.text), esc(op.meta || v.at || ''), acts
+        ]));
+      });
+    });
+    html += '<div class="id-trace-sec"><h4>各版本修改意见</h4>' + idTraceTable(
+      ['版本', '申报书', '类别', '意见', '时间', '操作'],
+      verRows,
+      '人才库还没有该编号的申报书版本'
+    ) + '</div>';
+
+    if ((d.chatVersions || []).length) {
+      var chatRows = [];
+      (d.chatVersions || []).forEach(function (v) {
+        var ops = idTraceOpinionList(v.opinions, [], true);
+        var sess = esc(v.sessionName || v.sessionId || '');
+        var fn = esc(v.filename || '');
+        var ver = esc(v.chatVersion || '群聊版本');
+        var acts = idTraceActs([idTraceOpenSess(v.sessionId, v.sessionName)]);
+        if (!ops.length) {
+          chatRows.push(idTraceRow([ver, fn, sess, '—', '本版无对应修改意见', acts], v.sessionId, v.sessionName));
+          return;
+        }
+        ops.forEach(function (op) {
+          chatRows.push(idTraceRow([
+            ver, fn, sess, esc(op.kind), esc(op.text) + (op.meta ? '<div class="id-trace-sub">' + esc(op.meta) + '</div>' : ''), acts
+          ], v.sessionId, v.sessionName));
+        });
+      });
+      html += '<div class="id-trace-sec"><h4>群聊里的版本与意见</h4>' + idTraceTable(
+        ['版本', '文件', '所在群', '类别', '意见', '操作'],
+        chatRows
+      ) + '</div>';
+    }
+
+    if ((d.tasks || []).length) {
+      html += '<div class="id-trace-sec"><h4>相关任务</h4>' + idTraceTable(
+        ['文件', '状态', '群', '时间', '版本', '操作'],
+        (d.tasks || []).map(function (t) {
+          return idTraceRow([
+            esc(t.filename || t.sessionName || t.id || '任务'),
+            badge(t.status),
+            esc(t.sessionName || ''),
+            esc(t.createdAt || ''),
+            esc(t.version || ''),
+            t.id ? '<a class="mini" href="/t/' + encodeURIComponent(t.id) + '" target="_blank" rel="noopener">打开任务</a>' : '—'
+          ], '', t.sessionName);
+        })
+      ) + '</div>';
+    }
+    return html;
+  }
+  function idTraceRender(d) {
+    var box = document.getElementById('idTraceBox');
+    if (!box) return;
+    if (!d || d.ok === false) {
+      box.innerHTML = '<div class="wecom-empty">' + esc((d && (d.detail || d.message)) || '未找到') + '</div>';
+      return;
+    }
+    box.innerHTML = idTraceDetailHtml(d, {});
+  }
+  var ID_TRACE_PAGE_SIZE = 10;
+  var ID_TRACE_CHEV = '<svg class="id-trace-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  var idTraceOverviewCache = [];
+  var idTraceOverviewInfo = {};
+  var idTraceFilterTimer = 0;
+  var idTracePage = 1;
+  var idTraceOpen = {};
+  var idTraceDetail = {};
+  function idTraceFilteredItems() {
+    var qel = document.getElementById('idTraceQ');
+    var q = ((qel && qel.value) || '').trim().toLowerCase();
+    var items = idTraceOverviewCache || [];
+    if (!q) return items;
+    return items.filter(function (it) {
+      return String(it.attachId || '').toLowerCase().indexOf(q) >= 0 ||
+        String(it.personName || '').toLowerCase().indexOf(q) >= 0;
+    });
+  }
+  function idTracePagerHtml(page, pages, total) {
+    return '<div class="id-trace-pager book-pager">' +
+      '<button type="button" class="mini" data-id-trace-page="prev"' + (page <= 1 ? ' disabled' : '') + '>上一页</button>' +
+      '<span class="id-trace-page-info">第 ' + page + ' / ' + pages + ' 页 · 每页 ' + ID_TRACE_PAGE_SIZE + ' 条 · 共 ' + total + ' 个编号</span>' +
+      '<button type="button" class="mini" data-id-trace-page="next"' + (page >= pages ? ' disabled' : '') + '>下一页</button>' +
+      '</div>';
+  }
+  function idTraceIdHtml(it) {
+    var aid = String((it && it.attachId) || '');
+    var open = !!idTraceOpen[aid];
+    var d = idTraceDetail[aid];
+    var names = (it && it.sessions) || [];
+    var groups = names.slice(0, 3).join('、');
+    var stats = [
+      (it.sessionCount || 0) + ' 个群' + (groups ? '（' + groups + ((it.sessionCount || 0) > 3 ? '…' : '') + '）' : ''),
+      (it.fileCount || 0) + ' 个文件',
+      (it.versionCount || 0) + ' 个版本',
+      (it.opinionCount || 0) + ' 条意见',
+      (it.deliveryCount || 0) + ' 条交付'
+    ].join(' · ');
+    var body = d
+      ? idTraceDetailHtml(d, { embedded: true })
+      : '<div class="wecom-empty">展开后用 Gemini 判断文件类型和修改意见…</div>';
+    return '<details class="id-trace-id"' + (open ? ' open' : '') + ' data-id-trace-aid="' + escAttr(aid) + '">' +
+      '<summary class="id-trace-id-hd">' + ID_TRACE_CHEV + '<b>' + esc(aid) + '</b>' +
+      (it.personName ? '<em>' + esc(it.personName) + '</em>' : '') +
+      '<em>' + esc(stats) + '</em>' +
+      (it.lastTime ? '<em>' + esc(it.lastTime) + '</em>' : '') +
+      '</summary><div class="id-trace-id-bd">' + body + '</div></details>';
+  }
+  function idTraceRenderOverview() {
+    var box = document.getElementById('idTraceBox');
+    if (!box) return;
+    var items = idTraceFilteredItems();
+    var total = items.length;
+    var pages = Math.max(1, Math.ceil(total / ID_TRACE_PAGE_SIZE) || 1);
+    if (idTracePage > pages) idTracePage = pages;
+    if (idTracePage < 1) idTracePage = 1;
+    if (total === 1 && items[0] && items[0].attachId) idTraceOpen[items[0].attachId] = true;
+    var slice = items.slice((idTracePage - 1) * ID_TRACE_PAGE_SIZE, idTracePage * ID_TRACE_PAGE_SIZE);
+    var watchN = idTraceOverviewInfo.watchCount;
+    var html = '<div class="id-trace-head"><b>关注会话中的编号</b><span class="id-trace-stats">' +
+      (watchN != null && watchN !== '' ? '关注会话 ' + watchN + ' 个 · ' : '') +
+      '共 ' + total + ' 个编号 · 每页 ' + ID_TRACE_PAGE_SIZE + ' 条</span></div>';
+    html += idTracePagerHtml(idTracePage, pages, total);
+    if (!slice.length) html += '<div class="wecom-empty">' + esc(idTraceOverviewInfo.note || '关注会话里尚未归纳到人才编号') + '</div>';
+    else html += slice.map(idTraceIdHtml).join('');
+    if (total > ID_TRACE_PAGE_SIZE) html += idTracePagerHtml(idTracePage, pages, total);
+    box.innerHTML = html;
+    slice.forEach(function (it) {
+      if (it && idTraceOpen[it.attachId] && !idTraceDetail[it.attachId]) {
+        var el = box.querySelector('details.id-trace-id[data-id-trace-aid="' + String(it.attachId).replace(/[^\d]/g, '') + '"]');
+        if (el) idTraceEnsureDetail(String(it.attachId), el);
+      }
+    });
+  }
+  function idTraceFilterOverview() {
+    idTracePage = 1;
+    idTraceRenderOverview();
+  }
+  function idTraceEnsureDetail(aid, el) {
+    aid = String(aid || '');
+    if (!aid || idTraceDetail[aid]) {
+      if (idTraceDetail[aid] && el) {
+        var bd = el.querySelector('.id-trace-id-bd');
+        if (bd && !bd.querySelector('.id-trace-sec')) bd.innerHTML = idTraceDetailHtml(idTraceDetail[aid], { embedded: true });
+      }
+      return;
+    }
+    var bd = el && el.querySelector('.id-trace-id-bd');
+    if (bd) bd.innerHTML = '<div class="wecom-empty">正在用 Gemini 判断文件类型和修改意见…</div>';
+    fetch('/api/wecom/id-trace?q=' + encodeURIComponent(aid) + '&lite=1', { credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) throw new Error((x.j && (x.j.detail || x.j.message)) || '加载失败');
+        idTraceDetail[aid] = x.j;
+        var host = el && el.querySelector('.id-trace-id-bd');
+        if (host) host.innerHTML = idTraceDetailHtml(x.j, { embedded: true });
+      })
+      .catch(function (e) {
+        var host = el && el.querySelector('.id-trace-id-bd');
+        if (host) host.innerHTML = '<div class="wecom-empty">' + esc(e.message || '加载失败') + '</div>';
+      });
+  }
+  function idTraceJumpAid(aid) {
+    aid = String(aid || '').trim();
+    if (!aid) { idTraceFilterOverview(); return; }
+    var items = idTraceOverviewCache || [];
+    var idx = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (String(items[i].attachId) === aid) { idx = i; break; }
+    }
+    var qel = document.getElementById('idTraceQ');
+    if (qel) qel.value = aid;
+    if (idx < 0) {
+      loadIdTrace(aid);
+      return;
+    }
+    idTracePage = Math.floor(idx / ID_TRACE_PAGE_SIZE) + 1;
+    idTraceOpen[aid] = true;
+    idTraceRenderOverview();
+  }
+  function loadIdTraceOverview() {
+    var box = document.getElementById('idTraceBox');
+    var go = document.getElementById('idTraceGo');
+    if (box) box.innerHTML = '<div class="wecom-empty">正在查阅全部关注会话，归纳编号…</div>';
+    if (go) go.disabled = true;
+    fetch('/api/wecom/id-trace', { credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) throw new Error((x.j && (x.j.detail || x.j.message)) || '加载失败');
+        idTraceOverviewCache = (x.j && x.j.items) || [];
+        idTraceOverviewInfo = { watchCount: x.j && x.j.watchCount, note: x.j && x.j.note };
+        var qel = document.getElementById('idTraceQ');
+        var v = ((qel && qel.value) || '').trim();
+        if (/^\d{4,6}$/.test(v)) idTraceJumpAid(v);
+        else if (v) idTraceFilterOverview();
+        else idTraceRenderOverview();
+      })
+      .catch(function (e) {
+        if (box) box.innerHTML = '<div class="wecom-empty">' + esc(e.message || '加载失败') + '</div>';
+      })
+      .then(function () { if (go) go.disabled = false; });
+  }
+  function loadIdTrace(q) {
+    var box = document.getElementById('idTraceBox');
+    var go = document.getElementById('idTraceGo');
+    q = String(q || '').trim();
+    if (!q) {
+      loadIdTraceOverview();
+      return;
+    }
+    if (box) box.innerHTML = '<div class="wecom-empty">正在按编号汇总各群痕迹，可能需要十几秒…</div>';
+    if (go) go.disabled = true;
+    fetch('/api/wecom/id-trace?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) throw new Error((x.j && (x.j.detail || x.j.message)) || '查询失败');
+        if (x.j && x.j.overview) {
+          idTraceOverviewCache = x.j.items || [];
+          idTraceOverviewInfo = { watchCount: x.j.watchCount, note: x.j.note };
+          idTraceRenderOverview(x.j);
+          return;
+        }
+        idTraceRender(x.j);
+      })
+      .catch(function (e) {
+        if (box) box.innerHTML = '<div class="wecom-empty">' + esc(e.message || '查询失败') + '</div>';
+      })
+      .then(function () { if (go) go.disabled = false; });
+  }
+  function initIdTracePanel() {
+    var panel = document.getElementById('idTracePanel');
+    if (!panel || panel.getAttribute('data-bound') === '1') return;
+    panel.setAttribute('data-bound', '1');
+    var q = document.getElementById('idTraceQ');
+    var go = document.getElementById('idTraceGo');
+    var box = document.getElementById('idTraceBox');
+    function run() {
+      var v = ((q && q.value) || '').trim();
+      if (!v) { idTracePage = 1; if (idTraceOverviewCache.length) idTraceRenderOverview(); else loadIdTraceOverview(); return; }
+      if (/^\d{4,6}$/.test(v) && idTraceOverviewCache.length) { idTraceJumpAid(v); return; }
+      if (idTraceOverviewCache.length) idTraceFilterOverview();
+      else loadIdTraceOverview();
+    }
+    if (go) go.addEventListener('click', run);
+    if (q) {
+      q.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); run(); }
+      });
+      q.addEventListener('input', function () {
+        clearTimeout(idTraceFilterTimer);
+        idTraceFilterTimer = setTimeout(function () {
+          if (idTraceOverviewCache.length) idTraceFilterOverview();
+        }, 200);
+      });
+    }
+    if (box) {
+      box.addEventListener('toggle', function (e) {
+        var t = e.target;
+        if (!t || !t.classList || !t.classList.contains('id-trace-id')) return;
+        var aid = t.getAttribute('data-id-trace-aid') || '';
+        if (!aid) return;
+        if (t.open) {
+          idTraceOpen[aid] = true;
+          idTraceEnsureDetail(aid, t);
+        } else {
+          delete idTraceOpen[aid];
+        }
+      }, true);
+      box.addEventListener('click', function (e) {
+        if (e.target.closest('a')) return;
+        var pageBtn = e.target.closest('[data-id-trace-page]');
+        if (pageBtn) {
+          if (pageBtn.disabled) return;
+          var act = pageBtn.getAttribute('data-id-trace-page');
+          if (act === 'prev' && idTracePage > 1) idTracePage -= 1;
+          if (act === 'next') idTracePage += 1;
+          idTraceRenderOverview();
+          return;
+        }
+        if (e.target.closest('[data-id-trace-back]')) {
+          if (q) q.value = '';
+          idTracePage = 1;
+          idTraceRenderOverview();
+          return;
+        }
+        if (e.target.closest('summary')) return;
+        var btn = e.target.closest('[data-id-trace-sid], [data-id-trace-sname]');
+        if (!btn) return;
+        wecomOpenSession(btn.getAttribute('data-id-trace-sid') || '', btn.getAttribute('data-id-trace-sname') || '');
+      });
+    }
+    loadIdTraceOverview();
+  }
+
   (function bindWecomUi() {
     var gq = document.getElementById('wecomGroupQ');
     if (gq) gq.addEventListener('input', function () {
@@ -4443,6 +5045,7 @@
     var intentPageBtn = document.getElementById('wecomIntentPageBtn');
     if (intentPageBtn) intentPageBtn.addEventListener('click', wecomIntentPage);
     wecomPickEnsureBar();
+    initIdTracePanel();
   })();
 
   global.wecomSessionTitle = wecomSessionTitle;
@@ -4450,6 +5053,12 @@
   global.wecomReloadSessions = loadWecomSessions;
   global.wecomToggleWatch = wecomToggleWatch;
   global.wecomGroupWatched = wecomGroupWatched;
+  global.wecomIsImage = wecomIsImage;
+  global.wecomThumbHtml = wecomThumbHtml;
+  global.wecomBindThumbs = wecomBindThumbs;
+  global.wecomThumbSrcFromLocal = wecomThumbSrcFromLocal;
+  global.wecomThumbSrcFromMedia = wecomThumbSrcFromMedia;
+  global.wecomPreview = wecomPreview;
   global.wecomAiBusy = function () { return wecomAiLoading; };
   global.initWecomBoard = function () {
     if (!document.getElementById('wecomSessions')) return;
@@ -4463,4 +5072,9 @@
   global.loadWecomWatchLogs = loadWecomWatchLogs;
   if (document.getElementById('wecomWatchPanel')) initWecomWatchPanel();
   if (document.getElementById('wecomUserReview')) initWecomUserReview();
+  if (document.getElementById('idTracePanel')) initIdTracePanel();
+  // 尽早拉关注名单，避免主页 AI 审核比登录后的看板初始化更早跑完、把会话滤空。
+  if (document.getElementById('wecomSessions') || document.getElementById('arSessions')) {
+    loadWecomWatchGroups();
+  }
 })(window);

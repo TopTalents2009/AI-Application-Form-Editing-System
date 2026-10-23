@@ -23,9 +23,8 @@ def changelog_path(project_root: str) -> str:
     return os.path.join(project_root, "agent", "CHANGELOG.md")
 
 
-def candidate_exe_paths(project_root: str) -> list:
+def candidate_named_exe_paths(project_root: str, name: str) -> list:
     root = os.path.abspath(project_root)
-    name = "WeComSyncAgent.exe"
     out = [os.path.join(root, "dist", name)]
     here = root
     for _ in range(4):
@@ -45,8 +44,23 @@ def candidate_exe_paths(project_root: str) -> list:
     return uniq
 
 
+def candidate_exe_paths(project_root: str) -> list:
+    return candidate_named_exe_paths(project_root, "WeComSyncAgent.exe")
+
+
+def candidate_uninstall_paths(project_root: str) -> list:
+    return candidate_named_exe_paths(project_root, "WeComSyncUninstall.exe")
+
+
 def agent_exe_path(project_root: str) -> str:
     for path in candidate_exe_paths(project_root):
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def uninstall_exe_path(project_root: str) -> str:
+    for path in candidate_uninstall_paths(project_root):
         if os.path.isfile(path):
             return path
     return ""

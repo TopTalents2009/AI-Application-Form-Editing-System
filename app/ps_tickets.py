@@ -122,20 +122,53 @@ _PS_NOTE_NOISE = re.compile(
     r"无法通过系统改|无法写入申报书|请按审核意见|请按意见更正|请按意见更新|"
     r"请按意见准备|请按意见补|请按意见另行|另行上传|另行准备|另行补传|"
     r"请下载核对|已在本机|本地「附件」|人才库|聊天记录均|"
-    r"需申报人自行|在申报系统或材料包|对应待修改附件|缺失附件已检索"
+    r"需申报人自行|在申报系统或材料包|对应待修改附件|缺失附件已检索|"
+    r"未检索到可下载|需要补充材料|【缺附件|下载链接|ext-files|/api/tasks/"
 )
+_PS_EDIT_HINT = re.compile(
+    r"翻译|标亮|改为|改成|改至|修改为|更正|不清晰|清晰|时间|日期|职位|职务|"
+    r"姓名|国籍|出生|证件号码|护照号码|有效期"
+)
+_PS_BARE_SUPPLEMENT = re.compile(r"^(?:请)?(?:补充|补传|补交|缺少|缺失|需补充)")
+
+
+def _ps_keep_line(s: str) -> bool:
+    t = str(s or "").strip()
+    if not t or _PS_NOTE_NOISE.search(t):
+        return False
+    if t in ("未检索到可下载文件", "需要补充材料", "需另行提供"):
+        return False
+    if _PS_BARE_SUPPLEMENT.search(t) and not _PS_EDIT_HINT.search(t):
+        return False
+    return True
+
+
+def _ps_is_paper_noise(it: dict) -> bool:
+    if str(it.get("id") or "") != "paper":
+        return False
+    blob = "\n".join(str(x) for x in (it.get("locations") or [])) + "\n" + str(it.get("snippet") or "")
+    if re.search(r"主持项目|科研成果证明", blob) and not re.search(r"论文.{0,8}(扫描|不清晰|模糊)", blob):
+        return True
+    if not re.search(r"论文.{0,16}(扫描|不清晰|模糊|清晰|翻译|标亮)", blob):
+        return True
+    return False
 
 
 def _ps_change_lines(it: dict) -> list:
-    """只取扫描件上要改的点，不要办理说明、文件名、意见总述。"""
-    locs = [str(x).strip() for x in (it.get("locations") or []) if str(x).strip()]
-    if locs:
-        return [x for x in locs if not _PS_NOTE_NOISE.search(x)]
-    snip = str(it.get("snippet") or "").strip()
-    if not snip or _PS_NOTE_NOISE.search(snip):
+    """只取已有扫描件上要改的点，不要补材料、检索失败说明。"""
+    if not isinstance(it, dict):
         return []
-    bits = [x.strip() for x in re.split(r"[；;]\s*", snip) if x.strip()]
-    return [b for b in bits if b and not _PS_NOTE_NOISE.search(b)]
+    if not (it.get("downloads") or []):
+        return []
+    if _ps_is_paper_noise(it):
+        return []
+    locs = [str(x).strip() for x in (it.get("locations") or []) if str(x).strip()]
+    bits = locs
+    if not bits:
+        snip = str(it.get("snippet") or "").strip()
+        if snip:
+            bits = [x.strip() for x in re.split(r"[；;]\s*", snip) if x.strip()]
+    return [b for b in bits if _ps_keep_line(b)]
 
 
 def slim_ps_note(note: str) -> str:
@@ -152,7 +185,7 @@ def slim_ps_note(note: str) -> str:
             continue
         if t.startswith("（无具体"):
             continue
-        if _PS_NOTE_NOISE.search(t):
+        if not _ps_keep_line(t):
             continue
         if re.match(r"^\d+\.\s+", t) and (
             re.search(r"[（(][^）)]+\.[A-Za-z0-9]{2,4}[）)]", t)
@@ -218,6 +251,8 @@ def draft_for_task(t: dict | None, items: list | None, *, actor_name: str = "", 
     )
     ident = identity_of(t or {})
     app = (t or {}).get("app") if isinstance((t or {}).get("app"), dict) else {}
+    ps_rows = [x for x in rows if _ps_change_lines(x)]
+    refs = collect_download_refs(ps_rows)
     return {
         "configured": configured(),
         "note": build_note(
@@ -225,10 +260,11 @@ def draft_for_task(t: dict | None, items: list | None, *, actor_name: str = "", 
             app_name=str(app.get("name") or ""),
             talent_id=str(ident.get("attachId") or app.get("attachId") or app.get("no") or ""),
             talent_name=str(ident.get("personName") or app.get("personName") or ""),
-            items=rows,
+            items=ps_rows,
         ),
         "actorName": str(actor_name or "").strip(),
-        "fileCount": len(collect_download_refs(rows)),
+        "fileCount": len(refs),
+        "files": [{"filename": r.get("filename") or "", "title": r.get("title") or ""} for r in refs],
     }
 
 
@@ -533,7 +569,8 @@ async def preupload_task_list(t: dict, task_list: list, *, note: str = "", actor
     skipped = []
     packed = []
     seen_name = set()
-    refs = collect_download_refs(items)
+    ps_items = [x for x in items if _ps_change_lines(x)]
+    refs = collect_download_refs(ps_items)
     task_dir = str((t or {}).get("dir") or "")
     for ref in refs:
         fn = str(ref.get("filename") or "file")

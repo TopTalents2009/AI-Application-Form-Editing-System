@@ -28,6 +28,12 @@
     if (name) return name;
     var src = String(t.source || '');
     if (src === 'wecom' || src === 'wecom-watch') return '会话';
+    var apiName = String(t.apiKeyName || '').trim();
+    if (!apiName) {
+      var actor = String(t.apiActor || '');
+      if (/^API:/i.test(actor)) apiName = actor.replace(/^API:/i, '').trim();
+    }
+    if (src === 'openapi' || t.apiKeyId || apiName) return apiName || '开放API';
     return '人工提交';
   }
   function parseStamp(s) {
@@ -65,8 +71,63 @@
   var ingestTimer = null;
   var ingestBound = false;
   var ingestCache = { groups: [], stats: {} };
+  var ingestOpen = { groups: {}, apps: {} };
   var ingestPage = 1;
   var INGEST_PAGE_SIZE = 20;
+  var IG_CHEV = '<svg class="ig-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  function ingestAid(g) {
+    return String((g && (g.attachId || g.title)) || '无编号');
+  }
+  function ingestAppKey(g, f) {
+    return ingestAid(g) + ':' + String((f && (f.id || f.taskId || f.filename)) || '');
+  }
+  function rememberIngestOpen() {
+    var box = document.getElementById('ingestBoard');
+    if (!box) return ingestOpen;
+    box.querySelectorAll('details.ingest-group[data-ig-id]').forEach(function (el) {
+      var id = el.getAttribute('data-ig-id') || '';
+      if (!id) return;
+      if (el.open) ingestOpen.groups[id] = true;
+      else delete ingestOpen.groups[id];
+      el.querySelectorAll('details.ingest-app[data-ig-app]').forEach(function (app) {
+        var k = app.getAttribute('data-ig-app') || '';
+        if (!k) return;
+        if (app.open) ingestOpen.apps[k] = true;
+        else delete ingestOpen.apps[k];
+      });
+    });
+    return ingestOpen;
+  }
+  function restoreIngestOpen() {
+    var box = document.getElementById('ingestBoard');
+    if (!box) return;
+    box.querySelectorAll('details.ingest-group[data-ig-id]').forEach(function (el) {
+      var id = el.getAttribute('data-ig-id') || '';
+      if (ingestOpen.groups[id]) el.open = true;
+      el.querySelectorAll('details.ingest-app[data-ig-app]').forEach(function (app) {
+        var k = app.getAttribute('data-ig-app') || '';
+        if (ingestOpen.apps[k]) app.open = true;
+      });
+    });
+  }
+  function renderIngestFileCells(f) {
+    f = f || {};
+    var st = f.ok ? '<span class="badge st-done">已入库</span>' : '<span class="badge st-failed">' + esc(f.status || '失败') + '</span>';
+    var sess = f.sessionName || f.sessionId || '';
+    var acts = [];
+    if (f.source === 'app_edit' && f.id) acts.push('<button type="button" class="mini primary" data-ig-preview="' + esc(String(f.id)) + '">预览</button>');
+    if (f.url) acts.push('<a class="mini" href="' + esc(f.url) + '">下载</a>');
+    if (f.taskId) acts.push('<a class="mini" href="/t/' + encodeURIComponent(f.taskId) + '" target="_blank" rel="noopener">任务</a>');
+    var kind = f.source === 'app_edit'
+      ? (f.version ? '申报书 ' + f.version : (f.label || '申报书'))
+      : (f.label || f.kind || '材料');
+    return '<span class="kind">' + esc(kind) + '</span>' +
+      '<span class="fn" title="' + esc(f.filename || '') + '">' + esc(f.filename || '未命名') + '</span>' +
+      '<span>' + st + '</span>' +
+      '<span class="meta">' + esc(f.sourceLabel || '') + (sess ? ' · ' + esc(sess) : '') + '</span>' +
+      '<span class="meta">' + esc(f.sender || f.personName || '') + (f.time || f.at ? ' · ' + esc(f.time || f.at) : '') + '</span>' +
+      '<span class="ingest-acts">' + acts.join('') + '</span>';
+  }
   function ingestQuery() {
     var q = ((document.getElementById('igQ') || {}).value || '').trim();
     var source = ((document.getElementById('igSource') || {}).value || '').trim();
@@ -105,37 +166,29 @@
       if (pager) pager.hidden = true;
       return;
     }
-    var chev = '<svg class="ig-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
     box.innerHTML = slice.map(function (g) {
-      var aid = g.attachId || g.title || '无编号';
-      var n = (g.files || []).length;
-      var head = '<summary class="ingest-group-hd">' + chev + '<b>' + esc(aid) + '</b>' +
+      var aid = ingestAid(g);
+      var files = g.files || [];
+      var n = files.length;
+      var head = '<summary class="ingest-group-hd">' + IG_CHEV + '<b>' + esc(aid) + '</b>' +
         (g.personName ? '<em>' + esc(g.personName) + '</em>' : '') +
         '<em>' + n + ' 份</em>' +
         (g.appCount ? '<em>申报书 ' + g.appCount + ' 版</em>' : '') +
         (g.opinionCount ? '<em>意见 ' + g.opinionCount + ' 条</em>' : '') +
         (g.latestAt ? '<em>最新 ' + esc(g.latestAt) + '</em>' : '') +
         (g.failCount ? '<em>失败 ' + g.failCount + '</em>' : '') + '</summary>';
-      var rows = (g.files || []).map(function (f) {
-        var st = f.ok ? '<span class="badge st-done">已入库</span>' : '<span class="badge st-failed">' + esc(f.status || '失败') + '</span>';
-        var sess = f.sessionName || f.sessionId || '';
-        var acts = [];
-        if (f.source === 'app_edit' && f.id) acts.push('<button type="button" class="mini primary" data-ig-preview="' + esc(String(f.id)) + '">预览</button>');
-        if (f.url) acts.push('<a class="mini" href="' + esc(f.url) + '">下载</a>');
-        if (f.taskId) acts.push('<a class="mini" href="/t/' + encodeURIComponent(f.taskId) + '" target="_blank" rel="noopener">任务</a>');
-        var row = '<div class="ingest-file">' +
-          '<span class="kind">' + esc(f.label || f.kind || '材料') + '</span>' +
-          '<span class="fn" title="' + esc(f.filename || '') + '">' + esc(f.filename || '未命名') + '</span>' +
-          '<span>' + st + '</span>' +
-          '<span class="meta">' + esc(f.sourceLabel || '') + (sess ? ' · ' + esc(sess) : '') + '</span>' +
-          '<span class="meta">' + esc(f.sender || f.personName || '') + (f.time || f.at ? ' · ' + esc(f.time || f.at) : '') + '</span>' +
-          '<span class="ingest-acts">' + acts.join('') + '</span>' +
-          '</div>';
-        if (f.source === 'app_edit') row += renderIngestOpinions(f);
-        return row;
+      var rows = files.map(function (f) {
+        if (f.source === 'app_edit') {
+          return '<details class="ingest-app" data-ig-app="' + escAttr(ingestAppKey(g, f)) + '">' +
+            '<summary class="ingest-app-hd">' + IG_CHEV + renderIngestFileCells(f) + '</summary>' +
+            renderIngestOpinions(f) +
+            '</details>';
+        }
+        return '<div class="ingest-file">' + renderIngestFileCells(f) + '</div>';
       }).join('');
-      return '<details class="ingest-group">' + head + rows + '</details>';
+      return '<details class="ingest-group" data-ig-id="' + escAttr(aid) + '">' + head + rows + '</details>';
     }).join('');
+    restoreIngestOpen();
     if (pager) {
       pager.hidden = total <= INGEST_PAGE_SIZE;
       if (info) info.textContent = '第 ' + ingestPage + ' / ' + pages + ' 页 · 共 ' + total + ' 个编号';
@@ -167,29 +220,49 @@
     }
     return html + '</div>';
   }
-  function paintIngestBoard(d) {
+  function paintIngestBoard(d, opts) {
     d = d || {};
+    opts = opts || {};
+    rememberIngestOpen();
     ingestCache.groups = d.groups || [];
     ingestCache.stats = d;
-    ingestPage = 1;
+    if (!opts.keepPage) ingestPage = 1;
     paintIngestStats(d);
     renderIngestPage();
   }
   function loadIngestBoard(quiet) {
     var box = document.getElementById('ingestBoard');
+    rememberIngestOpen();
     if (box && !quiet) box.innerHTML = '<div class="wecom-empty">加载入库记录…</div>';
     fetch('/api/admin/talent-ingest' + ingestQuery()).then(function (r) {
       return r.json().then(function (j) { return { ok: r.ok, j: j }; });
     }).then(function (x) {
       if (!x.ok) throw new Error((x.j && (x.j.detail || x.j.message)) || '加载失败');
-      paintIngestBoard(x.j);
+      paintIngestBoard(x.j, { keepPage: !!quiet });
     }).catch(function (e) {
       if (box) box.innerHTML = '<div class="wecom-empty">' + esc(e.message || '入库库不可用') + '</div>';
     });
     if (!ingestBound) {
       ingestBound = true;
+      if (box) {
+        box.addEventListener('toggle', function (e) {
+          var t = e.target;
+          if (!t || !t.getAttribute) return;
+          if (t.classList.contains('ingest-group')) {
+            var id = t.getAttribute('data-ig-id') || '';
+            if (!id) return;
+            if (t.open) ingestOpen.groups[id] = true;
+            else delete ingestOpen.groups[id];
+          } else if (t.classList.contains('ingest-app')) {
+            var k = t.getAttribute('data-ig-app') || '';
+            if (!k) return;
+            if (t.open) ingestOpen.apps[k] = true;
+            else delete ingestOpen.apps[k];
+          }
+        }, true);
+      }
       var qEl = document.getElementById('igQ');
-      var go = function () { loadIngestBoard(true); };
+      var go = function () { ingestPage = 1; loadIngestBoard(true); };
       if (qEl) qEl.addEventListener('input', function () {
         clearTimeout(ingestTimer);
         ingestTimer = setTimeout(go, 280);
@@ -413,6 +486,7 @@
       var btn = e.target.closest && e.target.closest('[data-ig-preview]');
       if (btn) {
         e.preventDefault();
+        e.stopPropagation();
         openIgPreview(btn.getAttribute('data-ig-preview'));
         return;
       }

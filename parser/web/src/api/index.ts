@@ -100,6 +100,8 @@ export interface IngestInfo {
   read_api?: ReadApiInfo
   agent_update?: AgentUpdateInfo
   latest_agent_version?: string
+  uninstall_published?: boolean
+  uninstall_download_url?: string
 }
 
 export interface PresenceClient {
@@ -165,6 +167,8 @@ export function apiErrorMessage(err: unknown, fallback = '请求失败') {
 export const chatApi = {
   getPlatforms: () => api.get<Platform[]>('/platforms'),
   getSources: () => api.get<Source[]>('/sources'),
+  deleteSource: (sourceId: string) =>
+    api.delete<{ ok: boolean; source_id: string }>(`/sources/${encodeURIComponent(sourceId)}`),
   getIngestInfo: () => api.get<IngestInfo>('/ingest/info'),
   getPresence: (since = 0) =>
     api.get<PresenceSnapshot>('/presence', { params: { since } }),

@@ -109,12 +109,19 @@ body{min-height:0;max-height:100%}
 .ingest-group-hd b{font-size:16px;color:var(--ink);letter-spacing:.5px}
 .ingest-group-hd em{font-style:normal;font-size:12px;color:#8a93a6}
 .ig-chev{width:14px;height:14px;color:#8a93a6;flex:0 0 14px;transition:transform .15s}
-.ingest-group[open] .ig-chev{transform:rotate(90deg)}
-.ingest-file{display:grid;grid-template-columns:100px minmax(140px,1.3fr) 76px minmax(90px,.7fr) minmax(120px,.8fr) auto;gap:8px 12px;align-items:center;padding:10px 16px;border-bottom:1px solid #f0f3f8;font-size:13px}
+.ingest-group[open] > .ingest-group-hd .ig-chev{transform:rotate(90deg)}
+.ingest-file,.ingest-app-hd{display:grid;grid-template-columns:100px minmax(140px,1.3fr) 76px minmax(90px,.7fr) minmax(120px,.8fr) auto;gap:8px 12px;align-items:center;padding:10px 16px;border-bottom:1px solid #f0f3f8;font-size:13px}
+.ingest-app-hd{grid-template-columns:14px 100px minmax(140px,1.3fr) 76px minmax(90px,.7fr) minmax(120px,.8fr) auto;border-bottom:none;cursor:pointer;list-style:none}
+.ingest-app-hd::-webkit-details-marker{display:none}
+.ingest-app-hd::marker{content:''}
 .ingest-file:last-child{border-bottom:none}
-.ingest-file .fn{font-weight:600;color:var(--ink);word-break:break-all}
-.ingest-file .meta{color:#5b6577;font-size:12px}
-.ingest-file .kind{font-size:12px;font-weight:700;color:#2450a4}
+.ingest-file .fn,.ingest-app-hd .fn{font-weight:600;color:var(--ink);word-break:break-all}
+.ingest-file .meta,.ingest-app-hd .meta{color:#5b6577;font-size:12px}
+.ingest-file .kind,.ingest-app-hd .kind{font-size:12px;font-weight:700;color:#2450a4}
+.ingest-app{border-bottom:1px solid #f0f3f8;background:#fff}
+.ingest-app:last-child{border-bottom:none}
+.ingest-app[open] > .ingest-app-hd .ig-chev{transform:rotate(90deg)}
+.ingest-app .ingest-ops{border-bottom:none}
 .ingest-ops{padding:0 16px 12px 116px;background:#fafbfd;border-bottom:1px solid #f0f3f8}
 .ingest-group > .ingest-ops:last-child{border-bottom:none}
 .ingest-op{display:grid;grid-template-columns:88px minmax(120px,1fr);gap:4px 12px;padding:8px 0 4px;font-size:12.5px}
@@ -144,7 +151,7 @@ body{min-height:0;max-height:100%}
 .ig-mask{color:#8a93a6}
 .ig-preview-raw{margin-top:8px;font-size:13px;color:#5b6577}
 @media (max-width:900px){
-  .ingest-file{grid-template-columns:1fr;gap:4px}
+  .ingest-file,.ingest-app-hd{grid-template-columns:1fr;gap:4px}
   .ingest-ops{padding-left:16px}
 }
 

@@ -49,9 +49,16 @@ class WecomSyncAgentTests(unittest.TestCase):
             def __exit__(self, *args):
                 return False
 
-        with mock.patch.object(agent.request, "urlopen", return_value=FakeResp()):
+        with mock.patch.object(agent, "_urlopen", return_value=FakeResp()):
             info = agent.fetch_ingest_info("http://192.168.2.25:8767")
         self.assertEqual(info["token"], "abc123")
+
+    def test_direct_opener_ignores_http_proxy(self):
+        proxies = {}
+        for handler in agent._DIRECT.handlers:
+            if isinstance(handler, agent.request.ProxyHandler):
+                proxies = dict(handler.proxies)
+        self.assertEqual(proxies, {})
 
     def test_auto_sync_all_when_none_checked(self):
         rows = [
@@ -236,7 +243,7 @@ class WecomSyncAgentTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             dest = os.path.join(tmp, "WeComSyncAgent.exe")
-            with mock.patch.object(agent.request, "urlopen", return_value=FakeResp()):
+            with mock.patch.object(agent, "_urlopen", return_value=FakeResp()):
                 path = agent.download_agent_exe("http://x/a", "tok", dest, len(payload), sha)
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), payload)

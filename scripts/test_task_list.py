@@ -197,6 +197,30 @@ def test_job_title_follows_gemini_edit():
     assert any("首席功率芯片应用工程师" in x for x in (hit.get("locations") or []))
 
 
+def test_ps_locations_skip_retrieve_and_keep_passport_fields():
+    kind = {"id": "passport", "label": "护照", "keys": ("护照", "passport")}
+    clauses = [
+        {"clause": "补充护照，重要内容重点翻译标亮", "opinion": "2.补充护照，重要内容重点翻译标亮"},
+        {"clause": "补充护照附件材料", "opinion": "1.请补充护照;"},
+    ]
+    leftovers = [
+        "【缺附件·身份证明】未检索到可下载文件。",
+        "【Gemini·其他】针对[S2]与[S6]：补充护照附件材料并对重要内容重点翻译标亮。系统已检索到护照扫描件文件（身份证或护照扫描件_扫描版.pdf），下载链接为：/api/tasks/1a16120140a-25f044/ext-files/ab10fd7。请下载并上传该护照扫描件，同时对其个人姓名（ALESSANDRO MAGNANI）、国籍（意大利）、出生日期（1985.12.23）、护照号码（YB2396205）及有效期限等关键信息提供规范中文翻译并重点标亮。",
+    ]
+    locs = collect_kind_locations(kind, clauses=clauses, leftovers=leftovers)
+    text = "\n".join(locs)
+    assert "ALESSANDRO MAGNANI" in text
+    assert "YB2396205" in text
+    assert "未检索到可下载文件" not in text
+    assert "需要补充材料" not in text
+    assert "请补充护照" not in text
+    id_kind = {"id": "id_doc", "label": "身份证明", "keys": ("身份证明", "身份证", "永居证")}
+    id_locs = collect_kind_locations(id_kind, clauses=clauses, leftovers=leftovers)
+    assert not any("未检索到" in str(x) for x in id_locs)
+    kinds = extract_needed_kinds(leftovers + ["补充护照，重要内容重点翻译标亮"])
+    assert "id_doc" not in [k["id"] for k in kinds]
+
+
 def test_write_task_list_docx():
     local = LOCAL_ATTACH_ROOT / "51104" / "护照" / "51104护照.pdf"
     items = [{
@@ -243,4 +267,5 @@ if __name__ == "__main__":
     test_write_task_list_docx()
     test_collect_kind_locations_from_clauses()
     test_job_title_follows_gemini_edit()
+    test_ps_locations_skip_retrieve_and_keep_passport_fields()
     print("ok")

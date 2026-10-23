@@ -82,6 +82,17 @@ class PresenceHubTests(unittest.TestCase):
         self.assertEqual(known[0]["source_id"], "sky")
         self.assertEqual(known[0]["operator_name"], "唐利萍")
 
+    def test_forget_drops_client_without_alert(self):
+        clock = Clock()
+        hub = PresenceHub(now=clock.now)
+        hub.heartbeat("pc-a", "张三", "PC-A")
+        self.assertTrue(hub.forget("pc-a"))
+        self.assertEqual(hub.known_clients(), [])
+        self.assertEqual(hub.snapshot()["online"], [])
+        kinds = [a["kind"] for a in hub.snapshot()["alerts"]]
+        self.assertNotIn("offline", kinds)
+        self.assertFalse(hub.forget("pc-a"))
+
     def test_heartbeat_keeps_agent_version(self):
         clock = Clock()
         hub = PresenceHub(now=clock.now)

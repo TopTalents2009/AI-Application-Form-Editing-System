@@ -10,6 +10,11 @@ MDATE_CODE = re.compile(r"^0\d{3}$")  # 文件名里的月日残留，如 0310
 _FILE_STAMP = re.compile(
     r"20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?:[_-]?(?:[01]\d|2[0-3])[0-5]\d[0-5]\d)?"
 )
+# 企业微信截图_17773671632174(1).png 里的设备时间戳不是人才编号
+_WECOM_SHOT_STAMP = re.compile(
+    r"(?:企业微信截图|微信截图|屏幕截图|screen\s*shot|screenshot)_\d+",
+    re.I,
+)
 CN_STOP = {"申报", "人才", "项目", "企业", "论文", "专利", "附件", "材料", "意见"}
 NAME_STOP = CN_STOP | {"青年", "创新", "团队", "博士", "教授", "总结", "修改", "个人", "基本情况", "冶金园", "修订", "意向协议", "意向书", "协议", "合同"}
 LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z\s.',\-]{3,}$")
@@ -66,7 +71,8 @@ def is_book_num(raw: str) -> bool:
 
 def extract_book_nums(fname: str) -> list:
     seen, nums = set(), []
-    blob = _FILE_STAMP.sub(" ", str(fname or ""))
+    blob = _WECOM_SHOT_STAMP.sub(" ", str(fname or ""))
+    blob = _FILE_STAMP.sub(" ", blob)
     for raw in re.findall(r"\d{4,6}", blob):
         if raw in seen or not is_book_num(raw):
             continue

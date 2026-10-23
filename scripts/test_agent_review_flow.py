@@ -225,16 +225,26 @@ def check_static():
     js = open(os.path.join(ROOT, "static", "agent-review.js"), encoding="utf-8").read()
     css = open(os.path.join(ROOT, "static", "style.css"), encoding="utf-8").read()
     admin_js = open(os.path.join(ROOT, "static", "admin-agent-review.js"), encoding="utf-8").read()
-    if "agent-review.js?v=py38" not in index:
-        issue("index.html 未引用 agent-review.js?v=py38")
+    if "agent-review.js?v=py40" not in index:
+        issue("index.html 未引用 agent-review.js?v=py40")
+    if "arThumbHtml" not in js or "arBindThumbs" not in js:
+        issue("agent-review.js 缺少图片预览")
+    ar_fn = js.find("function arWatched")
+    ar_chunk = js[ar_fn:ar_fn + 900] if ar_fn >= 0 else ""
+    if "state.watchGroups" not in ar_chunk:
+        issue("arWatched 未使用本页关注名单")
+    wg = ar_chunk.find("state.watchGroups")
+    fn = ar_chunk.find("wecomGroupWatched")
+    if fn >= 0 and (wg < 0 or wg > fn):
+        issue("arWatched 在本页关注名单就绪前就依赖 wecomGroupWatched，会滤空会话")
     if "canReview" not in js:
         issue("agent-review.js 缺少 canReview")
     if "补充意图" not in js:
         issue("agent-review.js 缺少补充意图")
     if "选择其他意图" in js:
         issue("审核弹窗不应再摊整份写死词表")
-    if "style.css?v=py130" not in index:
-        issue("index.html 未引用 style.css?v=py130")
+    if "style.css?v=py135" not in index:
+        issue("index.html 未引用 style.css?v=py135")
     for needle in ("ar-hit-reviewed", "已审核 · 改", "hit.reviewed", "run.reviewed"):
         if needle not in js:
             issue("agent-review.js 缺少 " + needle)

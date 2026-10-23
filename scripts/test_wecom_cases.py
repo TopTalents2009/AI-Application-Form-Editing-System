@@ -113,6 +113,9 @@ def test_company_docx_without_shenbaoshu_word_is_app():
     assert classify_file("评审会议纪要.docx") == "ignore"
     assert classify_file("辅导安排.docx") == "ignore"
     assert classify_file("辅导.docx") == "ignore"
+    assert classify_file("20260303广东康德威电气股份有限公司简介.docx") != "app"
+    assert classify_file("广东康德威电气股份有限公司介绍.docx") != "app"
+    assert classify_file("42413广东康德威电气股份有限公司申报书.docx") == "app"
 
 
 def test_cue_pairs_company_app_with_wps_opinion():

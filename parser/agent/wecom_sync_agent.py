@@ -16,6 +16,14 @@ from tkinter import messagebox, simpledialog, ttk
 from urllib import error, request
 from urllib.parse import quote
 
+# Clash 等系统代理会把 192.168.x 转成 HTTP 502。Python 的 no_proxy 不认 CIDR，
+# 必须强制直连；助手只访问分析机局域网，不需要走代理。
+_DIRECT = request.build_opener(request.ProxyHandler({}))
+
+
+def _urlopen(req, timeout=8):
+    return _DIRECT.open(req, timeout=timeout)
+
 
 def _bundle_dir() -> str:
     if getattr(sys, "frozen", False):
@@ -696,7 +704,7 @@ def checked_ids_for_render(conversations: list, saved_ids: list, seen_ids: list 
 def fetch_ingest_info(server_url: str, timeout: int = 8) -> dict:
     url = server_url.rstrip("/") + "/api/ingest/info"
     req = request.Request(url, method="GET")
-    with request.urlopen(req, timeout=timeout) as resp:
+    with _urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -723,7 +731,7 @@ def _post_json(server_url: str, path: str, payload: dict, token: str, timeout: i
         "Content-Type": "application/json; charset=utf-8",
         "X-Ingest-Token": token,
     })
-    with request.urlopen(req, timeout=timeout) as resp:
+    with _urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -814,7 +822,7 @@ def download_agent_exe(url: str, token: str, dest: str, expected_size: int, expe
     tmp = dest + ".part"
     digest = hashlib.sha256()
     req = request.Request(url, headers={"X-Ingest-Token": token})
-    with request.urlopen(req, timeout=120) as resp:
+    with _urlopen(req, timeout=120) as resp:
         with open(tmp, "wb") as handle:
             while True:
                 chunk = resp.read(256 * 1024)
@@ -1028,7 +1036,7 @@ def upload_attachment(server_url: str, token: str, job_id: str, message_id: int,
         "X-Message-Id": str(int(message_id or 0)),
         "X-Filename": quote(filename, safe=""),
     })
-    with request.urlopen(req, timeout=120) as resp:
+    with _urlopen(req, timeout=120) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -1082,7 +1090,7 @@ def process_log_job(server_url: str, token: str, job: dict) -> str:
         "X-Job-Id": job_id,
         "X-Filename": quote("agent.log", safe=""),
     })
-    with request.urlopen(req, timeout=60) as resp:
+    with _urlopen(req, timeout=60) as resp:
         json.loads(resp.read().decode("utf-8"))
     return "ready"
 

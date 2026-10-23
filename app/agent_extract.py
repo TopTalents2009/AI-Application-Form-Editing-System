@@ -45,6 +45,24 @@ def filename_of(message: dict) -> str:
     return m.group(1) if m else ""
 
 
+def is_image_message(message: dict) -> bool:
+    name = filename_of(message)
+    if re.search(r"\.(png|jpe?g|gif|webp|bmp|tif|tiff)$", name, re.I):
+        return True
+    if name in {"图片", "photo", "image"} or "截图" in name:
+        return True
+    if str(message.get("media_url") or "").strip():
+        return True
+    try:
+        typ = int(message.get("msg_type") or 0)
+    except (TypeError, ValueError):
+        typ = 0
+    if typ in (4, 15):
+        return True
+    label = str(message.get("msg_type_label") or "").strip()
+    return label == "图片" or label.lower() in ("image", "photo")
+
+
 def talent_ids(*parts: str) -> list[str]:
     found: list[str] = []
     for part in parts:

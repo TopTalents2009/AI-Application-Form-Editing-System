@@ -54,14 +54,21 @@ def test_pages_in_html_and_urls():
     talent_at = html.index('id="ingestTalentPanel"')
     wecom_end = html.find('</section>', wecom_at)
     ingest_end = html.find('</section>', ingest_at)
-    assert wecom_at < watch_at < wecom_end
+    trace_at = html.index('id="idTracePanel"')
+    assert wecom_at < watch_at < trace_at < wecom_end
     assert ingest_at < talent_at < ingest_end
+    assert "编号足迹" in html[wecom_at:wecom_end]
+    assert 'id="idTraceQ"' in html[wecom_at:wecom_end]
     assert "igTalentUpload" in html[ingest_at:ingest_end]
     assert "igStApps" in html[ingest_at:ingest_end]
     assert "igStLocal" in html[ingest_at:ingest_end]
     assert 'id="igPager"' in html[ingest_at:ingest_end]
     assert "INGEST_PAGE_SIZE" in bundle
-    assert "<details class=\"ingest-group\">" in bundle
+    assert "ingest-group" in bundle
+    assert "ingest-app" in bundle
+    assert "rememberIngestOpen" in bundle
+    assert "restoreIngestOpen" in bundle
+    assert "keepPage" in bundle
     assert "renderIngestPage" in bundle
     assert 'value="app_edit"' in html[ingest_at:ingest_end]
     assert 'value="local"' in html[ingest_at:ingest_end]
@@ -84,7 +91,8 @@ def test_pages_in_html_and_urls():
     assert "igPreviewOpinions" in bundle
     assert "ingest-ops" in bundle
     assert "对应修改意见" in bundle
-    assert "admin-ingest.js?v=py2" in html
+    assert "admin-ingest.js?v=py3" in html
+    assert "admin.css?v=py3" in html
     assert "预览" in html
     assert "ingest-acts" in bundle
     assert "ig-preview-plain" in bundle

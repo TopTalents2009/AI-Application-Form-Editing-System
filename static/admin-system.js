@@ -28,6 +28,12 @@
     if (name) return name;
     var src = String(t.source || '');
     if (src === 'wecom' || src === 'wecom-watch') return '会话';
+    var apiName = String(t.apiKeyName || '').trim();
+    if (!apiName) {
+      var actor = String(t.apiActor || '');
+      if (/^API:/i.test(actor)) apiName = actor.replace(/^API:/i, '').trim();
+    }
+    if (src === 'openapi' || t.apiKeyId || apiName) return apiName || '开放API';
     return '人工提交';
   }
   function parseStamp(s) {

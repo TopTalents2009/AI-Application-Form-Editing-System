@@ -108,7 +108,7 @@ def test_progress_ui_wired():
     assert "function wecomProgressHtml" in js
     assert "function wecomPostProgress" in js
     assert "body.stream = true" in js
-    assert "wecom-board.js?v=py86" in index
+    assert "wecom-board.js?v=py95" in index
     assert ".wecom-progress" in css
     print("progress ui wired")
 

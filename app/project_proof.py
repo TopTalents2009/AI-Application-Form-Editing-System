@@ -64,6 +64,80 @@ def person_name(snap: dict) -> str:
     return str(names[0] or "").strip() if names else ""
 
 
+_HJ_PROJ_RE = re.compile(
+    r"(?P<start>20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})(?:\s+00:00:00)?"
+    r"\s+(?P<end>20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}|至今)(?:\s+00:00:00)?"
+    r"[\t ]+项目性质[：:]\s*(?P<nature>[^\n]{1,40})"
+    r"\s*项目来源[：:]\s*(?P<funding>[^\n]{2,160}(?:\n[^\n]{0,80})?)"
+    r"\s+(?P<budget>\d{2,5}(?:\.\d+)?)\s+"
+    r"(?P<rank>\d{1,2}/\d{1,2})\s+"
+    r"具体职务[：:]\s*(?P<role>[^\n任务]{2,40})"
+    r"\s*任务[：:\s]*(?P<task>[^\n]{8,500})",
+    re.I,
+)
+_TASK_LEAD_RE = re.compile(
+    r"^申报人(?:负责|领导|研究|针对|创新性提出|策划并主编|策划|主编|深入研究|研发|监督)?"
+)
+
+
+def _name_from_project_task(task: str) -> str:
+    t = re.sub(r"\s+", " ", str(task or "")).strip()
+    t = _TASK_LEAD_RE.sub("", t).strip(" ：:，,")
+    t = re.sub(r"^(关于|针对)", "", t).strip()
+    t = re.split(r"[。；]", t, 1)[0].strip()
+    head = re.split(r"[，,]", t, 1)[0].strip()
+    if 8 <= len(head) <= 72:
+        t = head
+    elif len(t) > 72:
+        t = t[:68].rstrip()
+    t = re.sub(r"(的总体实验构思|的假说|的临床转化研究|的关联实验)$", "", t)
+    return t.strip(" ，,")
+
+
+def _extract_hj_form_projects(text: str) -> list:
+    """HJ 申报书「代表性科研项目」表：起止日 + 项目来源 + 任务描述。"""
+    raw = str(text or "")
+    if "代表性科研项目" not in raw and "项目来源" not in raw:
+        return []
+    cut = raw
+    for mark in ("3.主要成果", "Achievement", "代表性论著", "Publications"):
+        i = cut.find(mark)
+        if i > 0:
+            cut = cut[:i]
+            break
+    start = cut.find("代表性科研项目")
+    if start >= 0:
+        cut = cut[start:]
+    if len(cut) > 20000:
+        cut = cut[:20000]
+    out = []
+    for m in _HJ_PROJ_RE.finditer(cut):
+        funding = re.sub(r"\s+", "", str(m.group("funding") or ""))
+        funding = re.split(r"具体职务|任务：", funding, 1)[0].strip(" ，,;；")
+        if len(funding) > 80:
+            funding = funding[:80]
+        task = str(m.group("task") or "").strip()
+        name = _name_from_project_task(task)
+        if len(name) < 4:
+            src_short = funding[:24] or str(m.group("nature") or "").strip()
+            name = (src_short + " " + str(m.group("start") or "")[:4]).strip()
+        if len(name) < 4:
+            continue
+        role = re.sub(r"\s+", "", str(m.group("role") or ""))
+        role = re.split(r"任务", role, 1)[0].strip(" ：:")
+        out.append({
+            "name": name,
+            "开始时间": str(m.group("start") or "").replace("/", "-")[:10],
+            "结束时间": str(m.group("end") or "").replace("/", "-")[:10],
+            "项目来源": funding,
+            "项目性质": re.sub(r"\s+", "", str(m.group("nature") or ""))[:20],
+            "经费总额": str(m.group("budget") or ""),
+            "参与人数": str(m.group("rank") or ""),
+            "担任角色": role,
+        })
+    return out[:12]
+
+
 def extract_projects(snap: dict, app_text: str = "") -> list:
     acc, seen = [], set()
 
@@ -106,6 +180,9 @@ def extract_projects(snap: dict, app_text: str = "") -> list:
         add(m.group("name").strip(), extra or None)
     for m in re.finditer(r"项目名称[：:\s|｜]*([^\n。|]{4,80})", text):
         add(m.group(1).strip())
+    for row in _extract_hj_form_projects(text):
+        extra = {k: row[k] for k in row if k != "name"}
+        add(row.get("name") or "", extra)
     return acc[:12]
 
 
@@ -115,19 +192,43 @@ def identity_from_app_text(app_text: str) -> dict:
 
     def one(pat: str) -> str:
         m = re.search(pat, text)
-        return (m.group(1) or "").strip() if m else ""
+        if not m:
+            return ""
+        return re.sub(r"\s+", " ", (m.group(1) or "")).strip(" ：:|｜\t*")
 
+    def drop_hint(s: str) -> str:
+        s = re.split(r"请输入|请选择|请填写|请按照", str(s or ""), 1)[0]
+        s = re.sub(r"\s+", " ", s).strip()
+        if len(s) > 80 or s.count("。") >= 1:
+            return ""
+        return s
+
+    name_en = one(r"Name of Applicant\s+([A-Za-z][A-Za-z'’.\-\s]{1,80})")
+    name_zh = one(r"申报人姓名(?:\s*\(\s*中文名\s*\))?[：:\s]+([^\n*]{2,40})")
+    if name_zh and re.search(r"Name of Applicant|英文", name_zh):
+        name_zh = ""
+    company = (
+        one(r"依托单位名称\s+([^\n]{4,80})")
+        or one(r"申报企业[：:]\s*([^\n]{2,80})")
+        or one(r"引进企业[：:]\s*([^\n]{2,80})")
+    )
+    company = drop_hint(company)
+    name = name_en or name_zh or one(r"有效证件姓名[：:\s]*([^\n]{2,40})")
     return {
-        "name": one(r"申报人姓名[：:\s]*([^\n]{2,40})") or one(r"有效证件姓名[：:\s]*([^\n]{2,40})"),
-        "company": one(r"申报企业[：:\s]*([^\n]{2,80})") or one(r"引进企业[：:\s]*([^\n]{2,80})"),
+        "name": name,
+        "name_en": name_en,
+        "name_zh": name_zh,
+        "company": company,
         "attach_id": one(r"(?:申报书编号|人才编号)[：:\s]*(\d{4,8})"),
     }
 
 
 _CN_PLACES = ("中国", "内地", "境内", "香港", "澳门", "台湾", "china", "prc", "hong kong", "macao", "taiwan")
 _FUNDING_RE = re.compile(
-    r"基金|能源部|国防部|科技部|自然科学|NSF|NIH|DOE|DoD|NASA|DARPA|Horizon|UKRI|NSFC|"
-    r"欧盟|NSERC|Mitacs|ARC|EPSRC|国家重点研发|省科技厅",
+    r"基金|能源部|国防部|科技部|自然科学|卫生部|教育部|理事会|慈善|"
+    r"NSF|NIH|DOE|DoD|NASA|DARPA|Horizon|UKRI|NSFC|MRC|BBSRC|BBSC|ERC|BHF|"
+    r"Wellcome|CORDIS|\bEU\b|欧盟|欧洲研究|NSERC|Mitacs|ARC|EPSRC|"
+    r"国家重点研发|省科技厅",
     re.I,
 )
 _FUNDING_EN = (
@@ -175,7 +276,7 @@ def _split_bilingual(text: str) -> tuple[str, str]:
         return m.group(1).strip(), m.group(2).strip()
     if _has_cjk(s) and re.search(r"[A-Za-z]", s):
         m = re.match(r"^(.+?)([A-Za-z].+)$", s)
-        if m:
+        if m and not _has_cjk(m.group(2)):
             return m.group(1).strip(), m.group(2).strip()
     return s, ""
 
@@ -230,9 +331,10 @@ def _pick_person_name(raw: str, language: str) -> str:
     zh, en = _split_bilingual(s)
     if language == "en":
         for part in (en, zh, s):
-            lat = re.sub(r"[\u4e00-\u9fff•·].*", "", part or "").strip(" /")
+            lat = re.sub(r"[\u4e00-\u9fff•·].*", "", part or "").strip(" /()")
+            lat = re.sub(r"^\(中文名\)\s*", "", lat).strip()
             if re.search(r"[A-Za-z]{2}", lat) and not _has_cjk(lat):
-                return lat
+                return re.sub(r"\s+", " ", lat).strip(" ,;")
         return en or s
     for part in (zh, s):
         if _has_cjk(part):
@@ -240,12 +342,97 @@ def _pick_person_name(raw: str, language: str) -> str:
     return zh or s
 
 
+def _best_person_name(snap: dict, ident: dict, language: str) -> str:
+    cands = [
+        person_name(snap),
+        str((ident or {}).get("name_en") or ""),
+        str((ident or {}).get("name") or ""),
+        str((ident or {}).get("name_zh") or ""),
+    ]
+    for n in ((snap or {}).get("keys") or {}).get("names") or []:
+        cands.append(str(n or ""))
+    if language == "en":
+        for c in cands:
+            picked = _pick_person_name(c, "en")
+            if picked and re.search(r"[A-Za-z]{2}", picked) and not _has_cjk(picked):
+                return picked
+    for c in cands:
+        picked = _pick_person_name(c, language)
+        if picked and "***" not in picked:
+            return picked
+    return ""
+
+
+def _field_from_app(text: str, *pats: str) -> str:
+    for pat in pats:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        v = re.sub(r"\s+", " ", (m.group(1) or "")).strip(" ：:|｜\t")
+        v = re.split(r"请输入|请选择|请填写", v, 1)[0].strip()
+        if v and v not in ("无", "***") and len(v) <= 80:
+            return v
+    return ""
+
+
+def _former_employer_from_app(app_text: str) -> dict:
+    """人才库缺失时，从申报书「回国（来华）前」栏位抽出签发单位。"""
+    text = str(app_text or "")
+    zh = _field_from_app(text, r"回国（来华）前工作单位（中文）[：:]\s*([^\n]{2,80})")
+    en_cell = _field_from_app(text, r"回国（来华）前工作单位（英文）[：:]\s*([^\n]{2,80})")
+    en_form = _field_from_app(
+        text,
+        r"Former Employer \(English\)[：:]\s*([^\n]{2,80})",
+        r"Former Employer[：:]\s*([^\n]{2,80})",
+    )
+    if en_cell and _has_cjk(en_cell) and not zh:
+        zh, en_cell = en_cell, ""
+    en = en_form or (en_cell if en_cell and not _has_cjk(en_cell) else "")
+    if not zh and en_cell and _has_cjk(en_cell):
+        zh = en_cell
+    country = _field_from_app(
+        text,
+        r"回国（来华）前所在国家（地区）[：:]\s*([^\n]{1,40})",
+        r"Former Country \(Region\) of Residence[：:]\s*([^\n]{1,40})",
+    )
+    role_zh = _field_from_app(text, r"回国（来华）前职务（中文）[：:]\s*([^\n]{1,40})")
+    role_en = _field_from_app(text, r"Former Position \(English\)[：:]\s*([^\n]{1,80})")
+    come = _field_from_app(
+        text,
+        r"回国（来华）时间[：:]\s*([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2})",
+        r"Time of Coming to China[：:]\s*([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2})",
+    )
+    start, end = "", ""
+    blob = zh or en
+    if blob:
+        m = re.search(
+            r"(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})(?:\s+00:00:00)?"
+            r"\s+(至今|20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})(?:\s+00:00:00)?"
+            r"\s+\S{0,12}\s+[^\n]{0,40}" + re.escape(blob[:12]),
+            text,
+        )
+        if m:
+            start = m.group(1).replace("/", "-")[:10]
+            end = "present" if m.group(2) == "至今" else m.group(2).replace("/", "-")[:10]
+    if not end and come:
+        end = come.replace("/", "-")
+    return {
+        "zh": zh,
+        "en": en,
+        "country": country,
+        "role_zh": role_zh,
+        "role_en": role_en,
+        "start": start,
+        "end": end,
+    }
+
+
 def declaring_company_names(snap: dict, app_text: str = "") -> list:
     out, seen = [], set()
     keys_co = str(((snap or {}).get("keys") or {}).get("company") or "").strip()
     ident_co = str(identity_from_app_text(app_text).get("company") or "").strip()
     for name in (keys_co, ident_co):
-        if not name:
+        if not name or len(name) > 80 or name.count("。") >= 1:
             continue
         k = name.lower()
         if k in seen:
@@ -329,6 +516,21 @@ def prior_work_context(snap: dict, app_text: str = "") -> dict:
         role_zh = str(info.get("回国前职务中文") or "").strip()
     if not role_en:
         role_en = str(info.get("回国前职务英文") or "").strip()
+    app_job = _former_employer_from_app(app_text)
+    if not zh:
+        zh = str(app_job.get("zh") or "")
+    if not en:
+        en = str(app_job.get("en") or "")
+    if not country:
+        country = str(app_job.get("country") or "")
+    if not role_zh:
+        role_zh = str(app_job.get("role_zh") or "")
+    if not role_en:
+        role_en = str(app_job.get("role_en") or "")
+    if not start:
+        start = str(app_job.get("start") or "")
+    if not end:
+        end = str(app_job.get("end") or "")
     if end in ("至今", "现在", "今", "Present", "Now"):
         end = "present"
     if not zh and not en:
@@ -341,14 +543,18 @@ def prior_work_context(snap: dict, app_text: str = "") -> dict:
     overseas = (bool(country) and not _is_cn_place(country)) or (not country and bool(en) and not _has_cjk(en))
     language = "en" if overseas else "zh"
     company = _pretty_en_company(zh, en) if language == "en" else (zh or en)
-    person = _pick_person_name(person_name(snap) or identity_from_app_text(app_text).get("name") or "", language)
+    ident = identity_from_app_text(app_text)
+    person = _best_person_name(snap, ident, language)
     role = (role_en if language == "en" else role_zh) or (role_zh or role_en)
     projects = []
-    for row in extract_projects(snap, ""):
+    for row in extract_projects(snap, app_text):
         src = str(row.get("项目来源") or row.get("funding") or "")
         if src and _is_forbidden_org(src, forbidden):
             continue
-        if src and not (_same_org(src, zh) or _same_org(src, en) or _same_org(src, company) or _FUNDING_RE.search(src)):
+        known_funder = bool(
+            _same_org(src, zh) or _same_org(src, en) or _same_org(src, company) or _FUNDING_RE.search(src)
+        )
+        if src and not known_funder and not overseas:
             continue
         item = _project_for_lang(row, language)
         src = str(row.get("项目来源") or "")

@@ -29,7 +29,7 @@ import importlib
 _wechat_mod = importlib.import_module('core-wechat.chat_platform')
 _wecom_mod = importlib.import_module('core-wecom.chat_platform')
 _dingtalk_mod = importlib.import_module('core-dingtalk.chat_platform')
-from shared import agent_logs, agent_update, api_keys, file_jobs, lan, message_search, sync_now, synced_store
+from shared import agent_logs, agent_update, api_keys, file_jobs, lan, message_search, operator_alias, sync_now, synced_store
 from shared.presence import PresenceHub
 from shared.wecom_ssh import load_live_manifest, strip_jsonc
 import json
@@ -204,6 +204,8 @@ class IngestInfo(BaseModel):
     read_api: Optional[ReadApiInfo] = None
     agent_update: Optional[AgentUpdateInfo] = None
     latest_agent_version: str = ""
+    uninstall_published: bool = False
+    uninstall_download_url: str = "/api/agent-uninstall-exe"
 
 
 _platforms_cache = {}
@@ -428,13 +430,19 @@ def _attach_agent_fields(items: List[SourceInfo]) -> List[SourceInfo]:
         client = _match_presence_client(
             item.id, item.computer_name, item.host, item.operator_name, known,
         )
-        if not client:
-            continue
-        version = str(client.get("agent_version") or "").strip()
-        if version:
-            item.agent_version = version
-        if latest and item.agent_version:
-            item.update_available = agent_update.version_newer(latest, item.agent_version)
+        if client:
+            version = str(client.get("agent_version") or "").strip()
+            if version:
+                item.agent_version = version
+            if latest and item.agent_version:
+                item.update_available = agent_update.version_newer(latest, item.agent_version)
+        aliased = operator_alias.resolve_operator_name(
+            item.host,
+            item.computer_name,
+            item.operator_name or ((client or {}).get("operator_name") if client else "") or "",
+        )
+        if aliased:
+            item.operator_name = aliased
     return items
 
 
@@ -589,7 +597,27 @@ async def ingest_info():
         read_api=read_api,
         agent_update=AgentUpdateInfo(**latest) if latest.get("version") else None,
         latest_agent_version=str(latest.get("version") or ""),
+        uninstall_published=bool(agent_update.uninstall_exe_path(PROJECT_DIR)),
+        uninstall_download_url="/api/agent-uninstall-exe",
     )
+
+
+@app.delete("/api/sources/{source_id}")
+def delete_source(source_id: str):
+    sid = str(source_id or "").strip()
+    if not sid or sid.lower() == "local":
+        raise HTTPException(status_code=400, detail="本机不能删除")
+    safe = synced_store._safe_id(sid)
+    if not safe or safe.lower() == "local":
+        raise HTTPException(status_code=400, detail="本机不能删除")
+    removed_store = synced_store.delete_source(sid)
+    forgotten = presence.forget(sid)
+    if sid != safe:
+        forgotten = presence.forget(safe) or forgotten
+        removed_store = synced_store.delete_source(safe) or removed_store
+    if not removed_store and not forgotten:
+        raise HTTPException(status_code=404, detail="电脑不存在")
+    return {"ok": True, "source_id": safe, "removed_store": removed_store, "forgotten": forgotten}
 
 
 @app.get("/api/sources")
@@ -641,13 +669,34 @@ async def list_sources():
             id=sid,
             kind="remote",
             computer_name=computer or sid,
-            operator_name=str(client.get("operator_name") or ""),
+            operator_name=operator_alias.resolve_operator_name(
+                host, computer, str(client.get("operator_name") or ""),
+            ),
             username=str(client.get("operator_name") or ""),
             host=host,
             last_sync=last_sync,
             session_count=0,
             platform="wecom",
             agent_version=str(client.get("agent_version") or ""),
+        ))
+        seen.add(sid)
+    have_hosts = {str(item.host or "").strip() for item in items}
+    for host, name in (operator_alias.load_aliases().get("by_host") or {}).items():
+        if not host or host in have_hosts:
+            continue
+        sid = "pending-" + synced_store.source_id_for(host, "")
+        if sid in seen:
+            continue
+        items.append(SourceInfo(
+            id=sid,
+            kind="remote",
+            computer_name="",
+            operator_name=name,
+            username=name,
+            host=host,
+            last_sync="尚未接入",
+            session_count=0,
+            platform="wecom",
         ))
         seen.add(sid)
     return _attach_agent_fields(items)
@@ -824,6 +873,24 @@ def ingest_agent_exe(
     _check_ingest_token(token, x_ingest_token or "")
     host = request.client.host if request.client else ""
     return _agent_exe_file(mark_host=host)
+
+
+def _uninstall_exe_file() -> FileResponse:
+    path = agent_update.uninstall_exe_path(PROJECT_DIR)
+    if not path:
+        raise HTTPException(status_code=404, detail="尚未打包卸载程序，请在分析机运行 parser\\build_agent.bat")
+    return FileResponse(
+        path,
+        filename="WeComSyncUninstall.exe",
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/agent-uninstall-exe")
+def download_agent_uninstall_exe():
+    """解析控制台下载卸载程序，发给其它电脑运行即可卸掉助手。不校验同步令牌。"""
+    return _uninstall_exe_file()
 
 
 @app.get("/api/presence")

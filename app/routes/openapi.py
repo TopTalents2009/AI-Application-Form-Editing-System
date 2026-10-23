@@ -276,6 +276,7 @@ def create_router(runner):
         body["source"] = "openapi"
         body["autoApply"] = auto
         body["apiKeyId"] = int(row["id"])
+        body["apiKeyName"] = str(row.get("name") or "").strip()
         body["apiActor"] = "API:" + str(row.get("name") or row.get("prefix") or "")
         owner = apikeys.task_owner_of(row)
         try:

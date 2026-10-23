@@ -18,6 +18,15 @@ class AgentExePathTests(unittest.TestCase):
                 f.write(b"local")
             self.assertEqual(agent_update.agent_exe_path(tmp), exe)
 
+    def test_uninstall_prefers_local_dist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = os.path.join(tmp, "dist")
+            os.makedirs(dist)
+            exe = os.path.join(dist, "WeComSyncUninstall.exe")
+            with open(exe, "wb") as f:
+                f.write(b"uninst")
+            self.assertEqual(agent_update.uninstall_exe_path(tmp), exe)
+
     def test_falls_back_to_sibling_parser(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundled = os.path.join(tmp, "agent修改申报书_py", "parser")
@@ -40,6 +49,8 @@ class AgentDownloadApiTests(unittest.TestCase):
             f.write("2026.09.23.1\n")
         with open(os.path.join(root, "dist", "WeComSyncAgent.exe"), "wb") as f:
             f.write(b"MZ-fake-agent")
+        with open(os.path.join(root, "dist", "WeComSyncUninstall.exe"), "wb") as f:
+            f.write(b"MZ-fake-uninst")
         self._orig_dir = server.PROJECT_DIR
         self._orig_token = server._load_ingest_token
         server.PROJECT_DIR = root
@@ -67,3 +78,10 @@ class AgentDownloadApiTests(unittest.TestCase):
         res = self.client.get("/api/ingest/agent-exe", params={"token": "test-token"})
         self.assertEqual(res.status_code, 200, res.text)
         self.assertEqual(res.content, b"MZ-fake-agent")
+
+    def test_uninstall_download_no_token(self):
+        res = self.client.get("/api/agent-uninstall-exe")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.content, b"MZ-fake-uninst")
+        cd = res.headers.get("content-disposition") or ""
+        self.assertIn("WeComSyncUninstall.exe", cd)

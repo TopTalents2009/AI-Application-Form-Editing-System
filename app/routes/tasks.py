@@ -10,11 +10,16 @@ def _user(request: Request) -> dict:
 
 
 def _guard_task(request: Request, t: dict | None) -> dict:
-    """非管理员只能访问自己创建的任务；无归属的历史任务仅管理员可见。"""
+    """非管理员只能访问自己创建的任务；开放 API 任务全体登录用户可见；无归属的历史任务仅管理员可见。"""
     if not t:
         raise HTTPException(404, "任务不存在")
     u = _user(request)
-    if u.get("role") != "admin" and str(t.get("owner") or "") != str(u.get("username") or ""):
+    if u.get("role") == "admin":
+        return t
+    from ..apikeys import is_openapi_task
+    if is_openapi_task(t):
+        return t
+    if str(t.get("owner") or "") != str(u.get("username") or ""):
         raise HTTPException(404, "任务不存在")
     return t
 
@@ -23,6 +28,9 @@ def _with_owner_name(t: dict) -> dict:
     out = {k: v for k, v in t.items() if k != "dir"}
     owner = str(out.get("owner") or "").strip()
     out["ownerName"] = ""
+    from ..apikeys import is_openapi_task, openapi_label
+    if is_openapi_task(out) and not str(out.get("apiKeyName") or "").strip():
+        out["apiKeyName"] = openapi_label(out)
     if not owner:
         return out
     try:
@@ -50,8 +58,9 @@ def create_router(runner):
         u = _user(request)
         items = runner.list_meta()
         if u.get("role") != "admin":
+            from ..apikeys import is_openapi_task
             uname = str(u.get("username") or "")
-            items = [x for x in items if str(x.get("owner") or "") == uname]
+            items = [x for x in items if str(x.get("owner") or "") == uname or is_openapi_task(x)]
         names = {}
         try:
             from ..auth import real_names_by_username
@@ -74,8 +83,17 @@ def create_router(runner):
         plan = runner.load_plan(t)
         if plan is None: raise HTTPException(404, "尚未生成编辑计划")
         t2 = _with_owner_name(t)
+        from ..attachments import attach_item_locations, public_task_list
         from ..ps_tickets import draft_for_task
         items = plan.get("taskList") or t.get("taskList") or []
+        items = attach_item_locations(
+            items,
+            clauses=plan.get("clauses") or [],
+            leftovers=plan.get("leftovers") or [],
+            extra_texts=plan.get("leftovers") or [],
+            edits=plan.get("edits") or [],
+        )
+        plan["taskList"] = public_task_list(items)
         plan["psTicket"] = t.get("psTicket") or plan.get("psTicket") or {}
         plan["psDraft"] = draft_for_task(t, items, actor_name=str(t2.get("ownerName") or ""), plan=plan)
         return plan
@@ -95,7 +113,14 @@ def create_router(runner):
         if not configured():
             raise HTTPException(400, "未配置 PS 工单")
         plan = runner.load_plan(t) or {}
-        task_list = plan.get("taskList") or t.get("taskList") or []
+        from ..attachments import attach_item_locations
+        task_list = attach_item_locations(
+            plan.get("taskList") or t.get("taskList") or [],
+            clauses=plan.get("clauses") or [],
+            leftovers=plan.get("leftovers") or [],
+            extra_texts=plan.get("leftovers") or [],
+            edits=plan.get("edits") or [],
+        )
         if not task_list:
             raise HTTPException(400, "没有需要上传的任务清单附件")
         prev = t.get("psTicket") if isinstance(t.get("psTicket"), dict) else {}

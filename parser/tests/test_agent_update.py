@@ -44,6 +44,12 @@ class AgentUpdateManifestTests(unittest.TestCase):
         os.remove(self.exe)
         self.assertIsNone(agent_update.build_manifest(self.root))
 
+    def test_uninstall_exe_path(self):
+        path = os.path.join(self.root, "dist", "WeComSyncUninstall.exe")
+        with open(path, "wb") as f:
+            f.write(b"uninst")
+        self.assertEqual(agent_update.uninstall_exe_path(self.root), path)
+
     def test_latest_info_without_exe(self):
         os.remove(self.exe)
         info = agent_update.latest_info(self.root)

@@ -55,9 +55,18 @@ def test_rewrite_abs_paths(tmp_path=None):
 def test_skip_dirs_and_mysql_bin():
     assert ".venv" in migrate.SKIP_DIR_NAMES
     assert "node_modules" in migrate.SKIP_DIR_NAMES
+    assert "附件.zip" not in migrate.SKIP_FILES
     dump = migrate.find_mysql_bin("mysqldump")
     assert dump is not None and dump.is_file(), dump
     print("mysql bin", dump)
+
+
+def test_list_user_databases_includes_wecom_chat():
+    dbs = migrate.list_user_databases(migrate.mysql_settings())
+    assert "shenbaoshu" in dbs
+    assert "shenbaoshu_wecom" in dbs
+    assert "wecom_chat" in dbs
+    print("mysql databases", dbs)
 
 
 def test_pack_parser():
@@ -75,5 +84,6 @@ if __name__ == "__main__":
     test_required_missing_flags_empty()
     test_rewrite_abs_paths()
     test_skip_dirs_and_mysql_bin()
+    test_list_user_databases_includes_wecom_chat()
     test_pack_parser()
     print("test_migrate ok")

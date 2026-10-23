@@ -22,6 +22,7 @@ from .edit_validate import (
     validate_structured_edits, clauses_from_edits, sanitize_declaring_company_edits,
     sanitize_identity_edits, retarget_pre_return_title_edits,
     sanitize_paper_author_edits, sanitize_editorial_board_edits,
+    sanitize_grounded_edits,
 )
 from .manual_fill import promote_unknown_to_manual_edits, extract_anchor, locate_anchor, is_rewrite_from_book
 from .form_kind import classify as classify_form
@@ -277,6 +278,49 @@ def expand_qm_paper_project_clauses(clauses: list) -> list:
     return out + extras
 
 
+_INTRO_PROJECT_RE = re.compile(r"重点项目|主持项目.{0,8}少|项目情况也少|参与重点项目")
+_INTRO_HINT_RE = re.compile(r"个人简介|基本情况|掌握什么技术|精通什么")
+_KEY_PROBLEM_COPY_RE = re.compile(
+    r"拟解决的关键技术问题|关键技术问题.{0,16}(雷同|一模一样|抄)"
+    r"|把引进企业拟攻关"
+)
+
+
+def expand_qm_mixed_profile_clauses(clauses: list) -> list:
+    """个人简介意见夹带「重点项目少 / 关键技术问题照抄企业」时，另开项目章和工作计划章。"""
+    out = list(clauses or [])
+    used = {str(c.get("cid") or "") for c in out}
+    have = {}
+    for c in out:
+        have.setdefault(str(c.get("sourceId") or c.get("cid") or ""), set()).add(str(c.get("section") or ""))
+    extras = []
+    for c in clauses or []:
+        blob = str(c.get("clause") or "") + str(c.get("opinion") or "")
+        sid = str(c.get("sourceId") or c.get("cid") or "")
+        got = have.setdefault(sid, set())
+        want = []
+        if _INTRO_PROJECT_RE.search(blob) and (_INTRO_HINT_RE.search(blob) or str(c.get("section") or "") == "基本信息"):
+            want.append(("项目", "补充重点项目及可核实效益（不要挤进个人简介300字栏）"))
+        if _KEY_PROBLEM_COPY_RE.search(blob):
+            want.append(("工作计划", "拟解决的关键技术问题不得照抄企业攻关指标，须写出人才本人要解决的问题"))
+        for sec, clause in want:
+            if sec in got:
+                continue
+            suffix = "-PRJ2" if sec == "项目" else "-KP"
+            cid = unique_cid(str(c.get("cid") or "S0") + suffix, used)
+            used.add(cid)
+            extras.append({
+                "cid": cid,
+                "sourceId": c.get("sourceId"),
+                "section": sec,
+                "clause": clause,
+                "opinion": c.get("opinion") or "",
+                "opName": c.get("opName") or "",
+            })
+            got.add(sec)
+    return out + extras
+
+
 def classify_clauses_heuristic(blocks: list, hj: bool, allowed_sec: set) -> list:
     clauses = []
     used = set()
@@ -391,6 +435,12 @@ ITEM_HEAD = re.compile(
 TITLE_COLON = re.compile(
     r"^[\u4e00-\u9fa5A-Za-z0-9《》「」\"“”（）()、]{4,40}[：:]"
 )
+_OP_PARA_DIR = re.compile(
+    r"补充|填写|写到|改为|按照|请将|须|应|不少于|不全|要求|梳理|删除|调整|提升|重写|规范|排序"
+)
+_CLAUSE_SKIP_LINE = re.compile(
+    r"^(审查意见|仅供参考|日期\s*[:：]|专家老师|项目申报书|意见条款)"
+)
 
 def norm_sid(s) -> str:
     s = str(s or "").strip().upper().strip("[]() ")
@@ -495,8 +545,88 @@ def _split_items(blk: str) -> list:
         i += 1
     expanded = []
     for c in fixed:
-        expanded.extend(_split_inline_numbered(c))
+        if ITEM_HEAD.match(c.lstrip()) or TITLE_COLON.match(c.lstrip()):
+            expanded.extend(_split_inline_numbered(c))
+        else:
+            for part in _split_opinion_paragraphs(c):
+                expanded.extend(_split_inline_numbered(part))
     return expanded
+
+
+def _split_opinion_paragraphs(text: str) -> list[str]:
+    """无编号的手写/Word 意见按独立段落切开，避免三条要求合成一条。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    paras = [p.strip() for p in re.split(r"\n+", raw) if p.strip()]
+    if len(paras) < 2:
+        return [raw]
+    independent, buf = [], []
+
+    def buf_has_opinion() -> bool:
+        return any(
+            _OP_PARA_DIR.search(x) or ITEM_HEAD.match(x.lstrip()) or TITLE_COLON.match(x.lstrip())
+            for x in buf
+        )
+
+    for p in paras:
+        is_head = bool(ITEM_HEAD.match(p) or TITLE_COLON.match(p))
+        is_op = len(p) >= 12 and bool(_OP_PARA_DIR.search(p))
+        if (is_head or is_op) and buf_has_opinion():
+            independent.append("\n".join(buf))
+            buf = [p]
+        else:
+            buf.append(p)
+    if buf:
+        independent.append("\n".join(buf))
+    return independent if len(independent) >= 2 else [raw]
+
+
+def clause_display(src: dict | None, fallback: str = "") -> str:
+    """计划表「意见条款」优先展示原意见序号+原文，而不是模型短摘要。"""
+    if not isinstance(src, dict):
+        return str(fallback or "").strip()[:80]
+    op = str(src.get("opinion") or "").strip()
+    for line in op.splitlines():
+        s = re.sub(r"\s+", " ", line.strip())
+        if not s or _CLAUSE_SKIP_LINE.search(s):
+            continue
+        m = re.match(r"^(\d{1,2})[\.、．]\s*(.+)$", s)
+        if m and 1 <= int(m.group(1)) <= 40:
+            body = re.sub(r"[；;]+$", "", str(m.group(2) or "")).strip()
+            return (m.group(1) + ". " + body)[:80]
+    for line in op.splitlines():
+        s = re.sub(r"\s+", " ", line.strip())
+        if len(s) >= 8 and not _CLAUSE_SKIP_LINE.search(s):
+            return s[:80]
+    fb = str(src.get("clause") or fallback or "").strip()
+    return fb[:80]
+
+
+def sort_edits_by_clauses(edits: list, clauses: list) -> list:
+    order = {norm_sid(c.get("cid") or c.get("sourceId")): i for i, c in enumerate(clauses or [])}
+
+    def key(e):
+        if not isinstance(e, dict):
+            return (9999, "", "")
+        cid = norm_sid(e.get("clauseId"))
+        return (order.get(cid, 9999), cid, str(e.get("find") or "")[:40])
+
+    return sorted([e for e in (edits or []) if isinstance(e, dict)], key=key)
+
+
+def relabel_edit_clauses(edits: list, clauses: list) -> list:
+    by = {norm_sid(c.get("cid") or c.get("sourceId")): c for c in (clauses or [])}
+    out = []
+    for e in edits or []:
+        if not isinstance(e, dict):
+            continue
+        ne = dict(e)
+        src = by.get(norm_sid(ne.get("clauseId")))
+        if src:
+            ne["clause"] = clause_display(src, str(ne.get("clause") or ""))
+        out.append(ne)
+    return out
 
 def unique_cid(base: str, used: set) -> str:
     cid = base or "C"
@@ -527,10 +657,10 @@ def absorb_plan_edits(edits, plan, items, items_by_cid, sec, app_no, fam_field: 
         item["_sec"] = sec
         item["section"] = sec
         item["appNo"] = app_no
-        item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
         item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
         item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
         item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
+        item["clause"] = clause_display(src, str(item.get("clause") or ""))
         if fam_field:
             item[fam_field] = str(item.get("replace") or "")
         edits.append(item)
@@ -592,6 +722,7 @@ class TaskStore:
         self.persist(t)
 
     def list_meta(self):
+        from .apikeys import is_openapi_task, openapi_label
         arr = sorted(self.tasks.values(), key=lambda x: created_key(x.get("createdAt")), reverse=True)
         out = []
         for t in arr:
@@ -605,10 +736,15 @@ class TaskStore:
             if ident.get("inputName") and not app.get("inputName"):
                 app["inputName"] = ident["inputName"]
             wecom = t.get("wecom") if isinstance(t.get("wecom"), dict) else {}
+            api_name = str(t.get("apiKeyName") or "").strip()
+            if not api_name and is_openapi_task(t):
+                api_name = openapi_label(t)
             out.append({"id": t["id"], "status": t["status"], "engine": t["engine"], "model": t.get("model"), "createdAt": t["createdAt"], "app": app, "error": t["error"], "hasReport": t.get("hasReport", False), "batchId": t.get("batchId"), "owner": t.get("owner") or "",
                  "appliedBy": t.get("appliedBy") or "", "appliedAt": t.get("appliedAt") or "",
                  "personName": ident.get("personName") or "", "attachId": ident.get("attachId") or "",
                  "source": t.get("source") or "", "apiKeyId": t.get("apiKeyId") or 0,
+                 "apiKeyName": api_name,
+                 "apiActor": t.get("apiActor") or "",
                  "wecomCaseId": wecom.get("caseId") or "",
                  "wecomSession": wecom.get("sessionName") or "",
                  "startedAt": t.get("startedAt") or "",
@@ -673,6 +809,8 @@ class TaskStore:
                 pass
         if body.get("apiActor"):
             t["apiActor"] = str(body.get("apiActor"))[:80]
+        if body.get("apiKeyName"):
+            t["apiKeyName"] = str(body.get("apiKeyName"))[:64]
         fill_app_identity(t)
         self.tasks[tid] = t; self.persist(t)
         return t
@@ -732,6 +870,7 @@ class TaskStore:
         app_name = (t.get("app") or {}).get("name") or ""
         work_docx = work_docx_name(app_name)
         t.setdefault("app", {})["workDocx"] = work_docx
+        last_op_err = ""
         for f in os.listdir(input_dir):
             shutil.copyfile(input_dir / f, work_input / f)  # 沙盒内副本，原件不动
             ext = ext_of(f)
@@ -793,6 +932,8 @@ class TaskStore:
                 msg = str(e)[:240]
                 self.log(t, "提取失败 " + f + ": " + msg)
                 if f != app_name:
+                    last_op_err = msg
+                    t["_lastOpinionExtractError"] = msg
                     self.log(t, "已跳过无法提取的意见文件「" + f + "」，继续处理其余文件")
                     continue
                 raise ValueError("申报书「" + f + "」提取失败：" + msg)
@@ -860,6 +1001,9 @@ class TaskStore:
                 opinion_files.append({"name": o["name"], "text": p.read_text(encoding="utf-8")})
         if not ap.exists(): raise ValueError("申报书文本缺失（预处理提取失败）")
         if not opinion_files:
+            extra = str(t.get("_lastOpinionExtractError") or "")
+            if extra:
+                raise ValueError("修改意见提取失败：" + extra[:240])
             raise ValueError(NO_OPINION_MSG if t.get("inlineOpinions") else "意见文本全部缺失（预处理提取失败）")
         return {"appText": ap.read_text(encoding="utf-8"), "opinionFiles": opinion_files}
 
@@ -1023,6 +1167,10 @@ class TaskStore:
             "并锚定「4.其他」栏。禁止把审稿专家、发表期刊或未出现的主编头衔写成编委。"
             "意见要求补充产品名称、应用推广或成果转化依托单位时，必须改定位句，"
             "用申报书已有产品/场景/合作单位类型写具体，禁止因缺型号或公司全称而只写 leftovers。"
+            "期刊英文名保持申报书原文，禁止括注中文译名。"
+            "禁止「显著」等空泛程度词。"
+            "量化数字、公司全称只能来自申报书、人才库或附件；无数据时用定性白描，"
+            "禁止调用知识库编造盐雾小时、亿元产值、提升百分比或未出现的合作公司。"
         )
         if sec == "论文" and "论文系统题录" in str(attach_text or ""):
             extra_guard += (
@@ -1184,6 +1332,7 @@ class TaskStore:
         if not hj:
             clauses = expand_qm_work_plan_clauses(clauses)
             clauses = expand_qm_paper_project_clauses(clauses)
+            clauses = expand_qm_mixed_profile_clauses(clauses)
         clauses = annotate_column_wide_clauses(clauses, texts["appText"])
         # 2) 兜底覆盖：LLM 漏掉的来源意见补一条，避免「意见未被提取/未修改」
         if clauses:
@@ -1361,7 +1510,7 @@ class TaskStore:
                     item["_sec"] = s["sec"]
                     item["section"] = s["sec"]
                     item["appNo"] = app_no
-                    item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+                    item["clause"] = clause_display(src, str(item.get("clause") or ""))
                     item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
                     item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
                     item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
@@ -1554,7 +1703,7 @@ class TaskStore:
                             item["_sec"] = sup_sec
                             item["section"] = sup_sec
                             item["appNo"] = app_no
-                            item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+                            item["clause"] = clause_display(src, str(item.get("clause") or ""))
                             item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
                             item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
                             item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
@@ -1593,7 +1742,7 @@ class TaskStore:
             str(t.get("app", {}).get("name") or ""),
         )
         edits, struct_issues = validate_structured_edits(edits, clauses, texts["appText"], hj=hj_mode)
-        _wp_retry_tags = ("【工作计划漏改】", "【关键问题拆分】", "【可行性论证漏改】")
+        _wp_retry_tags = ("【工作计划漏改】", "【研发目标漏改】", "【关键问题拆分】", "【可行性论证漏改】")
         wp_retry = [m for m in struct_issues if any(str(m).startswith(t) for t in _wp_retry_tags)]
         if wp_retry and not hj_mode:
             wp_items = []
@@ -1629,7 +1778,7 @@ class TaskStore:
                         item["_sec"] = "工作计划"
                         item["section"] = "工作计划"
                         item["appNo"] = app_no
-                        item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+                        item["clause"] = clause_display(src, str(item.get("clause") or ""))
                         item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
                         item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
                         item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
@@ -1679,7 +1828,7 @@ class TaskStore:
                         item["_sec"] = "其他"
                         item["section"] = "其他"
                         item["appNo"] = app_no
-                        item["clause"] = str(item.get("clause") or (src["clause"] if src else "") or "")
+                        item["clause"] = clause_display(src, str(item.get("clause") or ""))
                         item["opinion"] = (src["opinion"] if src else "") or item.get("opinion") or item.get("clause") or ""
                         item["opName"] = (src.get("opName") if src else "") or item.get("opName") or ""
                         item["clauseId"] = (src["cid"] if src else "") or str(item.get("clauseId") or "")
@@ -1747,6 +1896,8 @@ class TaskStore:
             extra_names.append(hit.get("enterprise"))
         edits, co_issues = sanitize_declaring_company_edits(edits, texts["appText"], extra_names)
         struct_issues.extend(co_issues)
+        edits, g_issues = sanitize_grounded_edits(edits, texts["appText"], pool_text)
+        struct_issues.extend(g_issues)
         edits, id_issues = sanitize_identity_edits(edits, texts["appText"])
         struct_issues.extend(id_issues)
         edits, title_fix = retarget_pre_return_title_edits(edits, texts["appText"])
@@ -1840,6 +1991,8 @@ class TaskStore:
 
         if not edits and not leftovers:
             raise ValueError("各章节均未产出有效编辑")
+        edits = relabel_edit_clauses(edits, clauses)
+        edits = sort_edits_by_clauses(edits, clauses)
         pre_miss = annotate_edits_precheck(edits, texts["appText"])
         if pre_miss:
             self.log(t, "计划预检：" + str(pre_miss) + "/" + str(len(edits)) + " 条改前摘录未在申报书正文中匹配")
@@ -1951,6 +2104,16 @@ class TaskStore:
                     pool_blob = pool_p.read_text(encoding="utf-8")
                 except Exception:
                     pool_blob = ""
+            edits, co_issues = sanitize_declaring_company_edits(edits, app_for_id)
+            for msg in co_issues:
+                self.log(t, msg)
+                if msg not in leftovers:
+                    leftovers.append(msg)
+            edits, g_issues = sanitize_grounded_edits(edits, app_for_id, pool_blob)
+            for msg in g_issues:
+                self.log(t, msg)
+                if msg not in leftovers:
+                    leftovers.append(msg)
             app_for_board = ""
             try:
                 app_for_board = self.read_prepared_texts(t).get("appText") or ""

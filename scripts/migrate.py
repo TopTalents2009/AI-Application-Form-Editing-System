@@ -32,7 +32,8 @@ SKIP_DIR_NAMES = (
     ".pytest_cache",
     "logs",
 )
-SKIP_FILES = ("*.pyc", "附件.zip")
+SKIP_FILES = ("*.pyc",)
+SYSTEM_DB_NAMES = ("mysql", "information_schema", "performance_schema", "sys")
 MYSQL_BIN_CANDIDATES = (
     Path(r"C:\Program Files\MySQL\MySQL Server 8.4\bin"),
     Path(r"C:\Program Files\MySQL\MySQL Server 8.0\bin"),
@@ -116,6 +117,58 @@ def mysql_settings() -> dict:
         "database": str(c.get("mysqlDatabase") or "shenbaoshu"),
         "wecomDatabase": str(c.get("mysqlWecomDatabase") or "shenbaoshu_wecom"),
     }
+
+
+def _write_mysql_cnf(settings: dict) -> Path:
+    fd, cnf = tempfile.mkstemp(prefix="migrate_mysql_", suffix=".cnf")
+    os.close(fd)
+    cnf_path = Path(cnf)
+    cnf_path.write_text(
+        "[client]\nuser={user}\npassword={password}\nhost={host}\nport={port}\n"
+        "default-character-set=utf8mb4\n".format(
+            user=settings["user"],
+            password=settings["password"],
+            host=settings["host"],
+            port=settings["port"],
+        ),
+        encoding="utf-8",
+    )
+    return cnf_path
+
+
+def list_user_databases(settings: dict) -> list[str]:
+    """本机全部业务库：申报书库、入库库，以及 wecom_chat 等其它非系统库。"""
+    ordered: list[str] = []
+    for name in (settings.get("database"), settings.get("wecomDatabase")):
+        n = str(name or "").strip()
+        if n and n not in ordered:
+            ordered.append(n)
+    mysql = find_mysql_bin("mysql")
+    if mysql is None:
+        return ordered
+    cnf_path = _write_mysql_cnf(settings)
+    try:
+        p = subprocess.run(
+            [str(mysql), "--defaults-extra-file=" + str(cnf_path), "-N", "-e", "SHOW DATABASES"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if p.returncode != 0:
+            return ordered
+        found = [ln.strip() for ln in (p.stdout or "").splitlines() if ln.strip()]
+    finally:
+        try:
+            cnf_path.unlink()
+        except OSError:
+            pass
+    extra = [
+        n for n in found
+        if n.lower() not in SYSTEM_DB_NAMES and n not in ordered
+    ]
+    extra.sort()
+    return ordered + extra
 
 
 def _ps_quote(s: str) -> str:
@@ -214,32 +267,22 @@ def robocopy(src: Path, dst: Path, *, exclude_junctions: bool = True, extra_xd: 
         raise RuntimeError("robocopy 失败，退出码 " + str(p.returncode))
 
 
-def dump_mysql(sql_path: Path, settings: dict | None = None) -> None:
+def dump_mysql(sql_path: Path, settings: dict | None = None, databases: list[str] | None = None) -> None:
     dump = find_mysql_bin("mysqldump")
     if dump is None:
         raise FileNotFoundError("找不到 mysqldump，请先安装 MySQL 客户端并把 bin 加入 PATH")
     cfg = settings or mysql_settings()
+    dbs = [str(n).strip() for n in (databases or list_user_databases(cfg)) if str(n).strip()]
+    if not dbs:
+        dbs = [cfg["database"], cfg["wecomDatabase"]]
     sql_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, cnf = tempfile.mkstemp(prefix="migrate_mysql_", suffix=".cnf")
-    os.close(fd)
-    cnf_path = Path(cnf)
+    cnf_path = _write_mysql_cnf(cfg)
     try:
-        cnf_path.write_text(
-            "[client]\nuser={user}\npassword={password}\nhost={host}\nport={port}\n"
-            "default-character-set=utf8mb4\n".format(
-                user=cfg["user"],
-                password=cfg["password"],
-                host=cfg["host"],
-                port=cfg["port"],
-            ),
-            encoding="utf-8",
-        )
         cmd = [
             str(dump),
             "--defaults-extra-file=" + str(cnf_path),
             "--databases",
-            cfg["database"],
-            cfg["wecomDatabase"],
+            *dbs,
             "--default-character-set=utf8mb4",
             "--single-transaction",
             "--routines",
@@ -247,7 +290,7 @@ def dump_mysql(sql_path: Path, settings: dict | None = None) -> None:
             "--hex-blob",
             "--result-file=" + str(sql_path),
         ]
-        _print("mysqldump " + cfg["database"] + " " + cfg["wecomDatabase"])
+        _print("mysqldump " + " ".join(dbs))
         p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if p.returncode != 0:
             err = (p.stderr or p.stdout or "").strip()[:400]
@@ -270,20 +313,8 @@ def import_mysql(sql_path: Path, settings: dict) -> None:
         raise FileNotFoundError("找不到 mysql 客户端")
     if not sql_path.is_file():
         raise FileNotFoundError("缺少 " + str(sql_path))
-    fd, cnf = tempfile.mkstemp(prefix="migrate_mysql_", suffix=".cnf")
-    os.close(fd)
-    cnf_path = Path(cnf)
+    cnf_path = _write_mysql_cnf(settings)
     try:
-        cnf_path.write_text(
-            "[client]\nuser={user}\npassword={password}\nhost={host}\nport={port}\n"
-            "default-character-set=utf8mb4\n".format(
-                user=settings["user"],
-                password=settings["password"],
-                host=settings["host"],
-                port=settings["port"],
-            ),
-            encoding="utf-8",
-        )
         cmd = [
             str(mysql),
             "--defaults-extra-file=" + str(cnf_path),
@@ -385,7 +416,7 @@ def write_guide(pack: Path, info: dict) -> None:
 
 1. 安装 Python 3.10+（现网 3.12）、MySQL 5.7/8、本机 Office。可选 Tesseract、Clash。
 2. 打开「项目」文件夹（project\\）。路径可以和旧机不同。
-3. 导入数据库（新机 MySQL root 密码若不同，把下面的 -p 改成实际密码）：
+3. 导入数据库（SQL 含本机全部业务库：申报书、入库、wecom_chat 聊天库。新机 MySQL root 密码若不同，把下面的 -p 改成实际密码）：
 
    mysql -u root -p --default-character-set=utf8mb4 < shenbaoshu.sql
 
@@ -436,6 +467,7 @@ def cmd_pack(args: argparse.Namespace) -> int:
         "mysqlUser": cfg["user"],
         "mysqlDatabase": cfg["database"],
         "mysqlWecomDatabase": cfg["wecomDatabase"],
+        "mysqlDatabases": list_user_databases(cfg),
         "listenPorts": list(LISTEN_PORTS),
     }
     stopped = False

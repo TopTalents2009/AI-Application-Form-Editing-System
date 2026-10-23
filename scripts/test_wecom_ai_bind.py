@@ -210,6 +210,12 @@ def test_stamp_not_book_num():
     assert extract_book_nums("113255_广东拓斯达科技股份有限公司.pdf") == ["113255"]
     assert _pick_attach_id(["113255"], "", "113255_广东拓斯达科技股份有限公司.pdf") == "113255"
     assert _pick_attach_id([], "", "「郑建雄：[文件]52063_东莞金太阳研磨股份有限公司.pdf") == "52063"
+    shot = "企业微信截图_17773671632174(1).png"
+    assert extract_book_nums(shot) == []
+    assert _pick_attach_id([], "", shot) == "未识别编号"
+    assert extract_book_nums("微信截图_173382238724.png") == []
+    assert extract_book_nums("42616企业微信截图_17773671632174(1).png") == ["42616"]
+    assert extract_book_nums("screenshot_175565378455.jpg") == []
 
 
 def test_split_unknown_by_company_and_same_id():
@@ -260,6 +266,23 @@ def test_orphan_opinion_cluster():
     assert leftover == []
     assert talents[0]["versions"][0]["opinions"][0]["messageId"] == "op"
     assert talents[1]["versions"][0]["opinions"][0]["messageId"] == "op"
+
+
+def test_orphan_screenshot_opinion():
+    talents = [{
+        "attachId": "42413", "label": "42413", "company": "", "person": "",
+        "versions": [{
+            "chatVersion": "chat-1", "messageId": "a", "time": "2026-09-01 10:00",
+            "filename": "42413申报书.docx", "opinions": [],
+        }],
+    }]
+    ops = [{
+        "messageId": "op", "time": "2026-09-01 10:06", "kind": "file",
+        "filename": "企业微信截图_17773671632174(1).png", "text": "", "nums": [],
+    }]
+    leftover = bind_orphan_opinions(talents, ops, window_hours=48)
+    assert leftover == []
+    assert talents[0]["versions"][0]["opinions"][0]["messageId"] == "op"
 
 
 def test_orphan_opinion_batch_within_three_hours():
@@ -360,6 +383,7 @@ if __name__ == "__main__":
     test_split_unknown_by_company_and_same_id()
     test_label_uses_book_num_or_filename()
     test_orphan_opinion_cluster()
+    test_orphan_screenshot_opinion()
     test_orphan_opinion_batch_within_three_hours()
     test_name_id_then_orphan()
     test_collapse_repeated_text()

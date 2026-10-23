@@ -480,6 +480,7 @@ def _payload_shape_retryable(msg: str) -> bool:
         "unknown", "format", "mime", "audio", "m4a", "mp4", "file_data",
         "input_audio", "audio_url", "unexpected", "未识别", "不支持", "无法解析",
         "too large", "too long", "payload", "entity", "maximum",
+        "无法连接", "connecterror", "connecttimeout", "proxyerror",
     )
     return any(k in s for k in keys)
 
@@ -546,7 +547,7 @@ async def _chat_transcribe_variants(
                 json_mode=False,
                 timeout_s=timeout_s,
                 model=gem.get("id"),
-                retries=1,
+                retries=3,
                 apply_profile_timeout=False,
             )
             text = _clean_transcript(str((r or {}).get("content") or ""))
@@ -557,7 +558,7 @@ async def _chat_transcribe_variants(
             last_err = e
             if _payload_shape_retryable(str(e)):
                 continue
-            raise
+            break
     return "", last_err
 
 
@@ -621,7 +622,7 @@ async def transcribe_audio_bytes(
         except LlmError as e:
             last_err = e
             if not _payload_shape_retryable(str(e)):
-                raise ValueError("Gemini 转写失败（" + name + "）：" + str(e)[:240]) from e
+                break
     if all(m != "audio/mpeg" for _d, m, _n in queue):
         packed = _ffmpeg_to_mp3(data, name)
         if packed:

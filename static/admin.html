@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>管理控制台 · 申报书智能修改系统</title>
-<link rel="stylesheet" href="/public/style.css?v=py130">
-<link rel="stylesheet" href="/public/admin.css?v=py2">
+<link rel="stylesheet" href="/public/style.css?v=py135">
+<link rel="stylesheet" href="/public/admin.css?v=py3">
 
 </head>
 <body>
@@ -284,6 +284,15 @@
               </div>
             </aside>
           </div>
+        </div>
+        <div class="id-trace-wrap acard" id="idTracePanel">
+          <h3 class="id-trace-title">编号足迹</h3>
+          <p class="wecom-lead id-trace-lead">从全部关注会话归纳编号，每页 10 条。点编号展开，查看对应群聊以及各版修改意见。搜索框可筛选编号或姓名。</p>
+          <div class="id-trace-bar">
+            <input type="search" id="idTraceQ" placeholder="筛选编号或姓名" maxlength="40" autocomplete="off">
+            <button type="button" class="mini primary" id="idTraceGo">查询</button>
+          </div>
+          <div id="idTraceBox" class="id-trace-box"><div class="wecom-empty">正在查阅全部关注会话，归纳编号…</div></div>
         </div>
       </section>
 
@@ -751,10 +760,10 @@
   </div>
 
 <script src="/public/session.js?v=py54"></script>
-<script src="/public/wecom-board.js?v=py86"></script>
+<script src="/public/wecom-board.js?v=py95"></script>
 <script src="/public/admin-agent-review.js?v=py10"></script>
-<script src="/public/admin-ingest.js?v=py2"></script>
-<script src="/public/admin-overview.js?v=py1"></script>
+<script src="/public/admin-ingest.js?v=py3"></script>
+<script src="/public/admin-overview.js?v=py2"></script>
 <script src="/public/admin-users.js?v=py2"></script>
 <script src="/public/admin-openapi.js?v=py2"></script>
 <script src="/public/admin-system.js?v=py1"></script>
@@ -783,6 +792,12 @@
     if (name) return name;
     var src = String(t.source || '');
     if (src === 'wecom' || src === 'wecom-watch') return '会话';
+    var apiName = String(t.apiKeyName || '').trim();
+    if (!apiName) {
+      var actor = String(t.apiActor || '');
+      if (/^API:/i.test(actor)) apiName = actor.replace(/^API:/i, '').trim();
+    }
+    if (src === 'openapi' || t.apiKeyId || apiName) return apiName || '开放API';
     return '人工提交';
   }
   function escAttr(s) { return esc(s).replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
